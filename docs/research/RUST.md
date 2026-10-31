@@ -940,20 +940,29 @@ shagger/                         engine repository, its own Cargo workspace
 │  └─ shagger/                   ← src/engine (minus editor and server) + src/lobby/LobbyClient.ts
 │     └─ src/{core,network,lobby,physics,movement,loader,render,lighting,
 │             effects,sprites,animation,camera,viewport,input,audio,console,ui,babylon}/
-├─ tools/
-│  └─ proto_dump/                demo and golden-vector decoder (milestone 1)
-└─ reference/                    SHAG checkout, pinned (submodule)
+├─ crates/*/tests/golden/        reference outputs made by the TypeScript tools, checked by cargo test
+└─ tools/golden/                 Node scripts that run SHAG's own code to make those outputs
 
 wash-fps-rust/                   game repository
 ├─ Cargo.toml                    depends on shagger by git rev
 ├─ src/                          ← wash-fps, client side
 │  └─ {simulation,liquid,shared,world,camera,console,client,weapons,
 │      game.rs,fps_player.rs,main.rs}
-├─ tools/
-│  ├─ headless_client/           lobby + match client without a window (milestones 2–3)
-│  └─ sim_parity/                step-by-step movement diff against sim:dump (19.7)
-└─ reference/                    wash-fps checkout, pinned (submodule)
+└─ tests/                        parity tests against sim:dump output and demo dumps
 ```
+
+**Tooling stays in TypeScript.** The Rust repositories hold the client and
+its tests, and nothing else (decided 2026-10-31). Every tool that the client
+does not strictly need stays in, or is added to, SHAG and wash-fps:
+
+- **Already in TypeScript, not ported:** packaging, encoding, the pk3 index
+  build, the editor, `demo-verify`, the server and bots.
+- **New TypeScript tools for parity:** the demo and delta dumps (18.6),
+  `sim:dump` (19.7), `shader:audit` (21.7), and the offline audio render
+  (22.8). They run SHAG's real code and write reference files.
+- **On the Rust side:** only `cargo test` targets that read those files.
+  There are no separate Rust tools. The headless client of milestones 2 and 3
+  is the client itself, started with `--headless`.
 
 **How the two repositories connect.** SHAG includes wash-fps as a submodule;
 the Rust side turns that around, as Cargo expects. `wash-fps-rust` depends on
@@ -1035,7 +1044,7 @@ measured; each later round should revise its own layer.
 | 0 | Workspace, CI, reference checkout, TypeScript golden-vector scripts | the harness exists | 1 |
 | 1 | `shagger_shared::net` + `MessageCodec`: decode every demo and every delta vector identically | the wire format | 2 |
 | 2 | Headless client: lobby auth, `lobby:connect`, game handshake, acks, clock sync, watchdog, resume; joins as spectator and prints the scoreboard | live servers accept us | 2–3 |
-| 3 | BSP parse, collision, lifts, triggers, liquid, the full movement profile; `sim_parity` clean on all maps | the simulation matches | 4–6 |
+| 3 | BSP parse, collision, lifts, triggers, liquid, the full movement profile; the `sim:dump` parity tests clean on all maps | the simulation matches | 4–6 |
 | 4 | `V2NetworkClient`, `InputHistory`, `SnapshotBuffer`; headless client plays with scripted input and mostly confirms | prediction matches the server | 2 |
 | 5 | PK3 index and downloads, cache, textures (incl. KTX2), Q3 shader parser, MD3, glTF, sounds | assets load natively | 3–4 |
 | 6 | Window, input, camera; renderer v1: world with lightmaps, opaque and blended Q3 stages, sky, PVS | you can fly around a map | 6–8 |
@@ -1369,8 +1378,8 @@ decoder is the same from version 5 on.
 Three sets of fixtures, each produced by the TypeScript and checked by Rust:
 
 1. **Demo frames.** A Node script reads every `.shagdemo` with `DemoReader`
-   and writes one JSON line per frame. Rust decodes the same file with
-   `proto_dump` and writes the same JSON. The diff must be empty. This covers
+   and writes one JSON line per frame. A `cargo test` decodes the same file in Rust
+   and compares it with that JSON. The diff must be empty. This covers
    full snapshots and every event the recordings contain.
 2. **Deltas.** A Node script takes consecutive demo frames, encodes frame *n*
    against frame *n − k* with `MessageCodec.encodeSnapshot(state, baseline)`
@@ -1605,8 +1614,8 @@ Two existing pieces come closer:
 - Demo version 3 records inputs, but aggregated per frame (buttons OR-ed, the
   last aim kept; `DemoInputs.ts`), so it cannot drive an exact re-simulation.
 
-So round 3 recommends one new Node tool, `sim:dump`, with the same inputs as
-the Rust `sim_parity` tool:
+So round 3 recommends one new Node tool, `sim:dump`. A Rust `cargo test` runs
+the same inputs and compares each step:
 
 ```text
 input:  map name, spawn position and yaw, a command list (one line per 8 ms step:
