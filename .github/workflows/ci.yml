@@ -1,0 +1,58 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+env:
+  CARGO_TERM_COLOR: always
+  RUSTFLAGS: -D warnings
+  # shagger is private: Cargo fetches it with git and the token below.
+  CARGO_NET_GIT_FETCH_WITH_CLI: "true"
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Allow reading shagger
+        run: git config --global url."https://x-access-token:${{ secrets.SHAGGER_READ_TOKEN }}@github.com/Higher-Standard-Games/shagger".insteadOf "https://github.com/Higher-Standard-Games/shagger"
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo fmt --all --check
+      - run: cargo clippy --all-targets
+      - run: cargo test
+
+  # The game against the engine's main branch, not the pinned revision, so an
+  # engine change that breaks the game shows up before the pin moves.
+  engine-main:
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/checkout@v4
+        with:
+          repository: Higher-Standard-Games/shagger
+          token: ${{ secrets.SHAGGER_READ_TOKEN }}
+          path: shagger-main
+      - name: Use the checked-out engine
+        run: |
+          mkdir -p .cargo
+          cat > .cargo/config.toml <<'TOML'
+          [patch."https://github.com/Higher-Standard-Games/shagger"]
+          shagger = { path = "shagger-main/crates/shagger" }
+          shagger_shared = { path = "shagger-main/crates/shagger_shared" }
+          TOML
+      - uses: dtolnay/rust-toolchain@stable
+      - run: cargo test
+
+  deny:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Allow reading shagger
+        run: git config --global url."https://x-access-token:${{ secrets.SHAGGER_READ_TOKEN }}@github.com/Higher-Standard-Games/shagger".insteadOf "https://github.com/Higher-Standard-Games/shagger"
+      - uses: EmbarkStudios/cargo-deny-action@v2
