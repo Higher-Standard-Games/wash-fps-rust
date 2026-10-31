@@ -5,5 +5,7 @@
 
 pub use shagger;
 
+pub mod shared;
+
 /// The client's version, as shown in the window title and sent nowhere yet.
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");

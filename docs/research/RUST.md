@@ -1,7 +1,7 @@
 # A native Washoi client in Rust
 
 Opened: October 31, 2026. Status: research rounds 1 to 6 done; milestone 0
-started.
+done; milestone 1 done except demos (section 23).
 
 This file lives in wash-fps-rust and is the plan of record. It started in
 wash-fps (`docs/research/RUST.md` on `staging`), and that copy is no longer
@@ -2559,3 +2559,36 @@ fit and did not count the parity harness.
 - 9 (audio layer): replace "kira" with the custom mixer of 22.7, and add the
   music path.
 - 15, milestone 8: 3.5 weeks.
+
+---
+
+## 23. Progress log
+
+Newest first. Each entry names the commits and what proves them.
+
+### Milestone 1: the wire protocol (October 31, 2026)
+
+- **shagger `7d19ed0`, `ee860b4`.** `shagger_shared::net` ports
+  `BinaryProtocol.ts` (encoder, decoder, commands, snapshot decode with
+  baselines and the pickup mask) and `MessageCodec.ts` (snapshot envelope and
+  header checks, every client and server message, `peekCommandSeq`). The
+  snapshot decoder takes an `EventCodec`; `NoEvents` is the engine's own.
+  `shagger_shared::json` parses with `JSON.parse` rules (duplicate keys, key
+  order, lone surrogates), and `shagger_shared::js` gained the `DataView`
+  integer conversions (`to_uint32` and friends).
+- **Proof.** `tools/golden/protocol.mjs` runs SHAG's own TypeScript and writes
+  byte and decoded-state vectors: 309 hand-written raw snapshots covering every
+  entity and player flag, repeated ids, rotation without position, truncation
+  and trailing bytes; 130 server-encoded delta chains through the envelope,
+  including every header SHAG refuses; 300 commands with odd JavaScript numbers;
+  all messages; 425 `TextDecoder` cases (BOM, invalid UTF-8). Rust matches all
+  of them bit for bit on the first run after the port.
+- **wash-fps-rust.** `washoi::shared::net::snapshot_events` is Washoi's
+  `EventCodec`: all 25 codes, with `match_state`, `weapon_state` and
+  `agent_directives` payloads kept as `json::Value`. 1,500 golden snapshots
+  of random events (odd JSON, malformed JSON, truncation) decode exactly as SHAG
+  decodes them.
+- **Left in milestone 1.** Demo files: `DemoReader.ts` needs zlib, and
+  crates.io is not reachable from the build environment yet, so this waits for
+  `flate2`. The server-side snapshot encoder is not ported; the client never
+  encodes a snapshot.
