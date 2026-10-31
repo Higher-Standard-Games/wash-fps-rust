@@ -3,6 +3,7 @@ name = "washoi"
 description = "Washoi, the native client: wash-fps ported to Rust on the SHAGGER engine."
 license = "MIT"
 version = "0.0.1"
+publish = false
 edition = "2024"
 rust-version = "1.87"
 repository = "https://github.com/Higher-Standard-Games/wash-fps-rust"
@@ -13,7 +14,7 @@ repository = "https://github.com/Higher-Standard-Games/wash-fps-rust"
 #   [patch."https://github.com/Higher-Standard-Games/shagger"]
 #   shagger = { path = "../shagger/crates/shagger" }
 #   shagger_shared = { path = "../shagger/crates/shagger_shared" }
-shagger = { git = "https://github.com/Higher-Standard-Games/shagger", rev = "c4ef25a90bb725cbad8bd834f8b31ea5ce5c45a0" }
+shagger = { git = "https://github.com/Higher-Standard-Games/shagger", rev = "a7acae5290777fdabeb39b5f1475127d9a22a4c8" }
 
 [lints.rust]
 unsafe_code = "deny"
