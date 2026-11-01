@@ -1,7 +1,7 @@
 # A native Washoi client in Rust
 
 Opened: October 31, 2026. Status: research rounds 1 to 6 done; milestone 0
-done; milestone 1 done except demos; milestone 2 has map loading and
+done; milestone 1 done except demos; milestone 3 has map loading and
 collision (section 23).
 
 This file lives in wash-fps-rust and is the plan of record. It started in
@@ -2567,7 +2567,7 @@ fit and did not count the parity harness.
 
 Newest first. Each entry names the commits and what proves them.
 
-### Milestone 2, first half: map loading and collision (November 1, 2026)
+### Milestone 3, first part: map loading and collision (November 1, 2026)
 
 - **shagger `a33f0a8`.** `loader::bsp::bsp_loader` ports `BspLoader.ts`
   (`load`, `loadCollision`, entity parsing, leaf lookup, cluster visibility,
