@@ -4,20 +4,29 @@
 
 use std::path::{Path, PathBuf};
 
-use shagger::loader::bsp::bsp_loader::{BspFile, load};
+use shagger::lighting::sky_light_system::bsp_mode_lights;
+use shagger::loader::bsp::bsp_loader::{BspFile, load, load_collision};
 use shagger::loader::pk3::node_pk3::ingest_pk3_dir;
 use shagger::loader::pk3::pk3_loader::Pk3Loader;
 use shagger::loader::shader::q3_shader_registry::Q3ShaderRegistry;
 use shagger::loader::texture::resolve_and_load_texture;
 use shagger::physics::player_physics_constants::DEFAULT_VIEWHEIGHT;
+use shagger::physics::sweep_backend_adapter::SweepBackendAdapter;
+use shagger::physics::sweep_collision_backend::SweepCollisionBackend;
 use shagger::rendering::camera::Camera;
 use shagger::rendering::gpu::Gpu;
+use shagger::rendering::model_renderer::{ImageProcessing, ModelDraw, ModelRenderer};
 use shagger::rendering::offscreen::{OFFSCREEN_FORMAT, render_to_rgba};
 use shagger::rendering::sky_renderer::{SkyRenderer, apply_skybox};
 use shagger::rendering::wgpu;
 use shagger::rendering::world_culling::WorldCulling;
 use shagger::rendering::world_geometry::build_world_geometry;
 use shagger::rendering::world_renderer::{Rgba8Image, WorldRenderer};
+use shagger::shared::collision::shared_collision_world::SharedCollisionWorld;
+
+use washoi::shared::bsp::pickup_table::{PickupEntry, extract_pickups};
+use washoi::shared::items::item_throw::land_map_pickups;
+use washoi::world::fps_pickup::build_weapon_pickups;
 
 /// `SPAWN_CLASSNAMES` (wash-fps `shared/bsp/BspDataLoader.ts`).
 const SPAWN_CLASSNAMES: [&str; 4] = [
@@ -59,6 +68,8 @@ pub struct LoadedMap {
     pub shaders: Q3ShaderRegistry,
     pub bsp: BspFile,
     pub spawns: Vec<Camera>,
+    /// The map's pickups where they come to rest (`landMapPickups`).
+    pub pickups: Vec<PickupEntry>,
 }
 
 /// Reads every package in `data` and the map's BSP from them.
@@ -73,6 +84,12 @@ pub fn load_map(data: &Path, map: &str) -> Result<LoadedMap, String> {
         .get_file(&path)
         .ok_or_else(|| format!("{path} is in none of the {count} packages"))?;
     let bsp = load(&bytes).map_err(|e| format!("{path}: {e}"))?;
+    let collision = load_collision(&bytes).map_err(|e| format!("{path}: {e}"))?;
+    let table = extract_pickups(&collision.entities);
+    let mut world = SharedCollisionWorld::new(SweepBackendAdapter {
+        backend: SweepCollisionBackend::new(collision),
+    });
+    let pickups = land_map_pickups(&table, Some(&mut world));
     let spawns = bsp
         .common
         .entities
@@ -101,12 +118,16 @@ pub fn load_map(data: &Path, map: &str) -> Result<LoadedMap, String> {
         shaders,
         bsp,
         spawns,
+        pickups,
     })
 }
 
-/// The map's sky and world, and which world batches the camera can see.
+/// The map's sky, world and pickup models, and which world batches the
+/// camera can see.
 pub struct MapRenderer {
     pub world: WorldRenderer,
+    pub models: ModelRenderer,
+    pub model_draws: Vec<ModelDraw>,
     pub sky: Option<SkyRenderer>,
     pub culling: WorldCulling,
     /// Off draws every batch (`--no-cull`), for comparing.
@@ -118,21 +139,23 @@ impl MapRenderer {
     pub fn prepare(&mut self, gpu: &Gpu, camera: &Camera, aspect: f32) {
         self.culling.update(camera, aspect);
         self.world.prepare(gpu, camera.view_projection(aspect), camera.position);
+        self.models
+            .prepare(gpu, camera.view_projection(aspect), camera.position, &self.model_draws);
         if let Some(sky) = &self.sky {
             sky.prepare(gpu, camera, aspect);
         }
     }
 
-    /// Records the sky, then the world.
+    /// Records the sky, the opaque world and models, then the blended ones.
     pub fn draw(&self, pass: &mut wgpu::RenderPass<'_>) {
         if let Some(sky) = &self.sky {
             sky.draw(pass);
         }
-        if self.cull {
-            self.world.draw_visible(pass, self.culling.visible());
-        } else {
-            self.world.draw(pass);
-        }
+        let visible = if self.cull { self.culling.visible() } else { &[] };
+        self.world.draw_visible_opaque(pass, visible);
+        self.models.draw_opaque(pass);
+        self.world.draw_visible_blended(pass, visible);
+        self.models.draw_blended(pass);
     }
 }
 
@@ -182,8 +205,22 @@ pub fn build_renderer(gpu: &Gpu, map: &mut LoadedMap, format: wgpu::TextureForma
         }
     };
     let culling = WorldCulling::new(&map.bsp, &geometry);
+    let mut models = ModelRenderer::new(gpu, format);
+    // SHAG's lights for a BSP map, with r_bsp_pbr at its default, and the
+    // scene's image processing (contrast 1.05).
+    models.set_lights(bsp_mode_lights(true));
+    models.set_image_processing(ImageProcessing {
+        contrast: 1.05,
+        exposure: 1.0,
+    });
+    let pickups = build_weapon_pickups(gpu, &mut map.pk3, &mut models, &map.pickups);
+    for failure in &pickups.failures {
+        eprintln!("pickup model: {failure}");
+    }
     MapRenderer {
         world: renderer,
+        models,
+        model_draws: pickups.draws,
         sky,
         culling,
         cull: true,

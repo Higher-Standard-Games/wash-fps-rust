@@ -1901,8 +1901,12 @@ the same `r_ktx2` cvar, defaulting to 0 natively until it is measured.
 
 ### 20.7 Models and sounds
 
-- **glTF:** the player, weapons and effects. The `gltf` crate reads `.glb`,
-  including embedded textures, which use the same decoders as 20.6. Animations
+- **glTF:** the player, weapons and effects. shagger's
+  `loader::model::glb` reads `.glb` with serde, embedded textures included,
+  which use the same decoders as 20.6. (The plan named the `gltf` crate; it
+  rejects Washoi's `EXT_texture_webp` textures, which carry no core
+  `source`, so the few parts of the format the models use are read
+  directly.) Animations
   come as separate `.glb` files, one per clip
   (`player-model-vanguard.json`), and are retargeted by bone name. Port the
   retarget table from SHAG's player model code rather than re-deriving it.
@@ -2286,7 +2290,7 @@ live web servers.
 | glTF PBR | rewrite from the Khronos reference | MIT | players are tinted and lit by the grid anyway |
 | Mirror texture, reflection probe | rewrite | MIT | they are just a camera and a target |
 | Camera matrices (left-handed, Y up) | `glam` `*_lh` functions | MIT | 7.2 |
-| glTF loading | `gltf` crate | MIT or Apache (crate) | |
+| glTF loading | own serde reader (`loader::model::glb`); the `gltf` crate refuses `EXT_texture_webp` textures | MIT | 20.7 |
 
 ### 21.10 First playable renderer
 
@@ -2567,6 +2571,49 @@ fit and did not count the parity harness.
 ## 23. Progress log
 
 Newest first. Each entry names the commits and what proves them.
+
+### Milestone 6, seventh slice: glTF models and the map's weapon pickups (November 1, 2026)
+
+- **shagger `9f1a9b4`.**
+  - `loader::model::glb` reads `.glb`. `loader::model::gltf_model` poses a
+    model at its first animation frame (`settleConstantSourceAnimations`),
+    skins it once on the CPU, and keeps its `tag_*` attachment points
+    (`collectModelAttachmentPoints`), as SHAG's pickup cache hands models
+    out: flattened, with the loader's `__root__` gone.
+  - `loader::model::tags_loader` ports `TagsLoader.ts`.
+    `weapon::weapon_barrels` ports the world half of `WeaponBarrels.ts`
+    (`findBarrelMount`, `attachWorldBarrels`, the material preparation).
+    `world::pickup` ports how `Pickup.loadModel` places a cloned model.
+  - `rendering::model_renderer` draws models as Babylon's `PBRMaterial`
+    draws them with no environment texture. The lights are
+    `SkyLightSystem`'s BSP-mode set (`lighting::sky_light_system`): the fill,
+    the sun and the ambient light. Diffuse is Lambert (Babylon's EON model
+    at diffuse roughness 0). Contrast is 1.05.
+  - Blended draws write no depth, because Babylon's `setAlphaMode` turns the
+    depth mask off. They sort back to front by bounding centre, and ties
+    keep Babylon's mesh creation order. That order decides how the plasma
+    gun's glass, halo and plasma layers stack.
+  - The world pass now splits into opaque and blended halves, so models
+    draw between them.
+- **wash-fps-rust.**
+  - `world::fps_pickup` draws every map weapon pickup at its
+    `landMapPickups` spot, with `mapWeaponYaw` (`world::entity_manager`),
+    its definition's scale and its barrels.
+  - `shared::entities::definitions::weapons::weapons_table` holds the
+    weapon models.
+  - `washoi view` draws them. Health, armour, ammo and powerups are
+    procedural visuals in wash-fps and are not drawn yet.
+- **Checked against the browser** with `tools/parity`, which now shows the
+  map's weapon pickups too.
+  - Placement, barrels and draw order match on dm2.
+  - In close-ups of the rocket launcher and the plasma gun, the colour
+    means of the models are within 2 levels in 255.
+  - Whole views differ by 6 to 8 on average. The floor's gloss maps
+    account for most of that.
+  - Normal, metallic-roughness and specular light for models are not drawn
+    yet.
+- **Next.** Skinned glTF players with the light grid (21.10), then MD3 items
+  and projectiles.
 
 ### Milestone 6, sixth slice: map pickups and the parity harness (November 1, 2026)
 
