@@ -1,17 +1,25 @@
 //! The native client binary. For now the headless client of milestone 2
-//! (RUST.md 15): it joins a game server, acknowledges snapshots, keeps the
-//! clock in sync and prints the scoreboard.
+//! (RUST.md 15): it logs in to the lobby, finds or queues for a match, joins
+//! the game server, acknowledges snapshots, keeps the clock in sync and
+//! prints the scoreboard.
 //!
 //! ```text
-//! washoi connect <ws://host:port> [--name NAME] [--ticket TICKET] [--seconds N] [--play]
+//! washoi connect <ws://game-server> [--name NAME] [--ticket TICKET] [--seconds N] [--play]
+//! washoi lobby <ws://lobby> [--key-file FILE] list
+//! washoi lobby <ws://lobby> [--key-file FILE] spectate [--seconds N]
+//! washoi lobby <ws://lobby> [--key-file FILE] queue <gametype> [--seconds N] [--play]
 //! ```
 //!
-//! `--play` asks to join the match and then runs forward in a slow circle,
-//! printing where the server puts the player, so the command path is
-//! exercised too.
+//! `--key-file` keeps the account key: it is read when the file exists, and a
+//! new account's key (sent once, in `welcome`) is written to it. Without it
+//! every login makes a new account. `--play` joins the match and runs forward
+//! in a slow circle, so the command path is exercised too.
 
+use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
+use shagger::lobby::lobby_client::{LobbyClient, LobbyEvent};
+use shagger::lobby::types::{LobbyConnect, LobbyIn};
 use shagger::network::client::hosts::network_game_host::HostEvent;
 use shagger::network::client::network_session::{NetworkSession, SessionConfig, SessionEvent, SessionRequest};
 use shagger::shared::js::{js_cos, js_sin};
@@ -19,44 +27,190 @@ use shagger::shared::json::Value;
 use shagger::shared::net::command::Command;
 use washoi::shared::net::snapshot_events::{SnapshotEvent, WashoiEvents};
 
-struct Args {
-    url: String,
-    name: String,
-    ticket: Option<String>,
-    seconds: f64,
-    play: bool,
-}
-
 fn usage() -> ! {
-    eprintln!("usage: washoi connect <ws://host:port> [--name NAME] [--ticket TICKET] [--seconds N] [--play]");
+    eprintln!(
+        "washoi {}\n\
+         usage: washoi connect <ws://game-server> [--name NAME] [--ticket TICKET] [--seconds N] [--play]\n\
+         \x20      washoi lobby <ws://lobby> [--key-file FILE] list\n\
+         \x20      washoi lobby <ws://lobby> [--key-file FILE] spectate [--seconds N]\n\
+         \x20      washoi lobby <ws://lobby> [--key-file FILE] queue <gametype> [--seconds N] [--play]",
+        washoi::VERSION
+    );
     std::process::exit(2);
 }
 
-fn parse_args() -> Args {
-    let mut args = std::env::args().skip(1);
-    if args.next().as_deref() != Some("connect") {
-        println!("washoi {} on shagger", washoi::VERSION);
-        usage();
-    }
-    let Some(url) = args.next() else { usage() };
-    let mut parsed = Args {
-        url,
-        name: "RustClient".into(),
-        ticket: None,
-        seconds: 10.0,
-        play: false,
-    };
-    while let Some(flag) = args.next() {
-        match flag.as_str() {
-            "--name" => parsed.name = args.next().unwrap_or_else(|| usage()),
-            "--ticket" => parsed.ticket = Some(args.next().unwrap_or_else(|| usage())),
-            "--seconds" => parsed.seconds = args.next().and_then(|s| s.parse().ok()).unwrap_or_else(|| usage()),
-            "--play" => parsed.play = true,
-            _ => usage(),
+/// Options shared by every mode.
+#[derive(Default)]
+struct Options {
+    name: Option<String>,
+    ticket: Option<String>,
+    seconds: Option<f64>,
+    play: bool,
+    key_file: Option<PathBuf>,
+    words: Vec<String>,
+}
+
+fn parse_options(args: impl Iterator<Item = String>) -> Options {
+    let mut o = Options::default();
+    let mut args = args.peekable();
+    while let Some(arg) = args.next() {
+        let mut value = || args.next().unwrap_or_else(|| usage());
+        match arg.as_str() {
+            "--name" => o.name = Some(value()),
+            "--ticket" => o.ticket = Some(value()),
+            "--seconds" => o.seconds = Some(value().parse().unwrap_or_else(|_| usage())),
+            "--key-file" => o.key_file = Some(PathBuf::from(value())),
+            "--play" => o.play = true,
+            flag if flag.starts_with("--") => usage(),
+            _ => o.words.push(arg),
         }
     }
-    parsed
+    o
 }
+
+fn main() {
+    let mut args = std::env::args().skip(1);
+    let mode = args.next().unwrap_or_else(|| usage());
+    let url = args.next().unwrap_or_else(|| usage());
+    let o = parse_options(args);
+    let code = match mode.as_str() {
+        "connect" => play_match(
+            &url,
+            o.name.as_deref().unwrap_or("RustClient"),
+            o.ticket,
+            o.seconds.unwrap_or(10.0),
+            o.play,
+        ),
+        "lobby" => lobby(&url, &o),
+        _ => usage(),
+    };
+    std::process::exit(code);
+}
+
+// ── Lobby ──────────────────────────────────────────────────────────────────
+
+#[allow(clippy::too_many_lines)]
+fn lobby(url: &str, o: &Options) -> i32 {
+    let key = o
+        .key_file
+        .as_ref()
+        .and_then(|f| std::fs::read_to_string(f).ok())
+        .map(|k| k.trim().to_owned())
+        .filter(|k| !k.is_empty());
+    let how = if key.is_some() {
+        "with the stored key"
+    } else {
+        "as a new account"
+    };
+    println!("lobby {url}: logging in {how}");
+    let client = LobbyClient::connect(url);
+    let mut name = String::new();
+    let mut lobby_id: Option<String> = None;
+    let mut queued = false;
+    let deadline = Instant::now() + Duration::from_secs(120);
+
+    while Instant::now() < deadline {
+        let Some(event) = client.next_event(Duration::from_millis(200)) else {
+            continue;
+        };
+        match event {
+            LobbyEvent::Connected => client.auth(key.as_deref()),
+            LobbyEvent::Error(why) => {
+                println!("lobby error: {why}");
+                return 1;
+            }
+            LobbyEvent::Disconnected { reason, code } => {
+                println!("lobby closed ({code}): {reason}");
+                return 1;
+            }
+            LobbyEvent::Message(LobbyIn::AuthError(e)) => {
+                println!("login refused: {}", e.code);
+                return 1;
+            }
+            LobbyEvent::Message(LobbyIn::Welcome(w)) => {
+                name = w
+                    .identity
+                    .as_ref()
+                    .map_or_else(|| w.player_id.clone(), |i| i.name.clone());
+                println!("logged in as {name}, {} online", w.online_players.len());
+                if let (Some(new_key), Some(file)) = (&w.key, &o.key_file) {
+                    match std::fs::write(file, new_key) {
+                        Ok(()) => println!("new account: key saved to {}", file.display()),
+                        Err(e) => println!("new account: could not save its key: {e}"),
+                    }
+                }
+                let gametypes: Vec<&str> = w.gametypes.iter().map(|g| g.id.as_str()).collect();
+                println!("gametypes: {}", gametypes.join(", "));
+                for m in &w.live_matches {
+                    println!(
+                        "  match {} {} on {}: {}/{} players, {}{}",
+                        m.id,
+                        m.gametype_name,
+                        if m.map.is_empty() { "?" } else { &m.map },
+                        m.player_count,
+                        m.max_players,
+                        m.state,
+                        m.server_url.as_deref().map(|u| format!(" at {u}")).unwrap_or_default()
+                    );
+                }
+                match o.words.first().map(String::as_str) {
+                    Some("list") => return 0,
+                    Some("spectate") => {
+                        let Some(server) = w
+                            .live_matches
+                            .iter()
+                            .filter(|m| m.state == "playing")
+                            .find_map(|m| m.server_url.clone())
+                        else {
+                            println!("no match is being played right now");
+                            return 0;
+                        };
+                        client.disconnect();
+                        return play_match(&server, &name, None, o.seconds.unwrap_or(15.0), false);
+                    }
+                    Some("queue") => {
+                        let gametype = o.words.get(1).map_or("duel", String::as_str);
+                        println!("queueing for {gametype}");
+                        client.join_queue(gametype);
+                        queued = true;
+                    }
+                    _ => usage(),
+                }
+            }
+            LobbyEvent::Message(LobbyIn::RoomState(room)) if queued => {
+                let id = room.get("id").and_then(|v| v.as_str()).unwrap_or_default().to_owned();
+                if lobby_id.as_deref() != Some(id.as_str()) {
+                    println!("in room {id}; ready");
+                    client.set_ready(&id, true);
+                    lobby_id = Some(id);
+                }
+            }
+            LobbyEvent::Message(LobbyIn::Other { kind, message }) if kind == "lobby:starting" => {
+                let map = message.get("map").and_then(|v| v.as_str()).unwrap_or("?");
+                println!("match starting on {map}");
+            }
+            LobbyEvent::Message(LobbyIn::Connect(LobbyConnect {
+                server_url,
+                map,
+                gametype,
+                admission_ticket,
+                ..
+            })) => {
+                println!("lobby: go to {server_url} ({gametype} on {map})");
+                // The browser keeps the lobby open during the match; this
+                // client does not need it until the next one.
+                client.disconnect();
+                return play_match(&server_url, &name, admission_ticket, o.seconds.unwrap_or(15.0), o.play);
+            }
+            LobbyEvent::Message(LobbyIn::LobbyError(why)) => println!("lobby: {why}"),
+            LobbyEvent::Message(_) => {}
+        }
+    }
+    println!("gave up waiting for the lobby");
+    1
+}
+
+// ── The match ──────────────────────────────────────────────────────────────
 
 fn n(v: Option<&Value>) -> f64 {
     v.and_then(Value::as_f64).unwrap_or(f64::NAN)
@@ -86,14 +240,14 @@ fn print_standings(match_state: &Value, standings: &[Value]) {
     }
 }
 
-fn main() {
-    let args = parse_args();
-    println!("connecting to {} as {}", args.url, args.name);
+#[allow(clippy::too_many_lines)]
+fn play_match(url: &str, name: &str, ticket: Option<String>, seconds: f64, play: bool) -> i32 {
+    println!("connecting to {url} as {name}");
     let session = NetworkSession::start(
         SessionConfig {
-            url: args.url.clone(),
-            player_name: args.name.clone(),
-            admission_ticket: args.ticket.clone(),
+            url: url.to_owned(),
+            player_name: name.to_owned(),
+            admission_ticket: ticket,
         },
         WashoiEvents,
     );
@@ -113,7 +267,7 @@ fn main() {
     let mut exit = 0;
     let mut clock = (0.0, 0.0);
 
-    while start.elapsed().as_secs_f64() < args.seconds {
+    while start.elapsed().as_secs_f64() < seconds {
         for event in session.poll_events() {
             match event {
                 SessionEvent::Host(HostEvent::ServerInfo(w)) => println!(
@@ -126,13 +280,14 @@ fn main() {
                 }) => {
                     println!("joined as {player_id} (entity {e:?})");
                     entity_id = e;
-                    if args.play && !joined {
+                    if play && !joined {
                         session.send(SessionRequest::JoinGame {
                             team_id: None,
                             manual_pick: false,
                             admission_ticket: None,
                         });
                         joined = true;
+                        next_command = Instant::now();
                     }
                 }
                 SessionEvent::Host(HostEvent::ResumeToken { grace_ms }) => {
@@ -170,13 +325,13 @@ fn main() {
                 SessionEvent::Resuming { attempt } => println!("connection lost, resuming (attempt {attempt})"),
                 SessionEvent::Closed(why) => {
                     println!("closed: {why}");
-                    std::process::exit(if exit == 0 { 1 } else { exit });
+                    return if exit == 0 { 1 } else { exit };
                 }
             }
         }
 
-        if joined && Instant::now() >= next_command {
-            // 125 commands a second: forward, turning slowly.
+        // 125 commands a second: forward, turning slowly.
+        while joined && Instant::now() >= next_command {
             next_command += Duration::from_millis(8);
             yaw += 0.004;
             session.send(SessionRequest::Command(Command {
@@ -210,6 +365,5 @@ fn main() {
         std::thread::sleep(Duration::from_millis(2));
     }
     println!("done after {:.0}s", start.elapsed().as_secs_f64());
-    drop(session);
-    std::process::exit(exit);
+    exit
 }

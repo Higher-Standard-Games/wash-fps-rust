@@ -2567,6 +2567,44 @@ fit and did not count the parity harness.
 
 Newest first. Each entry names the commits and what proves them.
 
+### Milestone 2: the headless client, against local servers (November 1, 2026)
+
+- **shagger `91ed8d9`.** `network::client` ports `ClockSync.ts`,
+  `ConnectionWatchdog.ts`, `SnapshotReceiver.ts` and the connection logic of
+  `hosts/NetworkGameHost.ts`: the handshake (Join, Welcome with the 125 Hz
+  check, JoinAccept, ResumeToken, the wait for the token on a ticketed join),
+  snapshots dropped before the join and acked the moment they decode,
+  baselines kept per connection (128), clock-sync bursts and resyncs, the
+  10-second handshake timeout, the watchdog with its skipped gaps, commands
+  and the reliable requests. It is written without I/O: the owner feeds it
+  frames and the time. `network_session` is that owner, a tokio current-thread
+  runtime on a network thread with `tokio-tungstenite` (rustls, `ring`,
+  webpki roots, Nagle off), talking to the game through channels; on a drop
+  or a stall it reconnects and sends `Resume` every 2 s until the server's
+  grace has passed. Unit tests cover the handshake cases.
+- **shagger `dc5f226`.** `lobby` ports `LobbyClient.ts` and the message types
+  the client acts on (welcome, auth:error, matches:update, lobby:connect,
+  chat, room state, lobby:error); every other message arrives as JSON
+  (`serde_json`). Outgoing messages leave absent fields out, as
+  `JSON.stringify` does.
+- **wash-fps-rust.** `washoi connect <game server>` and
+  `washoi lobby <lobby> list | spectate | queue <gametype>`, with
+  `--key-file` to keep the account key and `--play` to join and run.
+- **Proof, live against local servers.** wash-fps's `net:server`,
+  `bot-server` and `lobby:server` run in the build environment from the SHAG
+  checkout. The Rust client joins a deathmatch with three bots, acks at
+  62.5 Hz with a ping of 0 to 1 ms (17 ms before Nagle was turned off), reads
+  every Washoi event, keeps the roster the server leaves out, gets fragged,
+  and resumes the same player after its connection is cut through a proxy.
+  Through the lobby, two Rust clients log in (new account, then by key),
+  queue for duel, get readied into one room, receive `lobby:connect` with
+  their tickets and play the match the lobby spawned.
+- **Licences.** `deny.toml` in both repositories now allows
+  `CDLA-Permissive-2.0`, the licence of `webpki-roots` (the Mozilla CA list).
+- **Left.** The live servers (waiting on the owner's go-ahead, since logging
+  in creates an account on production), the stall-resume path against a
+  real stall, and `match:seat_reissue` when a ticket expires.
+
 ### Milestone 1, done: demo files (November 1, 2026)
 
 - **shagger `5cf322f`.** `shagger_shared::demo` ports `DemoReader.ts`,
