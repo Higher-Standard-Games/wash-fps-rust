@@ -1,7 +1,8 @@
 # A native Washoi client in Rust
 
 Opened: October 31, 2026. Status: research rounds 1 to 6 done; milestone 0
-done; milestone 1 done except demos (section 23).
+done; milestone 1 done except demos; milestone 2 has map loading and
+collision (section 23).
 
 This file lives in wash-fps-rust and is the plan of record. It started in
 wash-fps (`docs/research/RUST.md` on `staging`), and that copy is no longer
@@ -2565,6 +2566,34 @@ fit and did not count the parity harness.
 ## 23. Progress log
 
 Newest first. Each entry names the commits and what proves them.
+
+### Milestone 2, first half: map loading and collision (November 1, 2026)
+
+- **shagger `a33f0a8`.** `loader::bsp::bsp_loader` ports `BspLoader.ts`
+  (`load`, `loadCollision`, entity parsing, leaf lookup, cluster visibility,
+  used textures) for IBSP and FBSP. `shagger_shared::js` gained `js_trim`,
+  `js_parse_float` and `js_string_to_number`. Proof: 250 synthetic maps with
+  real-file damage (lumps outside the file, partial records, bad patch
+  ranges) from `tools/golden/bsp.mjs` load exactly as SHAG loads them.
+- **shagger `42a23dc`.** Map collision. `shagger_shared` gained
+  `bsp::{map_entities, brush_model_state, lift_system}` and
+  `collision::{collision_world, shared_collision_world}`; `shagger::physics`
+  ports `SweepCollisionBackend.ts` (BSP walk, brushes, patch facets, clip
+  brush fallback, containment pruning, lifts, `func_explosive` models, slide
+  and step-slide moves, point contents, ladders, ground) and
+  `SweepBackendAdapter.ts`. The Babylon `Vector3` subset it needs is in
+  `babylon/maths/math_vector.rs` (Apache-2.0).
+- **Proof.** `tools/golden/collision.mjs` builds 120 IBSP maps (floor, stairs,
+  ramps, nested and slanted brushes, every collision texture kind, curved
+  patches, random BSP trees, lifts with triggers, explosives) and runs about
+  8,400 mixed queries through SHAG's own backend, adapter and
+  `SharedCollisionWorld`, in order, so lift motion and model toggles feed later
+  traces. Rust replays them and matches every bit. Mutation checks (overclip,
+  leaf lookup, start-solid visit reset, side surface flags) each fail the test.
+  The generator now needs SHAG's `node_modules` for `@babylonjs/core`.
+- **Next.** The movement profile in `washoi::simulation` (acceleration,
+  slide, wall jump, ledge grab, swim, ladder, knockback), then the `sim:dump`
+  harness against the TypeScript simulation.
 
 ### Milestone 1: the wire protocol (October 31, 2026)
 
