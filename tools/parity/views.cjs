@@ -14,7 +14,7 @@ const { open, boot, waitForMap, sleep } = require('./lib.cjs');
 // for the camera.
 (async () => {
   setTimeout(() => process.exit(3), 1_500_000).unref();
-  const [demo, prefix, list, size = '1280x720', keepRe = '^(bsp|skybox)', players = '', itemTime = '', projectiles = ''] = process.argv.slice(2);
+  const [demo, prefix, list, size = '1280x720', keepRe = '^(bsp|skybox)', players = '', itemTime = '', projectiles = '', explosions = ''] = process.argv.slice(2);
   const [w, h] = size.split('x').map(Number);
   const b = await open({ width: w, height: h });
   try {
@@ -23,12 +23,12 @@ const { open, boot, waitForMap, sleep } = require('./lib.cjs');
     b.command('demoplay');
     await waitForMap(b);
     await sleep(2000);
-    await b.ev(async ([keepRe, players, itemTime, projectiles]) => {
+    await b.ev(async ([keepRe, players, itemTime, projectiles, explosions]) => {
       const { DemoService } = await import('/src/games/fps/client/DemoService.ts');
       DemoService.getInstance().activeDemoViewer?.pause();
       const scene = window.scene;
       const camera = scene.activeCameras?.[0] ?? scene.activeCamera;
-      const keep = new RegExp(`${keepRe}|^probe_player${itemTime ? '|^pp_' : ''}${projectiles ? '|^proj_\\d+_' : ''}`);
+      const keep = new RegExp(`${keepRe}|^probe_player${itemTime ? '|^pp_' : ''}${projectiles ? '|^proj_\\d+_' : ''}${explosions ? '|^explosion_' : ''}`);
       const frozen = [];
       if (projectiles) {
         const { Vector3 } = await import('/node_modules/@babylonjs/core/Maths/math.vector.js');
@@ -91,6 +91,37 @@ const { open, boot, waitForMap, sleep } = require('./lib.cjs');
           }
         };
       }
+      if (explosions) {
+        // Each explosion from mulberry32 seed 1 in place of Math.random, as
+        // washoi view spawns it, at its age on a held clock, without its
+        // flash light.
+        const { Vector3 } = await import('/node_modules/@babylonjs/core/Maths/math.vector.js');
+        const fx = await import('/src/engine/weapon/ExplosionEffect.ts');
+        const configs = { rocket: fx.ROCKET_EXPLOSION, grenade: fx.GRENADE_EXPLOSION, plasma_bolt: fx.PLASMA_EXPLOSION, blade_blast: fx.BLADE_EXPLOSION };
+        const effect = fx.getExplosionEffect();
+        const random = Math.random;
+        for (const e of explosions.split(';')) {
+          const [id, x, y, z, age] = e.split(',');
+          let seed = 1;
+          Math.random = () => {
+            seed = (seed + 0x6d2b79f5) | 0;
+            let t = Math.imul(seed ^ (seed >>> 15), seed | 1);
+            t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+            return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+          };
+          effect.clock = () => -Number(age);
+          effect.renderer.clock = effect.clock;
+          effect.spawn(new Vector3(Number(x), Number(z), Number(y)), configs[id], Vector3.Up());
+        }
+        Math.random = random;
+        const { getPointLightPool } = await import('/src/engine/weapon/PointLightPool.ts');
+        for (const exp of effect.explosions) {
+          getPointLightPool().release(exp.light);
+          exp.light = null;
+        }
+        effect.clock = () => 0;
+        effect.renderer.clock = effect.clock;
+      }
       if (players) {
         const { PlayerModelManager } = await import('/src/engine/animation/PlayerModelManager.ts');
         const { getPlayerModelVisualStyle } = await import('/src/games/fps/client/PlayerModelVisualSettings.ts');
@@ -144,7 +175,7 @@ const { open, boot, waitForMap, sleep } = require('./lib.cjs');
       };
       scene.onBeforeCameraRenderObservable.add(place);
       for (const el of document.body.querySelectorAll('body > *')) if (!el.querySelector('canvas') && el.tagName !== 'CANVAS') el.style.visibility = 'hidden';
-    }, [keepRe, players, itemTime, projectiles]);
+    }, [keepRe, players, itemTime, projectiles, explosions]);
     for (const [i, at] of list.split(';').entries()) {
       await b.ev((v) => { window.__probeView = v; }, at.split(',').map(Number));
       await sleep(5000);

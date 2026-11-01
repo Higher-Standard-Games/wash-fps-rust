@@ -11,18 +11,24 @@
 # stands player models in both halves. ITEMS=<seconds> shows the procedural
 # pickups in both, posed that many seconds in. PROJECTILES="<id,x,y,z,yaw,pitch>;..."
 # holds projectiles in both (their shader stages ITEMS seconds in).
+# EXPLOSIONS="<id,x,y,z,age>;..." holds those projectiles' explosions in both,
+# that many seconds after they went off against a floor.
 set -e
 HERE=$(cd "$(dirname "$0")" && pwd)
 ROOT=$(cd "$HERE/../.." && pwd)
 map=$1; demo=$2; prefix=$(realpath -m "$3"); views=$4
 if [ -z "$SKIP_BROWSER" ]; then
-  NODE_PATH=$(npm root -g) node "$HERE/views.cjs" "$demo" "${prefix}_b" "$views" 1280x720 '^(bsp|skybox)' "$PLAYERS" "$ITEMS" "$PROJECTILES" >/dev/null
+  NODE_PATH=$(npm root -g) node "$HERE/views.cjs" "$demo" "${prefix}_b" "$views" 1280x720 '^(bsp|skybox)' "$PLAYERS" "$ITEMS" "$PROJECTILES" "$EXPLOSIONS" >/dev/null
 fi
 player_args=()
 [ -n "$ITEMS" ] && player_args+=(--time "$ITEMS")
 if [ -n "$PROJECTILES" ]; then
   IFS=';' read -ra prlist <<< "$PROJECTILES"
   for p in "${prlist[@]}"; do player_args+=(--projectile "$p"); done
+fi
+if [ -n "$EXPLOSIONS" ]; then
+  IFS=';' read -ra exlist <<< "$EXPLOSIONS"
+  for p in "${exlist[@]}"; do player_args+=(--explosion "$p"); done
 fi
 if [ -n "$PLAYERS" ]; then
   IFS=';' read -ra plist <<< "$PLAYERS"

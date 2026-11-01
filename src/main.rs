@@ -4,7 +4,7 @@
 //! prints the scoreboard.
 //!
 //! ```text
-//! washoi view <map> [--data DIR] [--spawn N] [--screenshot FILE.png] [--size WxH] [--time T] [--at X,Y,Z,YAW] [--pitch DEG] [--player X,Y,Z,YAW[,CLIP[,FRAME]]]... [--projectile ID,X,Y,Z,YAW[,PITCH]]... [--no-cull] [--seconds N]
+//! washoi view <map> [--data DIR] [--spawn N] [--screenshot FILE.png] [--size WxH] [--time T] [--at X,Y,Z,YAW] [--pitch DEG] [--player X,Y,Z,YAW[,CLIP[,FRAME]]]... [--projectile ID,X,Y,Z,YAW[,PITCH]]... [--explosion ID,X,Y,Z,AGE]... [--no-cull] [--seconds N]
 //! washoi connect <ws://game-server> [--name NAME] [--ticket TICKET] [--seconds N] [--play]
 //! washoi lobby <ws://lobby> [--key-file FILE] list
 //! washoi lobby <ws://lobby> [--key-file FILE] spectate [--seconds N]
@@ -27,6 +27,8 @@
 //! default) held at a frame (0 by default), drawn in the FFA style. Each
 //! `--projectile` holds a projectile (`rocket`, `grenade`, `plasma_bolt`,
 //! `blade_blast`) at a Quake origin, flying along a Quake yaw and pitch.
+//! Each `--explosion` holds that projectile's explosion at a Quake origin,
+//! `AGE` seconds after it went off against a floor.
 
 mod view;
 mod window;
@@ -46,7 +48,7 @@ use washoi::shared::net::snapshot_events::{SnapshotEvent, WashoiEvents};
 fn usage() -> ! {
     eprintln!(
         "washoi {}\n\
-         usage: washoi view <map> [--data DIR] [--spawn N] [--screenshot FILE.png] [--size WxH] [--time T] [--at X,Y,Z,YAW] [--pitch DEG] [--player X,Y,Z,YAW[,CLIP[,FRAME]]]... [--projectile ID,X,Y,Z,YAW[,PITCH]]... [--no-cull] [--seconds N]\n\
+         usage: washoi view <map> [--data DIR] [--spawn N] [--screenshot FILE.png] [--size WxH] [--time T] [--at X,Y,Z,YAW] [--pitch DEG] [--player X,Y,Z,YAW[,CLIP[,FRAME]]]... [--projectile ID,X,Y,Z,YAW[,PITCH]]... [--explosion ID,X,Y,Z,AGE]... [--no-cull] [--seconds N]\n\
          \x20      washoi connect <ws://game-server> [--name NAME] [--ticket TICKET] [--seconds N] [--play]\n\
          \x20      washoi lobby <ws://lobby> [--key-file FILE] list\n\
          \x20      washoi lobby <ws://lobby> [--key-file FILE] spectate [--seconds N]\n\
@@ -75,6 +77,7 @@ struct Options {
     no_cull: bool,
     players: Vec<view::PlayerView>,
     projectiles: Vec<view::ProjectileView>,
+    explosions: Vec<view::ExplosionView>,
     words: Vec<String>,
 }
 
@@ -128,6 +131,21 @@ fn parse_options(args: impl Iterator<Item = String>) -> Options {
                     pitch: parts.get(5).map_or(0.0, |p| p.parse().unwrap_or_else(|_| usage())),
                 });
             }
+            "--explosion" => {
+                let v = value();
+                let parts: Vec<&str> = v.split(',').map(str::trim).collect();
+                let n = |i: usize| {
+                    parts
+                        .get(i)
+                        .and_then(|p| p.parse::<f32>().ok())
+                        .unwrap_or_else(|| usage())
+                };
+                o.explosions.push(view::ExplosionView {
+                    id: parts.first().map_or_else(|| usage(), |s| (*s).to_owned()),
+                    origin: [n(1), n(2), n(3)],
+                    age: parts.get(4).and_then(|p| p.parse().ok()).unwrap_or_else(|| usage()),
+                });
+            }
             "--pitch" => o.pitch = value().trim().parse().unwrap_or_else(|_| usage()),
             "--time" => o.time = value().parse().unwrap_or_else(|_| usage()),
             "--spawn" => o.spawn = value().parse().unwrap_or_else(|_| usage()),
@@ -179,6 +197,7 @@ fn main() {
                 no_cull: o.no_cull,
                 players: o.players.clone(),
                 projectiles: o.projectiles.clone(),
+                explosions: o.explosions.clone(),
             })
         }
         _ => usage(),

@@ -2578,6 +2578,42 @@ fit and did not count the parity harness.
 
 Newest first. Each entry names the commits and what proves them.
 
+### Milestone 6, twelfth slice: explosions (November 1, 2026)
+
+- **shagger `fbe4e72`.**
+  - `weapon::explosion` ports `ExplosionBatchRenderer` and
+    `ExplosionBatchMaterial`: every live explosion's fireball, rays and
+    sparks as three instanced meshes, animated in the vertex shader from
+    their spawn time (`explosion_batch.wgsl`). The randomness comes from
+    the caller in `Math.random`'s draw order. `weapon::explosion_effect`
+    ports the four presets and which projectile takes which
+    (`spawnImpact`).
+  - `babylon::meshes::ico_sphere_builder` ports `CreateIcoSphereVertexData`
+    (positions and indices).
+  - Blended draws no longer write depth. Babylon's transparent pass sets
+    each mesh's alpha mode, and `setAlphaMode` turns the depth mask off
+    for anything but opaque, whatever the material says. The explosions
+    showed it: with depth writes, a fireball hid its own sparks and its
+    back faces. (The eleventh slice had turned depth writes on for blended
+    `StandardMaterial`s; this takes that back.)
+- **wash-fps-rust.** `washoi view --explosion ID,X,Y,Z,AGE` holds a
+  projectile's explosion against a floor, `AGE` seconds in, its randomness
+  from mulberry32 seed 1.
+- **Checked against the browser** with `tools/parity` (`EXPLOSIONS=`),
+  which swaps the same mulberry32 in for `Math.random` while SHAG's
+  `ExplosionEffect` spawns each explosion, holds its clock, and gives back
+  the flash light. Rocket and plasma explosions differ by 5 levels in 255,
+  grenade and gunblade by 4. Each ray and spark is where the browser puts
+  it. The trails view moved from 5 to 6 levels to 6 to 7 without depth
+  writes.
+- **Order.** Explosions draw after the world's blended surfaces and before
+  the blended models. Their alpha indices (44 to 46) place them among the
+  BSP's own blended surfaces in SHAG, which this does not do yet.
+- **Not yet.** The flash light (dynamic lights), the camera shake,
+  atmospheric fog, the impact sparks and models of projectiles that do not
+  explode, spawning from impacts and server events.
+- **Next.** Beams, tracers and muzzle flashes, then dynamic lights (21.10).
+
 ### Milestone 6, eleventh slice: projectile trails (November 1, 2026)
 
 - **shagger `1bd99e2`.**
@@ -2589,9 +2625,8 @@ Newest first. Each entry names the commits and what proves them.
   - `babylon::meshes::ribbon_builder` ports `CreateRibbonVertexData` for
     two open paths, double sided.
   - The model renderer rewrites a primitive's vertices in place each frame
-    and recentres its bounds. Blended `StandardMaterial`s now write depth,
-    as Babylon's do unless `disableDepthWrite`; the views below moved
-    closer to the browser with it.
+    and recentres its bounds. (This commit also had blended
+    `StandardMaterial`s write depth; the twelfth slice takes that back.)
 - **wash-fps-rust.** `washoi view --projectile` draws each trail as a
   straight second of flight at 60 frames a second would leave it, rebuilt
   each frame for the camera.
@@ -2604,8 +2639,8 @@ Newest first. Each entry names the commits and what proves them.
   At 1.7 seconds it matches.
 - **Not yet.** Flight, impacts and explosions, the carried light, the fade
   in, projectiles from snapshots.
-- **Next.** Impacts and explosions, then beams, tracers and muzzle
-  flashes, then dynamic lights (21.10).
+- **Next.** Explosions, then beams, tracers and muzzle flashes, then
+  dynamic lights (21.10).
 
 ### Milestone 6, tenth slice: projectile models (November 1, 2026)
 

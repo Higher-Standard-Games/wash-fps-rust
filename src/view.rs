@@ -16,7 +16,7 @@ use shagger::physics::player_physics_constants::DEFAULT_VIEWHEIGHT;
 use shagger::physics::sweep_backend_adapter::SweepBackendAdapter;
 use shagger::physics::sweep_collision_backend::SweepCollisionBackend;
 use shagger::rendering::camera::Camera;
-use shagger::rendering::glam::{Mat4, Vec3};
+use shagger::rendering::glam::{DVec3, Mat4, Vec3};
 use shagger::rendering::gpu::Gpu;
 use shagger::rendering::model_renderer::{ImageProcessing, ModelDraw, ModelRenderer};
 use shagger::rendering::offscreen::{OFFSCREEN_FORMAT, render_to_rgba};
@@ -29,6 +29,8 @@ use shagger::shared::collision::shared_collision_world::SharedCollisionWorld;
 use shagger::weapon::projectile_manager::{
     MAX_TRAIL_POINTS, ProjectileModel, ProjectileTrail, load_projectile_model, projectile_matrix,
 };
+use shagger::weapon::explosion::explosion_batch_renderer::ExplosionBatchRenderer;
+use shagger::weapon::explosion_effect::explosion_for;
 use washoi::shared::entities::definitions::projectiles::projectile_def;
 
 use washoi::client::player_model_visual_settings::{PlayerTeamSlot, get_player_model_visual_style};
@@ -73,6 +75,30 @@ pub struct ViewOptions {
     pub no_cull: bool,
     pub players: Vec<PlayerView>,
     pub projectiles: Vec<ProjectileView>,
+    pub explosions: Vec<ExplosionView>,
+}
+
+/// An explosion held at an age (`--explosion`).
+#[derive(Debug, Clone, PartialEq)]
+pub struct ExplosionView {
+    /// The projectile whose explosion it is.
+    pub id: String,
+    /// Its Quake origin.
+    pub origin: [f32; 3],
+    /// Seconds since it went off.
+    pub age: f64,
+}
+
+/// mulberry32, which `tools/parity` puts in place of `Math.random` while it
+/// spawns the same explosions; each explosion starts from seed 1.
+fn mulberry32(mut seed: u32) -> impl FnMut() -> f64 {
+    move || {
+        seed = seed.wrapping_add(0x6D2B_79F5);
+        let mut t = seed;
+        t = (t ^ (t >> 15)).wrapping_mul(t | 1);
+        t ^= t.wrapping_add((t ^ (t >> 7)).wrapping_mul(t | 61));
+        f64::from(t ^ (t >> 14)) / 4_294_967_296.0
+    }
 }
 
 /// A projectile held still on the map (`--projectile`).
@@ -142,6 +168,8 @@ pub struct LoadedMap {
     pub players: Vec<PlayerView>,
     /// Projectiles to hold on the map.
     pub projectiles: Vec<ProjectileView>,
+    /// Explosions to hold on the map.
+    pub explosions: Vec<ExplosionView>,
 }
 
 /// Reads every package in `data` and the map's BSP from them.
@@ -193,6 +221,7 @@ pub fn load_map(data: &Path, map: &str) -> Result<LoadedMap, String> {
         pickups,
         players: Vec::new(),
         projectiles: Vec::new(),
+        explosions: Vec::new(),
     })
 }
 
@@ -213,6 +242,8 @@ pub struct MapRenderer {
     pub projectiles: Vec<(ProjectileModel, Mat4)>,
     /// Their trails, with the definitions' light colours.
     pub trails: Vec<(ProjectileTrail, Option<Vec3>)>,
+    /// Held explosions, drawn at their ages (the clock stays at 0).
+    pub explosions: ExplosionBatchRenderer,
     /// The joint palettes `model_draws` index.
     pub joints: Vec<Mat4>,
     pub sky: Option<SkyRenderer>,
@@ -246,6 +277,8 @@ impl MapRenderer {
             &self.frame_draws,
             &self.joints,
         );
+        self.explosions
+            .prepare(gpu, camera.view_projection(aspect), camera.view(), 0.0);
         if let Some(sky) = &self.sky {
             sky.prepare(gpu, camera, aspect);
         }
@@ -260,6 +293,8 @@ impl MapRenderer {
         self.world.draw_visible_opaque(pass, visible);
         self.models.draw_opaque(pass);
         self.world.draw_visible_blended(pass, visible);
+        // Explosions' alpha indices (44 to 46) put them before the models'.
+        self.explosions.draw(pass);
         self.models.draw_blended(pass);
     }
 }
@@ -369,9 +404,20 @@ pub fn build_renderer(gpu: &Gpu, map: &mut LoadedMap, format: wgpu::TextureForma
             Err(why) => eprintln!("projectile model: {why}"),
         }
     }
+    let mut explosions = ExplosionBatchRenderer::new(gpu, format);
+    for view in &map.explosions {
+        let Some(look) = explosion_for(&view.id) else {
+            eprintln!("explosion: {} does not explode", view.id);
+            continue;
+        };
+        let [x, y, z] = view.origin;
+        let position = DVec3::new(f64::from(x), f64::from(z), f64::from(y));
+        explosions.spawn(-view.age, position, look, DVec3::Y, &mut mulberry32(1));
+    }
     MapRenderer {
         projectiles,
         trails,
+        explosions,
         world: renderer,
         models,
         model_draws,
@@ -395,6 +441,7 @@ pub fn run(o: &ViewOptions) -> i32 {
     };
     map.players.clone_from(&o.players);
     map.projectiles.clone_from(&o.projectiles);
+    map.explosions.clone_from(&o.explosions);
     let at = o.at.map(|[x, y, z, angle]| Camera::from_q3([x, y, z], angle));
     let Some(mut camera) = at.or_else(|| map.spawns.get(o.spawn).or(map.spawns.first()).copied()) else {
         eprintln!("{} has no spawn point", o.map);
