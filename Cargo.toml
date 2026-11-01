@@ -14,7 +14,7 @@ repository = "https://github.com/Higher-Standard-Games/wash-fps-rust"
 #   [patch."https://github.com/Higher-Standard-Games/shagger"]
 #   shagger = { path = "../shagger/crates/shagger" }
 #   shagger_shared = { path = "../shagger/crates/shagger_shared" }
-shagger = { git = "https://github.com/Higher-Standard-Games/shagger", rev = "7b8d927458712f732bcb9810156fa366b9574452" }
+shagger = { git = "https://github.com/Higher-Standard-Games/shagger", rev = "3099f328ed66d5675bad1409847d9e75e6751ae8" }
 
 [lints.rust]
 unsafe_code = "deny"
@@ -23,4 +23,5 @@ unsafe_code = "deny"
 all = { level = "warn", priority = -1 }
 
 [dev-dependencies]
+flate2 = { version = "1", default-features = false, features = ["rust_backend"] }
 sha2 = "0.10"

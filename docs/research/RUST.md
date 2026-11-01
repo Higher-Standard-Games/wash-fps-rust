@@ -2567,6 +2567,34 @@ fit and did not count the parity harness.
 
 Newest first. Each entry names the commits and what proves them.
 
+### Milestone 1, done: demo files (November 1, 2026)
+
+- **shagger `5cf322f`.** `shagger_shared::demo` ports `DemoReader.ts`,
+  `DemoInputs.ts` (the reading side) and `DemoMapName.ts`. Gzip goes through
+  `flate2` with its pure Rust backend, inflating concatenated members the way
+  Node's `gunzipSync` does. Reads keep the TypeScript's tolerance: strings
+  past the end are cut short, frames that fail to decode are skipped,
+  inputs that fail leave the frame with none, and a frame's header is read
+  before the demo header, so an out-of-bounds frame is `None` even when the
+  header is broken.
+- **Proof, synthetic.** `protocol.mjs` writes 400 demos of versions 0 to 7,
+  raw and gzip (truncated, bad CRC, extra members, trailing bytes), with bad
+  magic, visibility, account ids, index offsets and frame lengths, read by
+  SHAG's own `DemoReader`. Rust matches header, index, all 829 frames by
+  index, `readAllFrames` and `findFrameByTick`, including which reads fail.
+  Mutations (BOM, visibility, safe-integer bound, gzip members) each fail.
+- **Proof, real matches (wash-fps-rust).** `tests/golden/demos/` holds three
+  12-second demos recorded with wash-fps's `demo:record` (bots on dm14 FFA,
+  snd1 Search and Destroy, amphi1 Amphi; format version 6). Their 2,246
+  frames, with about 27,000 Washoi events (match, weapon, combat and
+  knockback state, fire, damage, beams, projectiles, pickups, drops, deaths,
+  awards), decode exactly as SHAG reads them. The expected output is
+  `demo_frames.json.gz` (14 MB of JSON).
+- **Running the servers locally.** wash-fps's `demo:record` and `net:server`
+  run from the SHAG checkout once the map packages are in
+  `<shag>/public/data` (the files `tools/fetch_maps.sh` downloads, plus the
+  manifest and index). The headless client is tested against that first.
+
 ### Milestone 3, done: movement on the shipped maps (November 1, 2026)
 
 - **shagger.** `tools/golden/movement_run.mjs` is the stepping loop that
