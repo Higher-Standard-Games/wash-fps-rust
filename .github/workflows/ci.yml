@@ -49,6 +49,27 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - run: cargo test
 
+  # Movement on the shipped maps: downloads them from the published data
+  # (tools/fetch_maps.sh) and replays tests/golden/movement_maps.json. A map
+  # update on the servers fails this job until the vectors are regenerated.
+  shipped-maps:
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - name: Allow reading shagger
+        run: git config --global url."https://x-access-token:${{ secrets.SHAGGER_READ_TOKEN }}@github.com/Higher-Standard-Games/shagger".insteadOf "https://github.com/Higher-Standard-Games/shagger"
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - uses: actions/cache@v4
+        with:
+          path: target/washoi-maps/pk3
+          key: washoi-maps-${{ hashFiles('tests/golden/movement_maps.json') }}
+      - run: tools/fetch_maps.sh
+      - run: cargo test --release --test movement_maps_golden
+        env:
+          WASHOI_MAPS: target/washoi-maps
+
   deny:
     runs-on: ubuntu-latest
     steps:

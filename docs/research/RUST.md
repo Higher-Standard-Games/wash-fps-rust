@@ -2567,6 +2567,40 @@ fit and did not count the parity harness.
 
 Newest first. Each entry names the commits and what proves them.
 
+### Milestone 3, done: movement on the shipped maps (November 1, 2026)
+
+- **shagger.** `tools/golden/movement_run.mjs` is the stepping loop that
+  `movement.mjs` used inline (sanitize, lifts, knockback drag, simulate, the
+  canonical line); `movement.mjs` still writes the same file byte for byte.
+  `movement_maps.mjs` runs it on the shipped BSPs: per map, 14 runs from
+  spawn points facing their authored yaw, 6 dropped onto teleporters and
+  jumppads, and 4 from random points in the world bounds, 600 steps each.
+  It keeps only the per-step hash and names each map by file name and
+  SHA-256. `generate.mjs` runs it when `WASHOI_MAPS` is set.
+- **wash-fps-rust.** `tests/movement_harness` holds the replay shared by
+  `movement_golden.rs` and the new `movement_maps_golden.rs`.
+  `tools/fetch_maps.sh` follows 20.2 (manifest, index, package SHA-256) to
+  download the map packages and extract the BSPs; the test skips without
+  `WASHOI_MAPS` and fails on a map whose digest differs from the vectors. CI
+  runs it in its own `shipped-maps` job, allowed to fail, since a map update
+  on the servers breaks it until the vectors are regenerated.
+- **Proof.** All 7 maps on eu.washoi.net (amphi1, dm2, dm5, dm7, dm11, dm14,
+  snd1; 300 MB of BSP), 162 runs, 97,200 steps: Rust matches every step on
+  the first run. The runs cover grounded movement, slides, wall charge and
+  wall jump, ledge grabs, wading, knockback, 15 teleports and 631 jumppad
+  steps. The shipped maps have no ladders and no water deep enough to swim,
+  so those stay covered by the synthetic maps only. A mutation in view
+  smoothing fails both tests.
+- **This is 19.7's `sim:dump`** in the form the golden tools already had,
+  without a new SHAG CLI. Inputs captured from real play are still open; they
+  come with `InputHistory` in milestone 4.
+- **Network access.** The build environment now reaches washoi.net and
+  crates.io. The live manifest matches 20.2: 21 packages, index version 2,
+  maps owned by `map_washoi_<map>.pk3`.
+- **Next.** Milestone 2, the headless client (lobby auth, `lobby:connect`,
+  the game handshake, acks, clock sync), then `V2NetworkClient` and
+  reconciliation (milestone 4). Demo files (`flate2`) can now be done too.
+
 ### Milestone 3, second part: the movement profile (November 1, 2026)
 
 - **shagger `9b95e87`.** `shagger_shared::fdlibm` ports V8's `sin` and `cos`
