@@ -26,11 +26,11 @@ use shagger::rendering::world_culling::WorldCulling;
 use shagger::rendering::world_geometry::build_world_geometry;
 use shagger::rendering::world_renderer::{Rgba8Image, WorldRenderer};
 use shagger::shared::collision::shared_collision_world::SharedCollisionWorld;
+use shagger::weapon::explosion::explosion_batch_renderer::ExplosionBatchRenderer;
+use shagger::weapon::explosion_effect::explosion_for;
 use shagger::weapon::projectile_manager::{
     MAX_TRAIL_POINTS, ProjectileModel, ProjectileTrail, load_projectile_model, projectile_matrix,
 };
-use shagger::weapon::explosion::explosion_batch_renderer::ExplosionBatchRenderer;
-use shagger::weapon::explosion_effect::explosion_for;
 use washoi::shared::entities::definitions::projectiles::projectile_def;
 
 use washoi::client::player_model_visual_settings::{PlayerTeamSlot, get_player_model_visual_style};
