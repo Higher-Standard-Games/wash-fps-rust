@@ -2568,6 +2568,41 @@ fit and did not count the parity harness.
 
 Newest first. Each entry names the commits and what proves them.
 
+### Milestone 6, third slice: shader animation and autosprites (November 1, 2026)
+
+- **shagger `9dfa321`.**
+  - `loader::shader::q3_stage_evaluation` ports `Q3StageEvaluation.ts`:
+    the six waveforms and `tcMod` stepping (`scroll`, `scale`, `rotate`,
+    `stretch`, `turb`, `transform`), with V8's `sin` and `cos`.
+  - `babylon::materials::texture` ports `Texture.getTextureMatrix` for the
+    offset, scale and `wAng` the animation sets (Apache-2.0, in `NOTICE`).
+  - `loader::bsp::mesh::autosprite_records` and `autosprite2` port the
+    billboard records and the vertex attributes `Q3AutospritePlugin` reads.
+  - The world renderer steps each animated pass as `ShaderAnimationSystem`
+    does: tcMods into the texture matrix, `rgbGen` and `alphaGen` waves
+    scaling colour and alpha, `animMap` frames swapped by bind group. Every
+    pass also takes `rgbGen const`, `alphaGen const` and the distance ramps
+    (`Q3StageColorPlugin`, `Q3DistanceRampPlugin`). Autosprite faces get
+    batches of their own after the rest, as `buildAll` makes their meshes,
+    and the vertex shader turns them with the plugin's math.
+- **wash-fps-rust.** `washoi view` takes `--time T` (seconds of animation
+  before a screenshot) and `--at X,Y,Z,YAW` (a Q3 viewpoint instead of a
+  spawn).
+- **Proof.**
+  - `stage_evaluation.mjs` steps every animated stage of the 342 shipped
+    shaders (41 shaders) for 600 frames of uneven length with SHAG's code;
+    `tests/stage_evaluation_golden.rs` matches bit for bit. Swapping V8's
+    `sin` for the platform's fails it.
+  - `autosprites.mjs` builds the record and attributes of all 419
+    autosprite faces on the seven maps; `tests/autosprites_golden.rs`
+    matches bit for bit.
+  - On screen: washoi_dm14's billboard runs its `animMap` and sawtooth
+    `rgbGen` (black at load, as in SHAG, lit by five seconds). A snd1 lamp
+    corona covers the same screen area seen from three sides, so it turns.
+- **Not yet.** Environment and `$cubemap` reflections and normal, gloss and
+  glow maps (after milestone 7, 21.10); blended passes sorted back to
+  front; then the farbox sky and PVS and frustum culling, next.
+
 ### Milestone 6, second slice: shader-defined surfaces (November 1, 2026)
 
 - **shagger `e99ed34`.** `loader::shader::q3_shader_parser` ports

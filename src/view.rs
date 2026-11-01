@@ -41,6 +41,10 @@ pub struct ViewOptions {
     pub spawn: usize,
     pub width: u32,
     pub height: u32,
+    /// Seconds of shader animation before a screenshot.
+    pub time: f64,
+    /// A Q3 position and yaw to view from instead of a spawn point.
+    pub at: Option<[f32; 4]>,
 }
 
 /// The packages, their shader scripts, the map and its spawn points.
@@ -115,13 +119,15 @@ pub fn build_renderer(gpu: &Gpu, map: &mut LoadedMap, format: wgpu::TextureForma
     );
     let triangles: u32 = geometry.batches.iter().map(|b| b.index_count / 3).sum();
     println!(
-        "world: {} vertices, {triangles} triangles in {} batches, {} material passes, {} images, {} shaders, {} sky faces",
+        "world: {} vertices, {triangles} triangles in {} batches, {} material passes ({} animated), {} images, {} shaders, {} sky faces, {} autosprite faces",
         geometry.vertices.len(),
         geometry.batches.len(),
         renderer.pass_count(),
+        renderer.animated_pass_count(),
         renderer.texture_count(),
         map.shaders.shader_count(),
-        geometry.sky_faces.len()
+        geometry.sky_faces.len(),
+        geometry.sprite_faces
     );
     if !renderer.missing_images().is_empty() {
         println!("  no image found: {}", renderer.missing_images().join(", "));
@@ -137,7 +143,8 @@ pub fn run(o: &ViewOptions) -> i32 {
             return 1;
         }
     };
-    let Some(&camera) = map.spawns.get(o.spawn).or(map.spawns.first()) else {
+    let at = o.at.map(|[x, y, z, angle]| Camera::from_q3([x, y, z], angle));
+    let Some(camera) = at.or_else(|| map.spawns.get(o.spawn).or(map.spawns.first()).copied()) else {
         eprintln!("{} has no spawn point", o.map);
         return 1;
     };
@@ -158,8 +165,14 @@ pub fn run(o: &ViewOptions) -> i32 {
         }
     };
     println!("gpu: {}", gpu.describe());
-    let renderer = build_renderer(&gpu, &mut map, OFFSCREEN_FORMAT);
-    renderer.prepare(&gpu, camera.view_projection(o.width as f32 / o.height as f32));
+    let mut renderer = build_renderer(&gpu, &mut map, OFFSCREEN_FORMAT);
+    // Shader animation as it stands `--time` seconds after the map loads.
+    renderer.animate(&gpu, o.time);
+    renderer.prepare(
+        &gpu,
+        camera.view_projection(o.width as f32 / o.height as f32),
+        camera.position,
+    );
     let pixels = render_to_rgba(&gpu, o.width, o.height, CLEAR, |pass| renderer.draw(pass));
     match image::save_buffer(path, &pixels, o.width, o.height, image::ExtendedColorType::Rgba8) {
         Ok(()) => {

@@ -4,7 +4,7 @@
 //! prints the scoreboard.
 //!
 //! ```text
-//! washoi view <map> [--data DIR] [--spawn N] [--screenshot FILE.png] [--size WxH] [--seconds N]
+//! washoi view <map> [--data DIR] [--spawn N] [--screenshot FILE.png] [--size WxH] [--time T] [--at X,Y,Z,YAW] [--seconds N]
 //! washoi connect <ws://game-server> [--name NAME] [--ticket TICKET] [--seconds N] [--play]
 //! washoi lobby <ws://lobby> [--key-file FILE] list
 //! washoi lobby <ws://lobby> [--key-file FILE] spectate [--seconds N]
@@ -19,7 +19,8 @@
 //!
 //! `view` draws a map with the renderer (`view.rs`), from the
 //! packages in `--data` (default `target/washoi-maps/pk3`, which
-//! `tools/fetch_maps.sh` fills).
+//! `tools/fetch_maps.sh` fills). `--time` steps shader animation that many
+//! seconds before a screenshot.
 
 mod view;
 mod window;
@@ -39,7 +40,7 @@ use washoi::shared::net::snapshot_events::{SnapshotEvent, WashoiEvents};
 fn usage() -> ! {
     eprintln!(
         "washoi {}\n\
-         usage: washoi view <map> [--data DIR] [--spawn N] [--screenshot FILE.png] [--size WxH] [--seconds N]\n\
+         usage: washoi view <map> [--data DIR] [--spawn N] [--screenshot FILE.png] [--size WxH] [--time T] [--at X,Y,Z,YAW] [--seconds N]\n\
          \x20      washoi connect <ws://game-server> [--name NAME] [--ticket TICKET] [--seconds N] [--play]\n\
          \x20      washoi lobby <ws://lobby> [--key-file FILE] list\n\
          \x20      washoi lobby <ws://lobby> [--key-file FILE] spectate [--seconds N]\n\
@@ -62,6 +63,8 @@ struct Options {
     screenshot: Option<PathBuf>,
     spawn: usize,
     size: Option<(u32, u32)>,
+    time: f64,
+    at: Option<[f32; 4]>,
     words: Vec<String>,
 }
 
@@ -78,6 +81,11 @@ fn parse_options(args: impl Iterator<Item = String>) -> Options {
             "--play" => o.play = true,
             "--data" => o.data = Some(PathBuf::from(value())),
             "--screenshot" => o.screenshot = Some(PathBuf::from(value())),
+            "--at" => {
+                let v: Vec<f32> = value().split(',').filter_map(|n| n.trim().parse().ok()).collect();
+                o.at = Some(<[f32; 4]>::try_from(v).unwrap_or_else(|_| usage()));
+            }
+            "--time" => o.time = value().parse().unwrap_or_else(|_| usage()),
             "--spawn" => o.spawn = value().parse().unwrap_or_else(|_| usage()),
             "--size" => {
                 let v = value();
@@ -121,6 +129,8 @@ fn main() {
                 spawn: o.spawn,
                 width,
                 height,
+                time: o.time,
+                at: o.at,
             })
         }
         _ => usage(),
