@@ -15,6 +15,7 @@ use shagger::rendering::gpu::Gpu;
 use shagger::rendering::offscreen::{OFFSCREEN_FORMAT, render_to_rgba};
 use shagger::rendering::sky_renderer::{SkyRenderer, apply_skybox};
 use shagger::rendering::wgpu;
+use shagger::rendering::world_culling::WorldCulling;
 use shagger::rendering::world_geometry::build_world_geometry;
 use shagger::rendering::world_renderer::{Rgba8Image, WorldRenderer};
 
@@ -48,6 +49,8 @@ pub struct ViewOptions {
     pub at: Option<[f32; 4]>,
     /// Degrees; negative looks up.
     pub pitch: f32,
+    /// Draw every batch instead of culling.
+    pub no_cull: bool,
 }
 
 /// The packages, their shader scripts, the map and its spawn points.
@@ -101,15 +104,19 @@ pub fn load_map(data: &Path, map: &str) -> Result<LoadedMap, String> {
     })
 }
 
-/// The map's sky and world.
+/// The map's sky and world, and which world batches the camera can see.
 pub struct MapRenderer {
     pub world: WorldRenderer,
     pub sky: Option<SkyRenderer>,
+    pub culling: WorldCulling,
+    /// Off draws every batch (`--no-cull`), for comparing.
+    pub cull: bool,
 }
 
 impl MapRenderer {
-    /// Writes this frame's camera.
-    pub fn prepare(&self, gpu: &Gpu, camera: &Camera, aspect: f32) {
+    /// Writes this frame's camera and culls for it.
+    pub fn prepare(&mut self, gpu: &Gpu, camera: &Camera, aspect: f32) {
+        self.culling.update(camera, aspect);
         self.world.prepare(gpu, camera.view_projection(aspect), camera.position);
         if let Some(sky) = &self.sky {
             sky.prepare(gpu, camera, aspect);
@@ -121,7 +128,11 @@ impl MapRenderer {
         if let Some(sky) = &self.sky {
             sky.draw(pass);
         }
-        self.world.draw(pass);
+        if self.cull {
+            self.world.draw_visible(pass, self.culling.visible());
+        } else {
+            self.world.draw(pass);
+        }
     }
 }
 
@@ -170,7 +181,13 @@ pub fn build_renderer(gpu: &Gpu, map: &mut LoadedMap, format: wgpu::TextureForma
             None
         }
     };
-    MapRenderer { world: renderer, sky }
+    let culling = WorldCulling::new(&map.bsp, &geometry);
+    MapRenderer {
+        world: renderer,
+        sky,
+        culling,
+        cull: true,
+    }
 }
 
 pub fn run(o: &ViewOptions) -> i32 {
@@ -205,9 +222,24 @@ pub fn run(o: &ViewOptions) -> i32 {
     };
     println!("gpu: {}", gpu.describe());
     let mut renderer = build_renderer(&gpu, &mut map, OFFSCREEN_FORMAT);
+    renderer.cull = !o.no_cull;
     // Shader animation as it stands `--time` seconds after the map loads.
     renderer.world.animate(&gpu, o.time);
     renderer.prepare(&gpu, &camera, o.width as f32 / o.height as f32);
+    match renderer.culling.pvs_stats() {
+        Some(pvs) => println!(
+            "culling: cluster {} sees {} of {} clusters; {} batches left out by the PVS, {} by the frustum",
+            pvs.current_cluster,
+            pvs.visible_clusters,
+            pvs.total_clusters,
+            renderer.culling.pvs_culled,
+            renderer.culling.frustum_culled
+        ),
+        None => println!(
+            "culling: no vis data; {} batches left out by the frustum",
+            renderer.culling.frustum_culled
+        ),
+    }
     let pixels = render_to_rgba(&gpu, o.width, o.height, CLEAR, |pass| renderer.draw(pass));
     match image::save_buffer(path, &pixels, o.width, o.height, image::ExtendedColorType::Rgba8) {
         Ok(()) => {

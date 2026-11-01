@@ -2568,6 +2568,36 @@ fit and did not count the parity harness.
 
 Newest first. Each entry names the commits and what proves them.
 
+### Milestone 6, fifth slice: PVS and frustum culling (November 1, 2026)
+
+- **shagger `cb67eb9`.**
+  - `loader::bsp::mesh::pvs` ports `buildFaceClusters`, and
+    `loader::bsp::pvs_culler` ports `PVSCuller`, with batch ids in place of
+    Babylon meshes. It fails open as SHAG's does.
+  - World batches carry their faces' clusters (`bspPvsClusters`) and
+    Babylon-space bounds. Autosprite bounds are grown by how far they turn.
+  - `rendering::world_culling` leaves out the batches the PVS hides, as
+    `PVSCuller.update` does, and those outside the view frustum, as Babylon
+    does for each mesh. `WorldRenderer::draw_visible` draws the rest.
+    `r_bsp_cellsize` is 0 by default, so batches stay whole per texture as
+    in SHAG.
+- **wash-fps-rust.** `washoi view` culls each frame and prints what it left
+  out. `--no-cull` draws every batch, for comparing.
+- **Proof.**
+  - `pvs.mjs` runs SHAG's own `buildFaceClusters` and `PVSCuller` on every
+    map, with every face as a mesh, over 400 camera points in the world
+    bounds. The points include stationary frames and a missing camera.
+    `tests/pvs_golden.rs` matches the face clusters and all 2,800 frames:
+    the cluster, the stats and which faces show.
+  - The data never reaches one branch: no shipped face sits outside every
+    cluster, so dropping the `-1` rule passes.
+  - On screen: 14 views, two spawns on each of the seven maps, are pixel
+    for pixel identical with and without culling, while it leaves out up to
+    140 batches by PVS and 67 by frustum.
+- **Not yet.** `SkyVisibility` (skipping the sky when no sky face is in a
+  visible cluster), spatial cells (`r_bsp_cellsize`), and culling for
+  models and movers once they draw.
+
 ### Milestone 6, fourth slice: the far box sky (November 1, 2026)
 
 - **shagger `ae964c5`.**
@@ -2598,8 +2628,7 @@ Newest first. Each entry names the commits and what proves them.
   - On screen: dm7's autumn canopy, dm11's overcast sky and dm14's blue sky
     show through the openings, with no seams.
 - **Not yet.** Sky cloud layers, the sky sphere and `qer_editorimage`
-  fallbacks, and portal skies. No shipped map reaches them. PVS and frustum
-  culling are next.
+  fallbacks, and portal skies. No shipped map reaches them.
 
 ### Milestone 6, third slice: shader animation and autosprites (November 1, 2026)
 

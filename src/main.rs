@@ -4,7 +4,7 @@
 //! prints the scoreboard.
 //!
 //! ```text
-//! washoi view <map> [--data DIR] [--spawn N] [--screenshot FILE.png] [--size WxH] [--time T] [--at X,Y,Z,YAW] [--pitch DEG] [--seconds N]
+//! washoi view <map> [--data DIR] [--spawn N] [--screenshot FILE.png] [--size WxH] [--time T] [--at X,Y,Z,YAW] [--pitch DEG] [--no-cull] [--seconds N]
 //! washoi connect <ws://game-server> [--name NAME] [--ticket TICKET] [--seconds N] [--play]
 //! washoi lobby <ws://lobby> [--key-file FILE] list
 //! washoi lobby <ws://lobby> [--key-file FILE] spectate [--seconds N]
@@ -21,7 +21,8 @@
 //! packages in `--data` (default `target/washoi-maps/pk3`, which
 //! `tools/fetch_maps.sh` fills). `--time` steps shader animation that many
 //! seconds before a screenshot; `--pitch` tilts the view (degrees, Quake's
-//! sign: negative looks up).
+//! sign: negative looks up); `--no-cull` draws every world batch instead of
+//! leaving out what the PVS and the frustum hide.
 
 mod view;
 mod window;
@@ -41,7 +42,7 @@ use washoi::shared::net::snapshot_events::{SnapshotEvent, WashoiEvents};
 fn usage() -> ! {
     eprintln!(
         "washoi {}\n\
-         usage: washoi view <map> [--data DIR] [--spawn N] [--screenshot FILE.png] [--size WxH] [--time T] [--at X,Y,Z,YAW] [--pitch DEG] [--seconds N]\n\
+         usage: washoi view <map> [--data DIR] [--spawn N] [--screenshot FILE.png] [--size WxH] [--time T] [--at X,Y,Z,YAW] [--pitch DEG] [--no-cull] [--seconds N]\n\
          \x20      washoi connect <ws://game-server> [--name NAME] [--ticket TICKET] [--seconds N] [--play]\n\
          \x20      washoi lobby <ws://lobby> [--key-file FILE] list\n\
          \x20      washoi lobby <ws://lobby> [--key-file FILE] spectate [--seconds N]\n\
@@ -67,6 +68,7 @@ struct Options {
     time: f64,
     at: Option<[f32; 4]>,
     pitch: f32,
+    no_cull: bool,
     words: Vec<String>,
 }
 
@@ -87,6 +89,7 @@ fn parse_options(args: impl Iterator<Item = String>) -> Options {
                 let v: Vec<f32> = value().split(',').filter_map(|n| n.trim().parse().ok()).collect();
                 o.at = Some(<[f32; 4]>::try_from(v).unwrap_or_else(|_| usage()));
             }
+            "--no-cull" => o.no_cull = true,
             "--pitch" => o.pitch = value().parse().unwrap_or_else(|_| usage()),
             "--time" => o.time = value().parse().unwrap_or_else(|_| usage()),
             "--spawn" => o.spawn = value().parse().unwrap_or_else(|_| usage()),
@@ -135,6 +138,7 @@ fn main() {
                 time: o.time,
                 at: o.at,
                 pitch: o.pitch,
+                no_cull: o.no_cull,
             })
         }
         _ => usage(),
