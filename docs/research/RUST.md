@@ -2309,7 +2309,7 @@ read it:
     tint and outline;
   - map items: weapons as glTF models; health, armour, ammo and the quad as
     SHAG's procedural sculptures, drawn with ported `StandardMaterial`s;
-  - MD3 projectiles, with their shader stages;
+  - MD3 projectiles, with their shader stages and trails;
   - the view model with its own FOV;
   - beams, tracers, muzzle flashes, impacts and explosions;
   - dynamic lights as a forward storage buffer;
@@ -2577,6 +2577,35 @@ fit and did not count the parity harness.
 ## 23. Progress log
 
 Newest first. Each entry names the commits and what proves them.
+
+### Milestone 6, eleventh slice: projectile trails (November 1, 2026)
+
+- **shagger `1bd99e2`.**
+  - `weapon::projectile_manager` ports `updateTrail` (the 60 points, the
+    pre-fill, the camera-facing ribbon and its crossing blade with the
+    distance taper), `clampTrailLength` and `trailMaterialFor`, as
+    `ProjectileTrail`. `weapon::effect_geometry` ports
+    `updateUnlitTrailRibbon`.
+  - `babylon::meshes::ribbon_builder` ports `CreateRibbonVertexData` for
+    two open paths, double sided.
+  - The model renderer rewrites a primitive's vertices in place each frame
+    and recentres its bounds. Blended `StandardMaterial`s now write depth,
+    as Babylon's do unless `disableDepthWrite`; the views below moved
+    closer to the browser with it.
+- **wash-fps-rust.** `washoi view --projectile` draws each trail as a
+  straight second of flight at 60 frames a second would leave it, rebuilt
+  each frame for the camera.
+- **Checked against the browser** with `tools/parity` (`PROJECTILES=`),
+  which gives SHAG's held projectiles the same trail points and runs its
+  `updateTrail` each frame. Rocket, grenade, plasma (clamped to 120 units)
+  and gunblade trails match; views differ by 5 to 6 levels in 255.
+- **Known difference.** With items posed at 0 seconds, a pickup's
+  translucent shell behind the grenade draws stronger than in the browser.
+  At 1.7 seconds it matches.
+- **Not yet.** Flight, impacts and explosions, the carried light, the fade
+  in, projectiles from snapshots.
+- **Next.** Impacts and explosions, then beams, tracers and muzzle
+  flashes, then dynamic lights (21.10).
 
 ### Milestone 6, tenth slice: projectile models (November 1, 2026)
 

@@ -26,7 +26,9 @@ use shagger::rendering::world_culling::WorldCulling;
 use shagger::rendering::world_geometry::build_world_geometry;
 use shagger::rendering::world_renderer::{Rgba8Image, WorldRenderer};
 use shagger::shared::collision::shared_collision_world::SharedCollisionWorld;
-use shagger::weapon::projectile_manager::{ProjectileModel, load_projectile_model, projectile_matrix};
+use shagger::weapon::projectile_manager::{
+    MAX_TRAIL_POINTS, ProjectileModel, ProjectileTrail, load_projectile_model, projectile_matrix,
+};
 use washoi::shared::entities::definitions::projectiles::projectile_def;
 
 use washoi::client::player_model_visual_settings::{PlayerTeamSlot, get_player_model_visual_style};
@@ -209,6 +211,8 @@ pub struct MapRenderer {
     frame_draws: Vec<ModelDraw>,
     /// Projectile models and where they are held.
     pub projectiles: Vec<(ProjectileModel, Mat4)>,
+    /// Their trails, with the definitions' light colours.
+    pub trails: Vec<(ProjectileTrail, Option<Vec3>)>,
     /// The joint palettes `model_draws` index.
     pub joints: Vec<Mat4>,
     pub sky: Option<SkyRenderer>,
@@ -230,6 +234,10 @@ impl MapRenderer {
         );
         for (model, world) in &self.projectiles {
             model.draws(*world, self.item_time, &mut self.frame_draws);
+        }
+        for (trail, color) in &mut self.trails {
+            trail.update(gpu, &mut self.models, Some(camera.position.as_dvec3()), *color);
+            trail.draws(&mut self.frame_draws);
         }
         self.models.prepare(
             gpu,
@@ -338,6 +346,7 @@ pub fn build_renderer(gpu: &Gpu, map: &mut LoadedMap, format: wgpu::TextureForma
         }
     }
     let mut projectiles = Vec::new();
+    let mut trails = Vec::new();
     for view in &map.projectiles {
         let Some(def) = projectile_def(&view.id) else {
             eprintln!("projectile: no definition {}", view.id);
@@ -353,12 +362,16 @@ pub fn build_renderer(gpu: &Gpu, map: &mut LoadedMap, format: wgpu::TextureForma
                 let (position, direction) = view.babylon();
                 let scale = def.scale.unwrap_or(1.0) as f32;
                 projectiles.push((model, projectile_matrix(position, direction, scale)));
+                if def.trail_effect.is_some() {
+                    trails.push((held_trail(position, direction, def.speed, def.trail_length), light));
+                }
             }
             Err(why) => eprintln!("projectile model: {why}"),
         }
     }
     MapRenderer {
         projectiles,
+        trails,
         world: renderer,
         models,
         model_draws,
@@ -436,4 +449,17 @@ pub fn run(o: &ViewOptions) -> i32 {
             1
         }
     }
+}
+
+/// A held projectile's trail as if it had flown straight at its speed for
+/// the last second at 60 frames a second, ending where it is held.
+fn held_trail(position: Vec3, direction: Vec3, speed: f64, max_length: Option<f64>) -> ProjectileTrail {
+    let (head, dir) = (position.as_dvec3(), direction.as_dvec3());
+    let step = speed / 60.0;
+    let mut trail = ProjectileTrail::default();
+    trail.points = (0..MAX_TRAIL_POINTS)
+        .map(|k| head - dir * (step * (MAX_TRAIL_POINTS - k) as f64))
+        .collect();
+    trail.push(head, dir, max_length);
+    trail
 }

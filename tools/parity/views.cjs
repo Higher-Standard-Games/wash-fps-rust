@@ -8,8 +8,10 @@ const { open, boot, waitForMap, sleep } = require('./lib.cjs');
 // With item seconds, every procedural pickup is shown, available and in view,
 // posed that many seconds after it was built, as washoi view --time draws it.
 // Projectiles (the last argument) are held at Quake origins, flying along a
-// Quake yaw and pitch, without their light or trail, their shader stages that
-// many item seconds in, as washoi view --projectile draws them.
+// Quake yaw and pitch, without their light, their shader stages that many
+// item seconds in, as washoi view --projectile draws them. A trail is the one
+// a straight second of flight at 60 frames a second leaves, rebuilt each frame
+// for the camera.
 (async () => {
   setTimeout(() => process.exit(3), 1_500_000).unref();
   const [demo, prefix, list, size = '1280x720', keepRe = '^(bsp|skybox)', players = '', itemTime = '', projectiles = ''] = process.argv.slice(2);
@@ -26,7 +28,7 @@ const { open, boot, waitForMap, sleep } = require('./lib.cjs');
       DemoService.getInstance().activeDemoViewer?.pause();
       const scene = window.scene;
       const camera = scene.activeCameras?.[0] ?? scene.activeCamera;
-      const keep = new RegExp(`${keepRe}|^probe_player${itemTime ? '|^pp_' : ''}${projectiles ? '|^proj_\\d+_(?!trail)' : ''}`);
+      const keep = new RegExp(`${keepRe}|^probe_player${itemTime ? '|^pp_' : ''}${projectiles ? '|^proj_\\d+_' : ''}`);
       const frozen = [];
       if (projectiles) {
         const { Vector3 } = await import('/node_modules/@babylonjs/core/Maths/math.vector.js');
@@ -52,6 +54,19 @@ const { open, boot, waitForMap, sleep } = require('./lib.cjs');
           for (const m of proj.fadeMeshes) m.visibility = 1;
           proj.spawnTime = -1e9;
         }
+        const { getEntityRegistry } = await import('/src/shared/entities/index.ts');
+        window.__holdTrails = () => {
+          camera.computeWorldMatrix(true);
+          for (const proj of manager.projectiles) {
+            if (!proj.serverEntityId?.startsWith('probe')) continue;
+            const def = getEntityRegistry().get(proj.defId);
+            if (!def?.trailEffect) continue;
+            const step = proj.velocity.length() / 60;
+            const head = proj.node.position;
+            proj.trailPoints = Array.from({ length: 60 }, (_, k) => head.subtract(proj.direction.scale(step * (60 - k))));
+            manager.updateTrail(proj, def.trailLength);
+          }
+        };
         // The shader stages of the projectiles' materials, posed at the item
         // time as washoi view poses them (stepped once over the whole time).
         const T = Number(itemTime || 0);
@@ -119,6 +134,7 @@ const { open, boot, waitForMap, sleep } = require('./lib.cjs');
         if (camera.rotationQuaternion) camera.rotationQuaternion = null;
         camera.rotation.set((pitch * Math.PI) / 180, ((90 - yaw) * Math.PI) / 180, 0);
         camera.fov = 0.8;
+        window.__holdTrails?.();
         for (const m of scene.meshes) if (!keep.test(m.name) && !weapons.has(m) && m.isVisible) m.isVisible = false;
         // The paused demo leaves taken pickups disabled, and a pickup hides its
         // model from a camera whose cluster cannot see it, judged before this
