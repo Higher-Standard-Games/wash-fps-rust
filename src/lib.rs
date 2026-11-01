@@ -5,6 +5,7 @@
 
 pub use shagger;
 
+pub mod client;
 pub mod liquid;
 pub mod shared;
 pub mod simulation;

@@ -1,6 +1,7 @@
 //! `washoi view`: a map drawn by the renderer (RUST.md 21.10),
 //! from a spawn point. With `--screenshot` it renders one frame offscreen and
-//! writes a PNG; otherwise it opens a window with a free camera.
+//! writes a PNG; otherwise it opens a window with a free camera. Players
+//! given with `--player` stand on the map as the Vanguard model.
 
 use std::path::{Path, PathBuf};
 
@@ -10,10 +11,12 @@ use shagger::loader::pk3::node_pk3::ingest_pk3_dir;
 use shagger::loader::pk3::pk3_loader::Pk3Loader;
 use shagger::loader::shader::q3_shader_registry::Q3ShaderRegistry;
 use shagger::loader::texture::resolve_and_load_texture;
+use shagger::network::client::snapshot_buffer::InterpolatedEntity;
 use shagger::physics::player_physics_constants::DEFAULT_VIEWHEIGHT;
 use shagger::physics::sweep_backend_adapter::SweepBackendAdapter;
 use shagger::physics::sweep_collision_backend::SweepCollisionBackend;
 use shagger::rendering::camera::Camera;
+use shagger::rendering::glam::Mat4;
 use shagger::rendering::gpu::Gpu;
 use shagger::rendering::model_renderer::{ImageProcessing, ModelDraw, ModelRenderer};
 use shagger::rendering::offscreen::{OFFSCREEN_FORMAT, render_to_rgba};
@@ -24,6 +27,8 @@ use shagger::rendering::world_geometry::build_world_geometry;
 use shagger::rendering::world_renderer::{Rgba8Image, WorldRenderer};
 use shagger::shared::collision::shared_collision_world::SharedCollisionWorld;
 
+use washoi::client::player_model_visual_settings::{PlayerTeamSlot, get_player_model_visual_style};
+use washoi::client::remote_player_renderer::{MODEL_SCALE, RemotePlayerRenderer};
 use washoi::shared::bsp::pickup_table::{PickupEntry, extract_pickups};
 use washoi::shared::items::item_throw::land_map_pickups;
 use washoi::world::fps_pickup::build_weapon_pickups;
@@ -60,6 +65,36 @@ pub struct ViewOptions {
     pub pitch: f32,
     /// Draw every batch instead of culling.
     pub no_cull: bool,
+    pub players: Vec<PlayerView>,
+}
+
+/// A player model standing still on the map (`--player`).
+#[derive(Debug, Clone, PartialEq)]
+pub struct PlayerView {
+    /// The player's Quake origin.
+    pub origin: [f32; 3],
+    /// Quake yaw in degrees.
+    pub angle: f32,
+    pub clip: String,
+    /// The clip's frame, held.
+    pub frame: f64,
+}
+
+impl PlayerView {
+    /// The player as the snapshot buffer would hand it over: Babylon space,
+    /// standing on the ground, Babylon's yaw.
+    #[must_use]
+    pub fn interpolated(&self) -> InterpolatedEntity {
+        let [x, y, z] = self.origin.map(f64::from);
+        InterpolatedEntity {
+            x,
+            y: z,
+            z: y,
+            yaw: (90.0 - f64::from(self.angle)).to_radians(),
+            grounded: true,
+            ..Default::default()
+        }
+    }
 }
 
 /// The packages, their shader scripts, the map and its spawn points.
@@ -70,6 +105,8 @@ pub struct LoadedMap {
     pub spawns: Vec<Camera>,
     /// The map's pickups where they come to rest (`landMapPickups`).
     pub pickups: Vec<PickupEntry>,
+    /// Players to stand on the map.
+    pub players: Vec<PlayerView>,
 }
 
 /// Reads every package in `data` and the map's BSP from them.
@@ -119,6 +156,7 @@ pub fn load_map(data: &Path, map: &str) -> Result<LoadedMap, String> {
         bsp,
         spawns,
         pickups,
+        players: Vec::new(),
     })
 }
 
@@ -128,6 +166,8 @@ pub struct MapRenderer {
     pub world: WorldRenderer,
     pub models: ModelRenderer,
     pub model_draws: Vec<ModelDraw>,
+    /// The joint palettes `model_draws` index.
+    pub joints: Vec<Mat4>,
     pub sky: Option<SkyRenderer>,
     pub culling: WorldCulling,
     /// Off draws every batch (`--no-cull`), for comparing.
@@ -139,8 +179,13 @@ impl MapRenderer {
     pub fn prepare(&mut self, gpu: &Gpu, camera: &Camera, aspect: f32) {
         self.culling.update(camera, aspect);
         self.world.prepare(gpu, camera.view_projection(aspect), camera.position);
-        self.models
-            .prepare(gpu, camera.view_projection(aspect), camera.position, &self.model_draws);
+        self.models.prepare(
+            gpu,
+            camera.view_projection(aspect),
+            camera.position,
+            &self.model_draws,
+            &self.joints,
+        );
         if let Some(sky) = &self.sky {
             sky.prepare(gpu, camera, aspect);
         }
@@ -217,10 +262,29 @@ pub fn build_renderer(gpu: &Gpu, map: &mut LoadedMap, format: wgpu::TextureForma
     for failure in &pickups.failures {
         eprintln!("pickup model: {failure}");
     }
+    let mut model_draws = pickups.draws;
+    let mut joints = Vec::new();
+    if !map.players.is_empty() {
+        let pk3 = &mut map.pk3;
+        match RemotePlayerRenderer::load(gpu, &mut models, |path| pk3.get_file(path)) {
+            Ok(mut players) => {
+                let style = get_player_model_visual_style(PlayerTeamSlot::Ffa, MODEL_SCALE);
+                for (i, player) in map.players.iter().enumerate() {
+                    let id = format!("player{i}");
+                    let interp = player.interpolated();
+                    players.update(&id, &interp, 0.0, 1.0, Some(&player.clip));
+                    players.go_to_frame(&id, player.frame);
+                    players.draws(&id, &interp, &style, &mut joints, &mut model_draws);
+                }
+            }
+            Err(why) => eprintln!("player model: {why}"),
+        }
+    }
     MapRenderer {
         world: renderer,
         models,
-        model_draws: pickups.draws,
+        model_draws,
+        joints,
         sky,
         culling,
         cull: true,
@@ -235,6 +299,7 @@ pub fn run(o: &ViewOptions) -> i32 {
             return 1;
         }
     };
+    map.players.clone_from(&o.players);
     let at = o.at.map(|[x, y, z, angle]| Camera::from_q3([x, y, z], angle));
     let Some(mut camera) = at.or_else(|| map.spawns.get(o.spawn).or(map.spawns.first()).copied()) else {
         eprintln!("{} has no spawn point", o.map);

@@ -1910,6 +1910,8 @@ the same `r_ktx2` cvar, defaulting to 0 natively until it is measured.
   come as separate `.glb` files, one per clip
   (`player-model-vanguard.json`), and are retargeted by bone name. Port the
   retarget table from SHAG's player model code rather than re-deriving it.
+  The player model's meshes are `KHR_draco_mesh_compression`ed; they are
+  decoded with `draco-core` (pure Rust, Apache-2.0, decoder features only).
 - **MD3:** items and projectiles (`MD3Loader.ts`, 743 lines, plus
   `TagsLoader.ts`). It is a small fixed-layout format, and is translated by
   hand like the BSP.
@@ -2302,7 +2304,9 @@ read it:
   - Q3 stages for the features that `shader:audit` finds in use;
   - alpha test, autosprite, patches and the farbox sky;
   - PVS and frustum culling;
-  - glTF players with skinning, blending and light-grid lighting;
+  - glTF players with skinning, lit by the scene lights (SHAG's players
+    take no light grid and switch clips without blending), with their team
+    tint and outline;
   - MD3 items and projectiles;
   - the view model with its own FOV;
   - beams, tracers, muzzle flashes, impacts and explosions;
@@ -2572,6 +2576,45 @@ fit and did not count the parity harness.
 
 Newest first. Each entry names the commits and what proves them.
 
+### Milestone 6, eighth slice: skinned players (November 1, 2026)
+
+- **shagger `73c5ea4`.**
+  - `loader::model::glb` decodes `KHR_draco_mesh_compression` primitives
+    with `draco-core` (20.7). All of Vanguard's 6,749 vertices decode to the
+    accessors' bounds, in 8 ms.
+  - `loader::model::gltf_model` gains `from_glb_rigged`: the bind pose,
+    each primitive's joints and weights, and the node hierarchy and skins
+    (`Skeleton`) for posing at run time. `loader::model::gltf_animation`
+    reads clips as Babylon's glTF loader does: 60 frames a second, slerped
+    rotations, ends held.
+  - `animation::player_model_manager` ports `PlayerModelManager.ts`'s
+    loading, retargeting by bone name with position tracks dropped,
+    `createInstance`, `playAnimationOn`, the stepped clock (`wrapFrame`)
+    and `resetRootMotion`. `animation::player_model_assets` holds the
+    Vanguard recipe. All 17 clips load in 12 ms.
+  - `rendering::model_renderer` skins on the GPU from a per-frame joint
+    palette (a storage buffer), takes a per-draw albedo tint, and draws
+    Babylon's `OutlineRenderer` outline: pushed out along the normals in
+    bind space, before the mesh without depth write, then into depth only.
+  - `network::client::snapshot_buffer` has `InterpolatedEntity`.
+- **wash-fps-rust.**
+  - `client::remote_player_logic` ports `deriveAnimation`.
+    `client::remote_player_renderer` ports the body's placement, the clip's
+    speed ratio and the style. `client::player_model_visual_settings` ports
+    the team colours and the outline width at the cvar defaults.
+  - `washoi view --player X,Y,Z,YAW[,CLIP[,FRAME]]` stands players on the
+    map in the FFA style.
+- **Checked against the browser** with `tools/parity` (`PLAYERS=`), which
+  stands the same players through SHAG's `PlayerModelManager`.
+  - On dm2, an idle player and a running one at frame 10 stand, turn and
+    pose exactly as in the browser, outlines included.
+  - Whole views differ by 4 to 8 levels in 255, as without players. On
+    the near body green and blue are within 3; red is 9 lower, the
+    browser's specular light and normal map, which models do not draw yet.
+- **Not yet.** The weapon in hand, one-shot clips, powerup glow, normal
+  maps, and players from a live match or a demo (the snapshot buffer).
+- **Next.** MD3 items and projectiles (21.10).
+
 ### Milestone 6, seventh slice: glTF models and the map's weapon pickups (November 1, 2026)
 
 - **shagger `9f1a9b4`.**
@@ -2612,8 +2655,7 @@ Newest first. Each entry names the commits and what proves them.
     account for most of that.
   - Normal, metallic-roughness and specular light for models are not drawn
     yet.
-- **Next.** Skinned glTF players with the light grid (21.10), then MD3 items
-  and projectiles.
+- **Next.** Skinned glTF players (21.10), then MD3 items and projectiles.
 
 ### Milestone 6, sixth slice: map pickups and the parity harness (November 1, 2026)
 

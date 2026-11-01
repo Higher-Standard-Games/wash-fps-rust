@@ -7,19 +7,25 @@
 # The browser half needs a SHAG probe server on :3100 serving the fps game
 # with the shipped packages (see README.md); SKIP_BROWSER=1 reuses its shots.
 # Writes <prefix>_b_<i>.png, <prefix>_r_<i>.png and <prefix>_cmp_<i>.png and
-# prints the mean difference per channel.
+# prints the mean difference per channel. PLAYERS="<x,y,z,yaw,clip,frame>;..."
+# stands player models in both halves.
 set -e
 HERE=$(cd "$(dirname "$0")" && pwd)
 ROOT=$(cd "$HERE/../.." && pwd)
 map=$1; demo=$2; prefix=$(realpath -m "$3"); views=$4
 if [ -z "$SKIP_BROWSER" ]; then
-  NODE_PATH=$(npm root -g) node "$HERE/views.cjs" "$demo" "${prefix}_b" "$views" >/dev/null
+  NODE_PATH=$(npm root -g) node "$HERE/views.cjs" "$demo" "${prefix}_b" "$views" 1280x720 '^(bsp|skybox)' "$PLAYERS" >/dev/null
+fi
+player_args=()
+if [ -n "$PLAYERS" ]; then
+  IFS=';' read -ra plist <<< "$PLAYERS"
+  for p in "${plist[@]}"; do player_args+=(--player " $p"); done
 fi
 i=0
 IFS=';' read -ra list <<< "$views"
 for v in "${list[@]}"; do
   IFS=',' read -r x y z yaw pitch <<< "$v"
-  (cd "$ROOT" && ./target/release/washoi view "$map" --at " $x,$y,$z,$yaw" --pitch " $pitch" --screenshot "${prefix}_r_$i.png" >/dev/null)
+  (cd "$ROOT" && ./target/release/washoi view "$map" --at " $x,$y,$z,$yaw" --pitch " $pitch" "${player_args[@]}" --screenshot "${prefix}_r_$i.png" >/dev/null)
   python3 - "${prefix}" "$i" <<'PY'
 import sys
 from PIL import Image, ImageChops, ImageStat

@@ -4,7 +4,7 @@
 //! prints the scoreboard.
 //!
 //! ```text
-//! washoi view <map> [--data DIR] [--spawn N] [--screenshot FILE.png] [--size WxH] [--time T] [--at X,Y,Z,YAW] [--pitch DEG] [--no-cull] [--seconds N]
+//! washoi view <map> [--data DIR] [--spawn N] [--screenshot FILE.png] [--size WxH] [--time T] [--at X,Y,Z,YAW] [--pitch DEG] [--player X,Y,Z,YAW[,CLIP[,FRAME]]]... [--no-cull] [--seconds N]
 //! washoi connect <ws://game-server> [--name NAME] [--ticket TICKET] [--seconds N] [--play]
 //! washoi lobby <ws://lobby> [--key-file FILE] list
 //! washoi lobby <ws://lobby> [--key-file FILE] spectate [--seconds N]
@@ -22,7 +22,9 @@
 //! `tools/fetch_maps.sh` fills). `--time` steps shader animation that many
 //! seconds before a screenshot; `--pitch` tilts the view (degrees, Quake's
 //! sign: negative looks up); `--no-cull` draws every world batch instead of
-//! leaving out what the PVS and the frustum hide.
+//! leaving out what the PVS and the frustum hide. Each `--player` stands a
+//! player model at a Quake origin and angle, playing a clip (idle by
+//! default) held at a frame (0 by default), drawn in the FFA style.
 
 mod view;
 mod window;
@@ -42,7 +44,7 @@ use washoi::shared::net::snapshot_events::{SnapshotEvent, WashoiEvents};
 fn usage() -> ! {
     eprintln!(
         "washoi {}\n\
-         usage: washoi view <map> [--data DIR] [--spawn N] [--screenshot FILE.png] [--size WxH] [--time T] [--at X,Y,Z,YAW] [--pitch DEG] [--no-cull] [--seconds N]\n\
+         usage: washoi view <map> [--data DIR] [--spawn N] [--screenshot FILE.png] [--size WxH] [--time T] [--at X,Y,Z,YAW] [--pitch DEG] [--player X,Y,Z,YAW[,CLIP[,FRAME]]]... [--no-cull] [--seconds N]\n\
          \x20      washoi connect <ws://game-server> [--name NAME] [--ticket TICKET] [--seconds N] [--play]\n\
          \x20      washoi lobby <ws://lobby> [--key-file FILE] list\n\
          \x20      washoi lobby <ws://lobby> [--key-file FILE] spectate [--seconds N]\n\
@@ -69,6 +71,7 @@ struct Options {
     at: Option<[f32; 4]>,
     pitch: f32,
     no_cull: bool,
+    players: Vec<view::PlayerView>,
     words: Vec<String>,
 }
 
@@ -90,6 +93,22 @@ fn parse_options(args: impl Iterator<Item = String>) -> Options {
                 o.at = Some(<[f32; 4]>::try_from(v).unwrap_or_else(|_| usage()));
             }
             "--no-cull" => o.no_cull = true,
+            "--player" => {
+                let v = value();
+                let parts: Vec<&str> = v.split(',').map(str::trim).collect();
+                let n = |i: usize| {
+                    parts
+                        .get(i)
+                        .and_then(|p| p.parse::<f32>().ok())
+                        .unwrap_or_else(|| usage())
+                };
+                o.players.push(view::PlayerView {
+                    origin: [n(0), n(1), n(2)],
+                    angle: n(3),
+                    clip: parts.get(4).map_or_else(|| "idle".to_owned(), |c| (*c).to_owned()),
+                    frame: parts.get(5).map_or(0.0, |f| f.parse().unwrap_or_else(|_| usage())),
+                });
+            }
             "--pitch" => o.pitch = value().trim().parse().unwrap_or_else(|_| usage()),
             "--time" => o.time = value().parse().unwrap_or_else(|_| usage()),
             "--spawn" => o.spawn = value().parse().unwrap_or_else(|_| usage()),
@@ -139,6 +158,7 @@ fn main() {
                 at: o.at,
                 pitch: o.pitch,
                 no_cull: o.no_cull,
+                players: o.players.clone(),
             })
         }
         _ => usage(),

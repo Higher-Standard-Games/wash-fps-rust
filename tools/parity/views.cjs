@@ -1,11 +1,13 @@
 const { open, boot, waitForMap, sleep } = require('./lib.cjs');
-// usage: views.cjs <demo> <prefix> "<x,y,z,yawDeg,pitchDeg>;..." [WxH] [keep regex]
+// usage: views.cjs <demo> <prefix> "<x,y,z,yawDeg,pitchDeg>;..." [WxH] [keep regex] ["<x,y,z,yawDeg,clip,frame>;..."]
 // Q3 position and angles (pitch: positive looks down). Writes <prefix>_<i>.png.
 // Map weapon pickups are shown (all of them, as if available), as washoi view
 // draws them; every other mesh the keep regex does not name is hidden.
+// Players (the last argument) stand at Quake origins as Vanguard models in
+// the FFA style, their clip held at a frame, as washoi view --player draws them.
 (async () => {
   setTimeout(() => process.exit(3), 1_500_000).unref();
-  const [demo, prefix, list, size = '1280x720', keepRe = '^(bsp|skybox)'] = process.argv.slice(2);
+  const [demo, prefix, list, size = '1280x720', keepRe = '^(bsp|skybox)', players = ''] = process.argv.slice(2);
   const [w, h] = size.split('x').map(Number);
   const b = await open({ width: w, height: h });
   try {
@@ -14,12 +16,30 @@ const { open, boot, waitForMap, sleep } = require('./lib.cjs');
     b.command('demoplay');
     await waitForMap(b);
     await sleep(2000);
-    await b.ev(async (keepRe) => {
+    await b.ev(async ([keepRe, players]) => {
       const { DemoService } = await import('/src/games/fps/client/DemoService.ts');
       DemoService.getInstance().activeDemoViewer?.pause();
       const scene = window.scene;
       const camera = scene.activeCameras?.[0] ?? scene.activeCamera;
-      const keep = new RegExp(keepRe);
+      const keep = new RegExp(`${keepRe}|^probe_player`);
+      if (players) {
+        const { PlayerModelManager } = await import('/src/engine/animation/PlayerModelManager.ts');
+        const { getPlayerModelVisualStyle } = await import('/src/games/fps/client/PlayerModelVisualSettings.ts');
+        const manager = new PlayerModelManager(scene);
+        await manager.loadModel();
+        for (const [i, p] of players.split(';').entries()) {
+          const [x, y, z, angle, clip = 'idle', frame = '0'] = p.split(',');
+          const inst = manager.createInstance(`probe_player${i}`, 36);
+          // RemotePlayerRenderer.updateModel: anchor at the feet, turned by yaw.
+          inst.anchor.position.set(Number(x), Number(z) - 24, Number(y));
+          inst.anchor.rotation.set(0, ((90 - Number(angle)) * Math.PI) / 180, 0);
+          manager.applyVisualStyle(inst, getPlayerModelVisualStyle('ffa', 36));
+          manager.playAnimation(inst, clip);
+          inst.masterGroup.goToFrame(Number(frame));
+          inst.masterGroup.pause();
+          manager.resetRootMotion(inst);
+        }
+      }
       const { FPSPickup } = await import('/src/games/fps/world/FPSPickup.ts');
       const weapons = new Set();
       for (const p of FPSPickup.allPickups) {
@@ -42,7 +62,7 @@ const { open, boot, waitForMap, sleep } = require('./lib.cjs');
       };
       scene.onBeforeCameraRenderObservable.add(place);
       for (const el of document.body.querySelectorAll('body > *')) if (!el.querySelector('canvas') && el.tagName !== 'CANVAS') el.style.visibility = 'hidden';
-    }, keepRe);
+    }, [keepRe, players]);
     for (const [i, at] of list.split(';').entries()) {
       await b.ev((v) => { window.__probeView = v; }, at.split(',').map(Number));
       await sleep(5000);

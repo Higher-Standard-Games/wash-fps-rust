@@ -470,6 +470,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d8b14ccef22fc6f5a8f4d7d768562a182c04ce9a3b3157b91390b52ddfdf1a76"
 
 [[package]]
+name = "draco-core"
+version = "2.3.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2d384c03a3090e54e7840f9f08d0bfb0860d58a527bfb78bd96cc5b921d4ba2e"
+dependencies = [
+ "bytemuck",
+]
+
+[[package]]
 name = "equivalent"
 version = "1.0.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1883,9 +1892,10 @@ dependencies = [
 [[package]]
 name = "shagger"
 version = "0.0.1"
-source = "git+https://github.com/Higher-Standard-Games/shagger?rev=9f1a9b4a300827c48afb5ee3a0c7de478e9d45ff#9f1a9b4a300827c48afb5ee3a0c7de478e9d45ff"
+source = "git+https://github.com/Higher-Standard-Games/shagger?rev=73c5ea4c4b780cd1b9e247b77b890315e5da6a2c#73c5ea4c4b780cd1b9e247b77b890315e5da6a2c"
 dependencies = [
  "bytemuck",
+ "draco-core",
  "futures-util",
  "glam",
  "image",
@@ -1904,7 +1914,7 @@ dependencies = [
 [[package]]
 name = "shagger_shared"
 version = "0.0.1"
-source = "git+https://github.com/Higher-Standard-Games/shagger?rev=9f1a9b4a300827c48afb5ee3a0c7de478e9d45ff#9f1a9b4a300827c48afb5ee3a0c7de478e9d45ff"
+source = "git+https://github.com/Higher-Standard-Games/shagger?rev=73c5ea4c4b780cd1b9e247b77b890315e5da6a2c#73c5ea4c4b780cd1b9e247b77b890315e5da6a2c"
 dependencies = [
  "flate2",
 ]

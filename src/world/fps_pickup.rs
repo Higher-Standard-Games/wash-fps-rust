@@ -109,11 +109,7 @@ pub fn build_weapon_pickups(
         );
         let leader = leader_matrix(position, map_weapon_yaw(entry.id) as f32, pickup_scale(Some(def.scale)));
         for (primitive, world) in flattened_pickup_matrices(&model, leader).into_iter().enumerate() {
-            draws.push(ModelDraw {
-                model: handle,
-                primitive,
-                world,
-            });
+            draws.push(ModelDraw::new(handle, primitive, world));
         }
         let Some(first) = def.barrels.first() else { continue };
         let tags = pk3
@@ -134,11 +130,7 @@ pub fn build_weapon_pickups(
                     },
                 );
             for (primitive, p) in barrel_model.primitives.iter().enumerate() {
-                draws.push(ModelDraw {
-                    model: barrel_handle,
-                    primitive,
-                    world: root * p.node_matrix,
-                });
+                draws.push(ModelDraw::new(barrel_handle, primitive, root * p.node_matrix));
             }
         }
     }
