@@ -1,0 +1,618 @@
+{
+ "generator": "shagger tools/golden/skybox.mjs",
+ "shag": "4168ec3",
+ "transforms": [
+  [
+   1,
+   "none",
+   "42a146d9caf95c0d29b3ea8e3574f3c47758bec2cdcb99e6f10381de77ab6d54"
+  ],
+  [
+   1,
+   "flipH",
+   "42a146d9caf95c0d29b3ea8e3574f3c47758bec2cdcb99e6f10381de77ab6d54"
+  ],
+  [
+   1,
+   "flipV",
+   "42a146d9caf95c0d29b3ea8e3574f3c47758bec2cdcb99e6f10381de77ab6d54"
+  ],
+  [
+   1,
+   "rotate180",
+   "42a146d9caf95c0d29b3ea8e3574f3c47758bec2cdcb99e6f10381de77ab6d54"
+  ],
+  [
+   1,
+   "rotate90CW",
+   "42a146d9caf95c0d29b3ea8e3574f3c47758bec2cdcb99e6f10381de77ab6d54"
+  ],
+  [
+   1,
+   "rotate90CCW",
+   "42a146d9caf95c0d29b3ea8e3574f3c47758bec2cdcb99e6f10381de77ab6d54"
+  ],
+  [
+   1,
+   "rotate90CW_flipH",
+   "42a146d9caf95c0d29b3ea8e3574f3c47758bec2cdcb99e6f10381de77ab6d54"
+  ],
+  [
+   1,
+   "rotate90CCW_flipH",
+   "42a146d9caf95c0d29b3ea8e3574f3c47758bec2cdcb99e6f10381de77ab6d54"
+  ],
+  [
+   2,
+   "none",
+   "9c94926dfb94433e790f2c209e2633b2dd3e922b2741ac687e164d488d1ff67c"
+  ],
+  [
+   2,
+   "flipH",
+   "e8c89b38444a73e0fb2221eb25d276cacc62c78af65846a7ea2cd0ff51a19ec1"
+  ],
+  [
+   2,
+   "flipV",
+   "66d296b3e6a5c2a0178580e123bad70e3371e5bca39669971eb0b105aa4a02c3"
+  ],
+  [
+   2,
+   "rotate180",
+   "afd097d6f64cc9f8ed345e977bda344714ce7e518d05130016daa901982e6581"
+  ],
+  [
+   2,
+   "rotate90CW",
+   "388c17c102e2b79c84758ab93eada0988a866ccb246d5390cddfb1ed8e29a8fe"
+  ],
+  [
+   2,
+   "rotate90CCW",
+   "42451c4f9a6250225971260eb6ab3bdb882755dbd4cfc082edb1a5b47b557dec"
+  ],
+  [
+   2,
+   "rotate90CW_flipH",
+   "6f5e47303d5a9231df0ab31f5498d01d86bd93beb172edca594793fb3f9fb0bc"
+  ],
+  [
+   2,
+   "rotate90CCW_flipH",
+   "240b2789e39538b65cf9f3a80f4ee098e6eeb0a2ffb00a874c7dc9a5a245a25a"
+  ],
+  [
+   3,
+   "none",
+   "a7aba4ca5c33084110dd834aed55b0854a3b01cda64777e490ac02e7e7b7446d"
+  ],
+  [
+   3,
+   "flipH",
+   "f3ec402342bb5fcc45cb30705edb32b129f5ad9f5e0fffe3cd35f12749167ba7"
+  ],
+  [
+   3,
+   "flipV",
+   "3088232baf37fa1c600d504877497192732e82c9929a79ee37be87db906a7125"
+  ],
+  [
+   3,
+   "rotate180",
+   "07a923ecd901474eab79b42f211495e036ca633f3946a0c67170ff6b8320e41f"
+  ],
+  [
+   3,
+   "rotate90CW",
+   "0106a579a7fbfcaa8af714ef8eaf551b80f6c18d2135205a101ef64f63267b6b"
+  ],
+  [
+   3,
+   "rotate90CCW",
+   "903af5707fa8489ff3571ad07499ca68890b3e6b4029398485390699ad1199b8"
+  ],
+  [
+   3,
+   "rotate90CW_flipH",
+   "9ebeda0a2b83abf8ecafb74f1146927db69a45131295bbe0b0138b227679030e"
+  ],
+  [
+   3,
+   "rotate90CCW_flipH",
+   "9a488fa2dc47c4f18506b02a5b4ed61b5d8475e29a537c8af85a8ca05ba3c470"
+  ],
+  [
+   4,
+   "none",
+   "39e3d7b6b5d075d37d053ad89b24b41bef4f3c29760c84447cab3f3be1882241"
+  ],
+  [
+   4,
+   "flipH",
+   "d6a89476c388970fe25213e5d91263f7c3f5f7c9e216bd74eac669f7f5d29a12"
+  ],
+  [
+   4,
+   "flipV",
+   "5c881e3af2ef5357fb0dccb5bd0dec2ea4ba8d06d5b332d1689145e8c429eb7a"
+  ],
+  [
+   4,
+   "rotate180",
+   "8500ae8079a7b3bcd432c35d84228c5d098deab95d80ea6b2ebbdc1bd1867f6d"
+  ],
+  [
+   4,
+   "rotate90CW",
+   "aed13891bb77047a9035b5a73ad70c4b2a1c399401c3fc2035fee8bd26b974fd"
+  ],
+  [
+   4,
+   "rotate90CCW",
+   "ae0cfcd56c81d2d4b2e899fd0b0be361478ade0e21995b771a9430cc377075ea"
+  ],
+  [
+   4,
+   "rotate90CW_flipH",
+   "ec7b4b2a04514d60762569b3dd9ebb5759a5005c9578db7e6324796bd09d2f57"
+  ],
+  [
+   4,
+   "rotate90CCW_flipH",
+   "78dd3c9f34a832630f90252c84a97d33a8dd8eaf35864556d6ba6fc379287707"
+  ],
+  [
+   5,
+   "none",
+   "5a2cda2351d1cdd9dd7957e57c0b3c8522451f25b6494569b7e94388c46f0980"
+  ],
+  [
+   5,
+   "flipH",
+   "7987b5df3a5345de62693b1855d3c099f6ef24e6da7636c3f420f165db383d3b"
+  ],
+  [
+   5,
+   "flipV",
+   "27ccc4bc0181172a5421cdf210c92e4f8f818694f369f3475e0e20c6dd38cf06"
+  ],
+  [
+   5,
+   "rotate180",
+   "030b63d385627fa8b1212b6279548f758b7bd5fdd85a59d548e45a6b1fe9d2b8"
+  ],
+  [
+   5,
+   "rotate90CW",
+   "66a1d10b26d346644750b781d806845e827705609e9350297f9b8d6bbde31468"
+  ],
+  [
+   5,
+   "rotate90CCW",
+   "b6fb1d3288776ecf269138d7aca084d4817834ce9acc45d43d306ceacc434a8c"
+  ],
+  [
+   5,
+   "rotate90CW_flipH",
+   "fc187d9348af2e24a81eaf98a0caab4c781798c4f7657d9dea8abee84d1542bb"
+  ],
+  [
+   5,
+   "rotate90CCW_flipH",
+   "d91218646cfaac2b82444f85f5d97a9ca0c66b8fe228672cfce92886d732a433"
+  ]
+ ],
+ "scales": [
+  [
+   1,
+   4,
+   "bebbc371faa1b262d30fca72dee63e82edc4c752fbe8a3acea3b0a00e01d8fe2"
+  ],
+  [
+   2,
+   5,
+   "39ba13742f3165da8203ca09a8d0f3e7101252c3e9ed99b221704916fdc308ae"
+  ],
+  [
+   3,
+   7,
+   "b58eae790f6e18434ac87c21a6889ae6369a94a35a38e05a3bee5a1640c66cb2"
+  ],
+  [
+   4,
+   4,
+   "39e3d7b6b5d075d37d053ad89b24b41bef4f3c29760c84447cab3f3be1882241"
+  ],
+  [
+   5,
+   3,
+   "bf57c7dc34fee2bb65fdd913a6407a1fd551de362819b7170c8cdadc4f1d3f5c"
+  ],
+  [
+   8,
+   13,
+   "5bd3a9a2d9464e797938dc991e1ff30da256ae08fefa00d9c64d1546e7c6bc6b"
+  ]
+ ],
+ "maps": [
+  {
+   "map": "washoi_amphi1.bsp",
+   "farbox": "env/alleyskybox/grimmnight",
+   "success": true,
+   "loadedFaces": [
+    "env/alleyskybox/grimmnight_rt.webp",
+    "env/alleyskybox/grimmnight_bk.webp",
+    "env/alleyskybox/grimmnight_lf.webp",
+    "env/alleyskybox/grimmnight_ft.webp",
+    "env/alleyskybox/grimmnight_up.webp",
+    "env/alleyskybox/grimmnight_dn.tga"
+   ],
+   "sources": [
+    {
+     "path": "env/alleyskybox/grimmnight_rt.webp",
+     "size": 512,
+     "sha": "cb1c12d818e403059a13f22a0ce4b779ddc154971176723e9b7f2274081e195a"
+    },
+    {
+     "path": "env/alleyskybox/grimmnight_bk.webp",
+     "size": 512,
+     "sha": "d5d068bb29a0c5810bddc7b1f56a209c7e2a9ee4982b25097027e29977dc338d"
+    },
+    {
+     "path": "env/alleyskybox/grimmnight_lf.webp",
+     "size": 512,
+     "sha": "3ea47c11079e97012f3417ff3a635afea3de5833434b6922613281235ddbac3c"
+    },
+    {
+     "path": "env/alleyskybox/grimmnight_ft.webp",
+     "size": 512,
+     "sha": "2a39d159e44054f0409f6645d84ef5e457878e245463c83a995852aad9415f3a"
+    },
+    {
+     "path": "env/alleyskybox/grimmnight_up.webp",
+     "size": 512,
+     "sha": "d17177d859a9ef780516f165ce4593dc5d4e158c28140caa45d758916b4f8005"
+    },
+    {
+     "path": "env/alleyskybox/grimmnight_dn.tga",
+     "size": 1,
+     "sha": "e3820096cb82366b860b8a4e668453a7aaaf423af03bdf289fa308ea03a79332"
+    }
+   ],
+   "size": 512,
+   "slots": [
+    "2739649f036b0acfb1837ad9cb9f83daeb5505da7edd2d39db2672a8272c561f",
+    "81feadea12d2d9c2509a63afdffb20c04378a710fe77bc951e757a5ec64194a8",
+    "c7673c32c653a01dad1d74adee6f0352c90196f6502f5337fcb1cd6057dc735b",
+    "52140e3ce635ce4ac6ddf8b0eb6558c86a353a9cabaee54c1ef89f20214595d7",
+    "c244aa8a0b8bd5d7e5ebcb15945bf73ba576427db32dcb569ba5367ef1d2519d",
+    "76fdc18fdf94326b6ca18ce6b13c042521cdcadb29965425c578a0572e9f18eb"
+   ]
+  },
+  {
+   "map": "washoi_dm11.bsp",
+   "farbox": "env/stormydays/stormydays",
+   "success": true,
+   "loadedFaces": [
+    "env/stormydays/stormydays_rt.webp",
+    "env/stormydays/stormydays_bk.webp",
+    "env/stormydays/stormydays_lf.webp",
+    "env/stormydays/stormydays_ft.webp",
+    "env/stormydays/stormydays_up.webp",
+    "env/stormydays/stormydays_dn.webp"
+   ],
+   "sources": [
+    {
+     "path": "env/stormydays/stormydays_rt.webp",
+     "size": 512,
+     "sha": "4d5075f498d3130f619c433fe9b7371a4b8c19bc65e7e2d396f259689b8e6f07"
+    },
+    {
+     "path": "env/stormydays/stormydays_bk.webp",
+     "size": 512,
+     "sha": "39d7e9321ae45054bc98b3551927e0393e8ad11e360620729273bddd26b302b8"
+    },
+    {
+     "path": "env/stormydays/stormydays_lf.webp",
+     "size": 512,
+     "sha": "9eb023f17fedd3f5627038ba8e2ee5a5705175f151ea0bb906a644ceab7f4f61"
+    },
+    {
+     "path": "env/stormydays/stormydays_ft.webp",
+     "size": 512,
+     "sha": "8aac12dd858b07ac5d2d8f7d5487b68e45d7e841401a309f2b7f2687c75efef3"
+    },
+    {
+     "path": "env/stormydays/stormydays_up.webp",
+     "size": 512,
+     "sha": "4d6e66b93cb78170b31e6b31052c0996a7919ffa6c7c29ab3e6d95a90e45f81f"
+    },
+    {
+     "path": "env/stormydays/stormydays_dn.webp",
+     "size": 512,
+     "sha": "4fd49b7b4033ad7ba4da64ae77590733eede2ec4b9b119896550ecf7fe6382ab"
+    }
+   ],
+   "size": 512,
+   "slots": [
+    "2e6d17c4a3bd697183909b7249c5e3358e1bd6e4746c6f5b1d432f2ad1093652",
+    "048896eb58861fc8dc7aae9ae4e258d8aee6298db6b63eee5a75572d1b72b518",
+    "9a0cc0a7ff458c0c29cc9983ed1a020bb40c2079bc057a1fb528c006598a0d75",
+    "5b468683c1033bf8294606bc8eaf0be6e184305cbd3a9b16e50f0a6db4bbc628",
+    "a16bc1ec8c00e5e3559811b0fe444c8fc62cfa6bea01b68feb3ce35dd0220261",
+    "4439c7a2b177013dd7912f439f3f4c24f38e59af0114d698a20706e734de424b"
+   ]
+  },
+  {
+   "map": "washoi_dm14.bsp",
+   "farbox": "env/cssky/cube",
+   "success": true,
+   "loadedFaces": [
+    "env/cssky/cube_rt.webp",
+    "env/cssky/cube_bk.webp",
+    "env/cssky/cube_lf.webp",
+    "env/cssky/cube_ft.webp",
+    "env/cssky/cube_up.webp",
+    "env/cssky/cube_dn.tga"
+   ],
+   "sources": [
+    {
+     "path": "env/cssky/cube_rt.webp",
+     "size": 512,
+     "sha": "e381cbfdd944de3d5b200fc67e6a1274a18351e0f3f5ee6858157ef48dcd45d1"
+    },
+    {
+     "path": "env/cssky/cube_bk.webp",
+     "size": 512,
+     "sha": "b7b4a0c08740a8de50f464f6b8146b0236ad9bc25f2c6c819589ac1d59479cad"
+    },
+    {
+     "path": "env/cssky/cube_lf.webp",
+     "size": 512,
+     "sha": "21c6e0f433f1a008ec2d2de87227f346b9dd6b9350b22b6d3fb3b873c9c8f8b5"
+    },
+    {
+     "path": "env/cssky/cube_ft.webp",
+     "size": 512,
+     "sha": "28e6afa817e395018e346e8069c08ad630d4d1b780e715b0d51d213a604c78ec"
+    },
+    {
+     "path": "env/cssky/cube_up.webp",
+     "size": 512,
+     "sha": "0b2c3901ffc95571eabeebab0b07439cad9868ddaeaf1e9b51e3a2db5e738aaa"
+    },
+    {
+     "path": "env/cssky/cube_dn.tga",
+     "size": 1,
+     "sha": "99451c86a9e8c211af83aaf626a1deee45d7d4457730a895eb8aeab61b17162f"
+    }
+   ],
+   "size": 512,
+   "slots": [
+    "82bd3f2e42ecf0b10ded09e15c4de0fad6d907fc7bdf12fbb553b28b7b70a14e",
+    "54cd0db0d695e73037ab81a185195208f62a4e7412cae66fa65c28cc9ea39390",
+    "b6c2278848634a4cbd1c0f06470f8d7e2449366a6554a82deac4dab1cb6f1ae7",
+    "9277533a0cdc5433e09150f69f9313ba564089795d11974a30954321113aac87",
+    "f0ed231dee3850a06e79738a3d0251650ef2db19cbc1eb18acadddbd551ff8f6",
+    "7206ad995d4e22d6a8c12fe9e0c47d15710f536bf6f90cf93b5a425b59917c18"
+   ]
+  },
+  {
+   "map": "washoi_dm2.bsp",
+   "farbox": "env/36sky",
+   "success": true,
+   "loadedFaces": [
+    "env/36sky.ktx",
+    "env/36sky.ktx",
+    "env/36sky.ktx",
+    "env/36sky.ktx",
+    "env/36sky_up.ktx",
+    "env/36sky.ktx"
+   ],
+   "sources": [
+    {
+     "path": "env/36sky.ktx",
+     "size": 1024,
+     "sha": "807213b17c867eea3917a9d61d50d9bda8ebb196b675bec61b4053c269aaab14"
+    },
+    {
+     "path": "env/36sky.ktx",
+     "size": 1024,
+     "sha": "807213b17c867eea3917a9d61d50d9bda8ebb196b675bec61b4053c269aaab14"
+    },
+    {
+     "path": "env/36sky.ktx",
+     "size": 1024,
+     "sha": "807213b17c867eea3917a9d61d50d9bda8ebb196b675bec61b4053c269aaab14"
+    },
+    {
+     "path": "env/36sky.ktx",
+     "size": 1024,
+     "sha": "807213b17c867eea3917a9d61d50d9bda8ebb196b675bec61b4053c269aaab14"
+    },
+    {
+     "path": "env/36sky_up.ktx",
+     "size": 1024,
+     "sha": "98819fe4b255b6c471552c021e10ecb23ea3f6222aca8249b3c7bac0ebdef30f"
+    },
+    {
+     "path": "env/36sky.ktx",
+     "size": 1024,
+     "sha": "807213b17c867eea3917a9d61d50d9bda8ebb196b675bec61b4053c269aaab14"
+    }
+   ],
+   "size": 1024,
+   "slots": [
+    "02d066797c14eac123cf04037adf83931872f93c5f65697e94af88b87cc0e937",
+    "02d066797c14eac123cf04037adf83931872f93c5f65697e94af88b87cc0e937",
+    "f0458047bdc56ba6191daf107a61f4b5102e2ad4d602b389a8fda4b08ed70f09",
+    "3822f2f239a762e8afdc68b3457ee0d901bd39da71364ff181e2f87bc2b49343",
+    "02d066797c14eac123cf04037adf83931872f93c5f65697e94af88b87cc0e937",
+    "02d066797c14eac123cf04037adf83931872f93c5f65697e94af88b87cc0e937"
+   ]
+  },
+  {
+   "map": "washoi_dm5.bsp",
+   "farbox": "env/36sky",
+   "success": true,
+   "loadedFaces": [
+    "env/36sky.ktx",
+    "env/36sky.ktx",
+    "env/36sky.ktx",
+    "env/36sky.ktx",
+    "env/36sky_up.ktx",
+    "env/36sky.ktx"
+   ],
+   "sources": [
+    {
+     "path": "env/36sky.ktx",
+     "size": 1024,
+     "sha": "807213b17c867eea3917a9d61d50d9bda8ebb196b675bec61b4053c269aaab14"
+    },
+    {
+     "path": "env/36sky.ktx",
+     "size": 1024,
+     "sha": "807213b17c867eea3917a9d61d50d9bda8ebb196b675bec61b4053c269aaab14"
+    },
+    {
+     "path": "env/36sky.ktx",
+     "size": 1024,
+     "sha": "807213b17c867eea3917a9d61d50d9bda8ebb196b675bec61b4053c269aaab14"
+    },
+    {
+     "path": "env/36sky.ktx",
+     "size": 1024,
+     "sha": "807213b17c867eea3917a9d61d50d9bda8ebb196b675bec61b4053c269aaab14"
+    },
+    {
+     "path": "env/36sky_up.ktx",
+     "size": 1024,
+     "sha": "98819fe4b255b6c471552c021e10ecb23ea3f6222aca8249b3c7bac0ebdef30f"
+    },
+    {
+     "path": "env/36sky.ktx",
+     "size": 1024,
+     "sha": "807213b17c867eea3917a9d61d50d9bda8ebb196b675bec61b4053c269aaab14"
+    }
+   ],
+   "size": 1024,
+   "slots": [
+    "02d066797c14eac123cf04037adf83931872f93c5f65697e94af88b87cc0e937",
+    "02d066797c14eac123cf04037adf83931872f93c5f65697e94af88b87cc0e937",
+    "f0458047bdc56ba6191daf107a61f4b5102e2ad4d602b389a8fda4b08ed70f09",
+    "3822f2f239a762e8afdc68b3457ee0d901bd39da71364ff181e2f87bc2b49343",
+    "02d066797c14eac123cf04037adf83931872f93c5f65697e94af88b87cc0e937",
+    "02d066797c14eac123cf04037adf83931872f93c5f65697e94af88b87cc0e937"
+   ]
+  },
+  {
+   "map": "washoi_dm7.bsp",
+   "farbox": "env/autumtrees/autumtrees",
+   "success": true,
+   "loadedFaces": [
+    "env/autumtrees/autumtrees_rt.webp",
+    "env/autumtrees/autumtrees_bk.webp",
+    "env/autumtrees/autumtrees_lf.webp",
+    "env/autumtrees/autumtrees_ft.webp",
+    "env/autumtrees/autumtrees_up.webp",
+    "env/autumtrees/autumtrees_dn.webp"
+   ],
+   "sources": [
+    {
+     "path": "env/autumtrees/autumtrees_rt.webp",
+     "size": 512,
+     "sha": "629cfc2404b3a3e8c547a9c8a17dbf84bae27653ee7aa5e1b41dee9c455683d7"
+    },
+    {
+     "path": "env/autumtrees/autumtrees_bk.webp",
+     "size": 512,
+     "sha": "c6e022cf7671973965d7ee7589a036a3d88c33c714ccd92395168bf08375fa3f"
+    },
+    {
+     "path": "env/autumtrees/autumtrees_lf.webp",
+     "size": 512,
+     "sha": "22b46988a61d3e2886b890aad963822447680e3a415791edca12b3394b817e1f"
+    },
+    {
+     "path": "env/autumtrees/autumtrees_ft.webp",
+     "size": 512,
+     "sha": "a066a0064ed2204f18d93819fdfefa1ce39f30b15ae497ee46f5cf77c0e89b87"
+    },
+    {
+     "path": "env/autumtrees/autumtrees_up.webp",
+     "size": 512,
+     "sha": "e0e5d93f5dc4b3e6bd19b5494fa0536cca3400b05aa0694ddd02b6b0b2041101"
+    },
+    {
+     "path": "env/autumtrees/autumtrees_dn.webp",
+     "size": 512,
+     "sha": "3b50778cce14dbb3716c9737bb3a7a932922b8130c74918b252828e2a1519490"
+    }
+   ],
+   "size": 512,
+   "slots": [
+    "7b020fc31978701fe0faf71bc47e751d956661236ddbbfc18ebc162c4451270c",
+    "ebc106d4e29659fb8a4a18ded1bd44a90047703f6007697d63e3554f9394187f",
+    "e80252d5fe4364fe28e093207aca262f392ec0574b8fe90fbf2c31e6227c64f1",
+    "8f9015b22ad90d7dd26c4136357cef5f63c7aae87dd7e0247c72967c1431a2ef",
+    "7b4201039459ee206dbd8ba371a934de9cc7bc22b357b28b519ee4e53f088ea6",
+    "0d766bd187349f8d09de932d73630ee8160d8897453e1295b893c0beb7a52036"
+   ]
+  },
+  {
+   "map": "washoi_snd1.bsp",
+   "farbox": "env/cssky/cube",
+   "success": true,
+   "loadedFaces": [
+    "env/cssky/cube_rt.webp",
+    "env/cssky/cube_bk.webp",
+    "env/cssky/cube_lf.webp",
+    "env/cssky/cube_ft.webp",
+    "env/cssky/cube_up.webp",
+    "env/cssky/cube_dn.tga"
+   ],
+   "sources": [
+    {
+     "path": "env/cssky/cube_rt.webp",
+     "size": 512,
+     "sha": "e381cbfdd944de3d5b200fc67e6a1274a18351e0f3f5ee6858157ef48dcd45d1"
+    },
+    {
+     "path": "env/cssky/cube_bk.webp",
+     "size": 512,
+     "sha": "b7b4a0c08740a8de50f464f6b8146b0236ad9bc25f2c6c819589ac1d59479cad"
+    },
+    {
+     "path": "env/cssky/cube_lf.webp",
+     "size": 512,
+     "sha": "21c6e0f433f1a008ec2d2de87227f346b9dd6b9350b22b6d3fb3b873c9c8f8b5"
+    },
+    {
+     "path": "env/cssky/cube_ft.webp",
+     "size": 512,
+     "sha": "28e6afa817e395018e346e8069c08ad630d4d1b780e715b0d51d213a604c78ec"
+    },
+    {
+     "path": "env/cssky/cube_up.webp",
+     "size": 512,
+     "sha": "0b2c3901ffc95571eabeebab0b07439cad9868ddaeaf1e9b51e3a2db5e738aaa"
+    },
+    {
+     "path": "env/cssky/cube_dn.tga",
+     "size": 1,
+     "sha": "99451c86a9e8c211af83aaf626a1deee45d7d4457730a895eb8aeab61b17162f"
+    }
+   ],
+   "size": 512,
+   "slots": [
+    "82bd3f2e42ecf0b10ded09e15c4de0fad6d907fc7bdf12fbb553b28b7b70a14e",
+    "54cd0db0d695e73037ab81a185195208f62a4e7412cae66fa65c28cc9ea39390",
+    "b6c2278848634a4cbd1c0f06470f8d7e2449366a6554a82deac4dab1cb6f1ae7",
+    "9277533a0cdc5433e09150f69f9313ba564089795d11974a30954321113aac87",
+    "f0ed231dee3850a06e79738a3d0251650ef2db19cbc1eb18acadddbd551ff8f6",
+    "7206ad995d4e22d6a8c12fe9e0c47d15710f536bf6f90cf93b5a425b59917c18"
+   ]
+  }
+ ]
+}

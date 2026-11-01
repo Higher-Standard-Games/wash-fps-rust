@@ -2568,6 +2568,39 @@ fit and did not count the parity harness.
 
 Newest first. Each entry names the commits and what proves them.
 
+### Milestone 6, fourth slice: the far box sky (November 1, 2026)
+
+- **shagger `ae964c5`.**
+  - `loader::texture::skybox_loader` ports `SkyboxLoader.loadSkybox` up to
+    the cube texture. Each Quake face is found as `loadSkyboxFace` finds it,
+    falling back to the unsuffixed image for Warsow's `skyparmssides`. It is
+    decoded as SHAG decodes it: its own TGA reader, and KTX rows as stored,
+    with no flip. Stubbed faces are scaled to the largest face, then turned
+    into Babylon's six cube slots (`Q3_TO_BABYLON_FACE_MAP`).
+  - `rendering::sky_renderer` uploads slot `i` to cube layer `i`, as Babylon
+    uploads it to `TEXTURE_CUBE_MAP_POSITIVE_X + i`. It samples the cube
+    with the Babylon-space view direction, from one screen-covering
+    triangle drawn first without depth. `apply_skybox` picks the far box as
+    `BspMeshBuilder.applySkybox` does, and `WorldGeometry` collects the sky
+    shaders.
+  - The KTX skies of dm2 and dm5 (`env/36sky`) are one-face ETC1 images,
+    not cube files, so the six-face path covers all seven maps.
+- **wash-fps-rust.** `washoi view` draws the sky and takes `--pitch DEG`
+  (negative looks up).
+- **Proof.**
+  - `skybox.mjs` runs SHAG's own loader on a Babylon `NullEngine`, which
+    captures the six faces handed to `RawCubeTexture`. WebP, JPEG and PNG,
+    which SHAG leaves to the browser, are decoded with sharp (libwebp).
+  - `tests/skybox_golden.rs` matches all 40 face transforms and 6 stub
+    scales. It also matches every source face (path, size, pixels) and all
+    six cube slots of each of the seven maps, by SHA-256. The `image`
+    crate's WebP decode matches libwebp on every face.
+  - On screen: dm7's autumn canopy, dm11's overcast sky and dm14's blue sky
+    show through the openings, with no seams.
+- **Not yet.** Sky cloud layers, the sky sphere and `qer_editorimage`
+  fallbacks, and portal skies. No shipped map reaches them. PVS and frustum
+  culling are next.
+
 ### Milestone 6, third slice: shader animation and autosprites (November 1, 2026)
 
 - **shagger `9dfa321`.**
@@ -2601,7 +2634,7 @@ Newest first. Each entry names the commits and what proves them.
     corona covers the same screen area seen from three sides, so it turns.
 - **Not yet.** Environment and `$cubemap` reflections and normal, gloss and
   glow maps (after milestone 7, 21.10); blended passes sorted back to
-  front; then the farbox sky and PVS and frustum culling, next.
+  front; then the farbox sky and PVS and frustum culling.
 
 ### Milestone 6, second slice: shader-defined surfaces (November 1, 2026)
 

@@ -13,6 +13,7 @@ use shagger::physics::player_physics_constants::DEFAULT_VIEWHEIGHT;
 use shagger::rendering::camera::Camera;
 use shagger::rendering::gpu::Gpu;
 use shagger::rendering::offscreen::{OFFSCREEN_FORMAT, render_to_rgba};
+use shagger::rendering::sky_renderer::{SkyRenderer, apply_skybox};
 use shagger::rendering::wgpu;
 use shagger::rendering::world_geometry::build_world_geometry;
 use shagger::rendering::world_renderer::{Rgba8Image, WorldRenderer};
@@ -25,7 +26,7 @@ const SPAWN_CLASSNAMES: [&str; 4] = [
     "info_player_team2",
 ];
 
-/// The clear colour until the sky is drawn.
+/// The clear colour where no sky is drawn.
 pub const CLEAR: wgpu::Color = wgpu::Color {
     r: 0.12,
     g: 0.14,
@@ -45,6 +46,8 @@ pub struct ViewOptions {
     pub time: f64,
     /// A Q3 position and yaw to view from instead of a spawn point.
     pub at: Option<[f32; 4]>,
+    /// Degrees; negative looks up.
+    pub pitch: f32,
 }
 
 /// The packages, their shader scripts, the map and its spawn points.
@@ -98,8 +101,32 @@ pub fn load_map(data: &Path, map: &str) -> Result<LoadedMap, String> {
     })
 }
 
-/// Builds the world and uploads it with its textures.
-pub fn build_renderer(gpu: &Gpu, map: &mut LoadedMap, format: wgpu::TextureFormat) -> WorldRenderer {
+/// The map's sky and world.
+pub struct MapRenderer {
+    pub world: WorldRenderer,
+    pub sky: Option<SkyRenderer>,
+}
+
+impl MapRenderer {
+    /// Writes this frame's camera.
+    pub fn prepare(&self, gpu: &Gpu, camera: &Camera, aspect: f32) {
+        self.world.prepare(gpu, camera.view_projection(aspect), camera.position);
+        if let Some(sky) = &self.sky {
+            sky.prepare(gpu, camera, aspect);
+        }
+    }
+
+    /// Records the sky, then the world.
+    pub fn draw(&self, pass: &mut wgpu::RenderPass<'_>) {
+        if let Some(sky) = &self.sky {
+            sky.draw(pass);
+        }
+        self.world.draw(pass);
+    }
+}
+
+/// Builds the world and its sky and uploads them with their textures.
+pub fn build_renderer(gpu: &Gpu, map: &mut LoadedMap, format: wgpu::TextureFormat) -> MapRenderer {
     let geometry = build_world_geometry(&map.bsp, |name, options| {
         map.shaders.resolve_material_passes(&map.pk3, name, options)
     });
@@ -132,7 +159,18 @@ pub fn build_renderer(gpu: &Gpu, map: &mut LoadedMap, format: wgpu::TextureForma
     if !renderer.missing_images().is_empty() {
         println!("  no image found: {}", renderer.missing_images().join(", "));
     }
-    renderer
+    let sky = match apply_skybox(&mut map.pk3, &geometry.sky_shaders) {
+        Some((faces, base)) => {
+            println!("sky: {base} ({}x{} faces)", faces.size, faces.size);
+            Some(SkyRenderer::new(gpu, &faces, format))
+        }
+        None if geometry.sky_shaders.is_empty() => None,
+        None => {
+            println!("sky: no far box for {} sky shader(s)", geometry.sky_shaders.len());
+            None
+        }
+    };
+    MapRenderer { world: renderer, sky }
 }
 
 pub fn run(o: &ViewOptions) -> i32 {
@@ -144,10 +182,11 @@ pub fn run(o: &ViewOptions) -> i32 {
         }
     };
     let at = o.at.map(|[x, y, z, angle]| Camera::from_q3([x, y, z], angle));
-    let Some(camera) = at.or_else(|| map.spawns.get(o.spawn).or(map.spawns.first()).copied()) else {
+    let Some(mut camera) = at.or_else(|| map.spawns.get(o.spawn).or(map.spawns.first()).copied()) else {
         eprintln!("{} has no spawn point", o.map);
         return 1;
     };
+    camera.pitch = o.pitch.to_radians();
     println!(
         "{}: {} spawn points, viewing from spawn {}",
         o.map,
@@ -167,12 +206,8 @@ pub fn run(o: &ViewOptions) -> i32 {
     println!("gpu: {}", gpu.describe());
     let mut renderer = build_renderer(&gpu, &mut map, OFFSCREEN_FORMAT);
     // Shader animation as it stands `--time` seconds after the map loads.
-    renderer.animate(&gpu, o.time);
-    renderer.prepare(
-        &gpu,
-        camera.view_projection(o.width as f32 / o.height as f32),
-        camera.position,
-    );
+    renderer.world.animate(&gpu, o.time);
+    renderer.prepare(&gpu, &camera, o.width as f32 / o.height as f32);
     let pixels = render_to_rgba(&gpu, o.width, o.height, CLEAR, |pass| renderer.draw(pass));
     match image::save_buffer(path, &pixels, o.width, o.height, image::ExtendedColorType::Rgba8) {
         Ok(()) => {

@@ -12,7 +12,7 @@ use shagger::rendering::glam::Vec3;
 use shagger::rendering::gpu::Gpu;
 use shagger::rendering::offscreen::begin_main_pass;
 use shagger::rendering::wgpu;
-use shagger::rendering::world_renderer::{DEPTH_FORMAT, WorldRenderer};
+use shagger::rendering::world_renderer::DEPTH_FORMAT;
 use winit::application::ApplicationHandler;
 use winit::dpi::PhysicalSize;
 use winit::event::{DeviceEvent, DeviceId, ElementState, MouseButton, WindowEvent};
@@ -20,7 +20,7 @@ use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop};
 use winit::keyboard::{KeyCode, PhysicalKey};
 use winit::window::{CursorGrabMode, Window, WindowId};
 
-use crate::view::{CLEAR, LoadedMap, build_renderer};
+use crate::view::{CLEAR, LoadedMap, MapRenderer, build_renderer};
 
 /// Units per second (Q3's run speed is 320).
 const SPEED: f32 = 320.0;
@@ -33,7 +33,7 @@ struct Surface {
     surface: wgpu::Surface<'static>,
     config: wgpu::SurfaceConfiguration,
     depth: wgpu::TextureView,
-    renderer: WorldRenderer,
+    renderer: MapRenderer,
 }
 
 struct App {
@@ -149,9 +149,8 @@ impl App {
         };
         let view = frame.texture.create_view(&wgpu::TextureViewDescriptor::default());
         let aspect = s.config.width as f32 / s.config.height as f32;
-        s.renderer.animate(&s.gpu, f64::from(dt));
-        s.renderer
-            .prepare(&s.gpu, self.camera.view_projection(aspect), self.camera.position);
+        s.renderer.world.animate(&s.gpu, f64::from(dt));
+        s.renderer.prepare(&s.gpu, &self.camera, aspect);
         let mut encoder = s
             .gpu
             .device
