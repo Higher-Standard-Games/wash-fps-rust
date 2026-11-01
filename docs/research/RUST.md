@@ -1891,7 +1891,7 @@ directly into a `shagger::loader::bsp` module over `&[u8]` using `bytemuck` or
 | WebP from `tex_*.pk3` | browser image decode | `image` (WebP), then mipmaps on the GPU with a compute or blit pass |
 | TGA, PNG, JPEG | `TgaDecoder.ts`, browser decode | `image`; port `TgaDecoder.ts` only if `image` disagrees on Q3 quirks (origin bit, RLE) |
 | KTX2 sidecar (`r_ktx2 1`) | Babylon KTX2 worker, transcodes Basis to a GPU format | phase 2: `ktx2` crate plus `basis-universal` bindings, to BC7 on desktop |
-| ETC1 `.ktx` | `KTX1Loader.ts` | skip: desktop GPUs rarely support ETC; decode the WebP or TGA instead |
+| KTX1 `.ktx` (ETC1, a few uncompressed) | `KTX1Loader.ts` | decode on the CPU to RGBA8, as SHAG's software path does: 115 published textures exist only as KTX (decided November 2026, section 23) |
 | `r_picmip` | reduces map textures | `image::imageops::resize` before upload, same rules |
 
 Desktop VRAM is plentiful, so plain RGBA8 uploads from WebP are fine for the
@@ -1989,7 +1989,8 @@ building, which round 5 covers with the renderer.
   integrity uses SHA-256 per package. The index hash itself is djb2, not
   SHA-256 (20.2).
 - 7.2: WebP is the main map texture format (20.4). MP3 is not shipped. ETC1
-  KTX1 is a fallback the native client can skip.
+  KTX1 is the only copy of 115 published textures, so the native client
+  decodes it (corrected in section 23).
 - 15, milestone 5 (assets, 3 to 4 weeks): unchanged, but KTX2 moves to a later
   optional step, and the BSP loader moves earlier, into milestone 3.
 
@@ -2566,6 +2567,64 @@ fit and did not count the parity harness.
 ## 23. Progress log
 
 Newest first. Each entry names the commits and what proves them.
+
+### Milestone 6, second slice: shader-defined surfaces (November 1, 2026)
+
+- **shagger `e99ed34`.** `loader::shader::q3_shader_parser` ports
+  `Q3ShaderParser.ts` with its JavaScript quirks kept: `parseFloat(x) || d`
+  reads 0 as missing, `template` expansion follows `String.replace`
+  replacement patterns, and templates carry from one script to the next.
+- **shagger `f29da3a`.** `q3_shader_registry` ports `Q3ShaderRegistry.ts`:
+  scripts load in owning-package order (`Pk3Loader::list_files` keeps the
+  TypeScript's glob, where `.` matches any character, and its `Map` order),
+  shaders are found with the underscore-to-slash fallbacks, and
+  `resolveMaterialProps` and `resolveMaterialPasses` resolve materials,
+  conditional branches and implicit `_norm`/`_gloss`/`_glow` materials.
+  Stages carry an id, since the TypeScript compares stage objects.
+- **shagger `da3a7ef`.** `loader::texture::ktx1_loader` ports `KTX1Loader.ts`
+  and takes its software path always: ETC1 and DXT blocks decoded on the
+  CPU, rows flipped, uncompressed alpha, luminance and RGB expanded. This
+  reverses 20.6: 115 published textures (most of a map's concrete and metal)
+  exist only as KTX.
+- **shagger `1457782`.** The world draws with its materials.
+  `build_world_geometry` asks for each texture's passes and leaves out
+  faces whose shader is sky. `rendering::world_materials` ports
+  `buildDiffuseCandidates`, the missing-image fallbacks (radial gradient for
+  additive halos, `$whiteimage`, `$blackimage`) and `Q3Blend.ts` as wgpu
+  blend, alpha-test and depth state. Opaque passes draw first, then blended
+  ones; `cull none`, the decal polygon offset, full-bright stages without a
+  lightmap, and vertex colour and alpha follow the props.
+- **Proof.**
+  - `shaders.mjs` parses every script in the packages (and four hand-written
+    edge cases) with SHAG's parser; `tests/shaders_golden.rs` matches each
+    as canonical JSON.
+  - `shader_materials.mjs` mounts all 21 packages, loads the 342 shaders and
+    resolves all 529 shader and map texture names under three option sets;
+    `tests/shader_materials_golden.rs` matches every one. Mutating a
+    cutoff or a pass rule fails it. The two branches no shipped data reaches
+    (the inverse multiply blend, implicit `_add` glows) have unit tests.
+  - `ktx.mjs` runs SHAG's loader over all 115 `.ktx` files against an engine
+    with no compressed formats; `tests/ktx_golden.rs` matches the 112 it
+    decodes by SHA-256 and the three six-face skies it refuses by message.
+  - On the five maps rendered, one texture still has no image (a dm5 shader
+    whose `material` names a file that is not shipped), against a third of
+    each map before. Screenshots in the project files.
+- **Audit.** `tools/shader_audit.mjs` counts what the world faces of the
+  seven maps use (`docs/research/shader_audit.json`): 9,644 faces have a
+  shader, 6,455 only an image. Blends are mostly alpha blend (2,282 faces)
+  and filter (1,930); 1,288 faces use `rgbGen vertex` and 586
+  `distanceRamp`; 196 are autosprites and 223 autosprite2; 70 use
+  `tcGen environment`. `tcMod transform`, `tcGen vector` and
+  `lightingDiffuse` are unused.
+- **Not yet, in the order planned.**
+  - Animation: `tcMod` (scroll, turb, rotate, stretch), `rgbGen wave` and
+    `distanceRamp`, `animMap`.
+  - Autosprites turned to the camera (drawn as their static faces now),
+    environment and `$cubemap` reflections (a reflection pass is left out),
+    normal, gloss and glow maps.
+  - The sky, PVS and frustum culling, movers, and blended passes sorted back
+    to front.
+  - The visual parity harness (8.3).
 
 ### Milestone 6, first slice: the map world on screen (November 1, 2026)
 

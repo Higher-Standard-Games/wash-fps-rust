@@ -1883,7 +1883,7 @@ dependencies = [
 [[package]]
 name = "shagger"
 version = "0.0.1"
-source = "git+https://github.com/Higher-Standard-Games/shagger?rev=c1eed0db64f69d288986143d46fb7bb98728e5d6#c1eed0db64f69d288986143d46fb7bb98728e5d6"
+source = "git+https://github.com/Higher-Standard-Games/shagger?rev=14577824eeccd0df7e4ecee323dfac929cc354bf#14577824eeccd0df7e4ecee323dfac929cc354bf"
 dependencies = [
  "bytemuck",
  "futures-util",
@@ -1904,7 +1904,7 @@ dependencies = [
 [[package]]
 name = "shagger_shared"
 version = "0.0.1"
-source = "git+https://github.com/Higher-Standard-Games/shagger?rev=c1eed0db64f69d288986143d46fb7bb98728e5d6#c1eed0db64f69d288986143d46fb7bb98728e5d6"
+source = "git+https://github.com/Higher-Standard-Games/shagger?rev=14577824eeccd0df7e4ecee323dfac929cc354bf#14577824eeccd0df7e4ecee323dfac929cc354bf"
 dependencies = [
  "flate2",
 ]
@@ -2268,6 +2268,7 @@ version = "0.0.1"
 dependencies = [
  "flate2",
  "image",
+ "serde_json",
  "sha2",
  "shagger",
  "winit",

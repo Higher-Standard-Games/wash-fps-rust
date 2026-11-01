@@ -1,4 +1,4 @@
-//! `washoi view`: a map drawn by the renderer's first slice (RUST.md 21.10),
+//! `washoi view`: a map drawn by the renderer (RUST.md 21.10),
 //! from a spawn point. With `--screenshot` it renders one frame offscreen and
 //! writes a PNG; otherwise it opens a window with a free camera.
 
@@ -7,6 +7,7 @@ use std::path::{Path, PathBuf};
 use shagger::loader::bsp::bsp_loader::{BspFile, load};
 use shagger::loader::pk3::node_pk3::ingest_pk3_dir;
 use shagger::loader::pk3::pk3_loader::Pk3Loader;
+use shagger::loader::shader::q3_shader_registry::Q3ShaderRegistry;
 use shagger::loader::texture::resolve_and_load_texture;
 use shagger::physics::player_physics_constants::DEFAULT_VIEWHEIGHT;
 use shagger::rendering::camera::Camera;
@@ -42,9 +43,10 @@ pub struct ViewOptions {
     pub height: u32,
 }
 
-/// The packages, the map and its spawn points.
+/// The packages, their shader scripts, the map and its spawn points.
 pub struct LoadedMap {
     pub pk3: Pk3Loader,
+    pub shaders: Q3ShaderRegistry,
     pub bsp: BspFile,
     pub spawns: Vec<Camera>,
 }
@@ -82,45 +84,47 @@ pub fn load_map(data: &Path, map: &str) -> Result<LoadedMap, String> {
             Some(Camera::from_q3([x, y, z + DEFAULT_VIEWHEIGHT as f32], angle))
         })
         .collect();
-    Ok(LoadedMap { pk3, bsp, spawns })
+    let mut shaders = Q3ShaderRegistry::new();
+    shaders.load_shaders(&mut pk3);
+    Ok(LoadedMap {
+        pk3,
+        shaders,
+        bsp,
+        spawns,
+    })
 }
 
 /// Builds the world and uploads it with its textures.
 pub fn build_renderer(gpu: &Gpu, map: &mut LoadedMap, format: wgpu::TextureFormat) -> WorldRenderer {
-    let geometry = build_world_geometry(&map.bsp);
-    let mut missing = Vec::new();
+    let geometry = build_world_geometry(&map.bsp, |name, options| {
+        map.shaders.resolve_material_passes(&map.pk3, name, options)
+    });
     let pk3 = &mut map.pk3;
     let renderer = WorldRenderer::new(
         gpu,
         &map.bsp,
         &geometry,
-        |name| {
-            let found = resolve_and_load_texture(pk3, name).map(|t| Rgba8Image {
+        |path| {
+            resolve_and_load_texture(pk3, path).map(|t| Rgba8Image {
                 width: t.width,
                 height: t.height,
                 pixels: t.pixels,
-            });
-            if found.is_none() {
-                missing.push(name.to_owned());
-            }
-            found
+            })
         },
         format,
     );
     let triangles: u32 = geometry.batches.iter().map(|b| b.index_count / 3).sum();
     println!(
-        "world: {} vertices, {triangles} triangles in {} batches, {} textures ({} without an image file yet), {} sky faces",
+        "world: {} vertices, {triangles} triangles in {} batches, {} material passes, {} images, {} shaders, {} sky faces",
         geometry.vertices.len(),
         geometry.batches.len(),
+        renderer.pass_count(),
         renderer.texture_count(),
-        missing.len(),
+        map.shaders.shader_count(),
         geometry.sky_faces.len()
     );
-    if !missing.is_empty() {
-        println!(
-            "  no image file (shader-defined, for the shader port): {}",
-            missing.join(", ")
-        );
+    if !renderer.missing_images().is_empty() {
+        println!("  no image found: {}", renderer.missing_images().join(", "));
     }
     renderer
 }

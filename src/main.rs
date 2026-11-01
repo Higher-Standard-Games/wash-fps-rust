@@ -17,7 +17,7 @@
 //! every login makes a new account. `--play` joins the match and runs forward
 //! in a slow circle, so the command path is exercised too.
 //!
-//! `view` draws a map with the renderer's first slice (`view.rs`), from the
+//! `view` draws a map with the renderer (`view.rs`), from the
 //! packages in `--data` (default `target/washoi-maps/pk3`, which
 //! `tools/fetch_maps.sh` fills).
 

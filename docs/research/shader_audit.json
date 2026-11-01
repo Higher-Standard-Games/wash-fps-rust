@@ -1,0 +1,757 @@
+{
+ "tool": "wash-fps-rust tools/shader_audit.mjs",
+ "note": "counts are world faces (model 0) drawn with each feature",
+ "total": {
+  "faces": 16099,
+  "textures": 813,
+  "shaders": {
+   "with a shader": 9644,
+   "image only": 6455
+  },
+  "shader": {
+   "glossExponent": 1678,
+   "nopicmip": 1457,
+   "glossIntensity": 838,
+   "cull none": 672,
+   "softParticle": 651,
+   "cull front": 425,
+   "skyParms": 241,
+   "polygonOffset": 159,
+   "sort additive": 73,
+   "sort banner": 70,
+   "nomipmaps": 64,
+   "surfaceLight": 64,
+   "sort alphatest": 32,
+   "sort underwater": 31,
+   "sort 7": 30,
+   "sort portal": 1
+  },
+  "surfaceparm": {
+   "nomarks": 4211,
+   "nolightmap": 3155,
+   "nodlight": 2511,
+   "nonsolid": 1539,
+   "trans": 1403,
+   "noimpact": 386,
+   "sky": 241,
+   "alphashadow": 142,
+   "lightfilter": 45,
+   "water": 32,
+   "nodraw": 29,
+   "dust": 19,
+   "slime": 13,
+   "metalsteps": 4,
+   "lava": 2,
+   "playerclip": 1,
+   "nowalljump": 1
+  },
+  "deform": {
+   "autosprite2": 223,
+   "autosprite": 196
+  },
+  "conditional": {
+   "deluxe": 1923,
+   "!deluxe": 1922,
+   "textureCubeMap": 14,
+   "!textureCubeMap": 5,
+   "unsupported": 2
+  },
+  "stageCount": {
+   "0": 270,
+   "1": 7209,
+   "2": 152,
+   "3": 241,
+   "4": 1763,
+   "5": 4,
+   "6": 5
+  },
+  "stageMap": {
+   "material": 7438,
+   "texture": 5959,
+   "$lightmap": 1901,
+   "animMap": 19,
+   "cubeMap": 14,
+   "$whiteimage": 7
+  },
+  "blend": {
+   "none (opaque)": 9928,
+   "GL_SRC_ALPHA GL_ONE_MINUS_SRC_ALPHA": 2282,
+   "GL_DST_COLOR GL_ZERO": 1930,
+   "GL_SRC_ALPHA GL_ONE": 557,
+   "GL_ONE GL_ONE": 527,
+   "GL_DST_COLOR GL_ONE": 63,
+   "GL_ONE GL_ONE_MINUS_SRC_COLOR": 48,
+   "GL_ONE GL_ZERO": 2,
+   "GL_ONE GL_DST_COLOR": 1
+  },
+  "stage": {
+   "detail": 823,
+   "clampMap": 749,
+   "depthWrite": 305,
+   "alphaFunc GT0": 229,
+   "alphaFunc GE128": 224
+  },
+  "rgbGen": {
+   "vertex": 1288,
+   "distanceRamp": 586,
+   "identity": 319,
+   "const": 90,
+   "wave": 57
+  },
+  "alphaGen": {
+   "distanceRamp": 125,
+   "vertex": 84,
+   "const": 32,
+   "wave": 31
+  },
+  "tcMod": {
+   "scale": 192,
+   "scroll": 155,
+   "turb": 21,
+   "rotate": 16,
+   "stretch": 8
+  },
+  "tcGen": {
+   "environment": 70,
+   "surround": 5
+  }
+ },
+ "maps": {
+  "washoi_amphi1": {
+   "faces": 2155,
+   "textures": 81,
+   "shaders": {
+    "with a shader": 1405,
+    "image only": 750
+   },
+   "shader": {
+    "glossIntensity": 28,
+    "glossExponent": 657,
+    "cull none": 56,
+    "nopicmip": 83,
+    "softParticle": 56,
+    "sort 7": 3,
+    "sort additive": 3,
+    "sort banner": 3,
+    "polygonOffset": 1,
+    "skyParms": 5,
+    "cull front": 12,
+    "nomipmaps": 1,
+    "surfaceLight": 32,
+    "sort underwater": 6
+   },
+   "surfaceparm": {
+    "trans": 95,
+    "nolightmap": 790,
+    "nodraw": 1,
+    "nomarks": 167,
+    "nonsolid": 94,
+    "nodlight": 63,
+    "slime": 9,
+    "noimpact": 5,
+    "sky": 5,
+    "alphashadow": 4,
+    "water": 6
+   },
+   "deform": {
+    "autosprite2": 27,
+    "autosprite": 26
+   },
+   "conditional": {
+    "!deluxe": 1,
+    "deluxe": 1,
+    "textureCubeMap": 9
+   },
+   "stageCount": {
+    "0": 6,
+    "1": 1357,
+    "2": 12,
+    "3": 29,
+    "4": 1
+   },
+   "stageMap": {
+    "material": 1218,
+    "texture": 208,
+    "$lightmap": 35,
+    "cubeMap": 9,
+    "animMap": 2
+   },
+   "blend": {
+    "none (opaque)": 1309,
+    "GL_ONE GL_ONE": 93,
+    "GL_ONE GL_ONE_MINUS_SRC_COLOR": 3,
+    "GL_SRC_ALPHA GL_ONE_MINUS_SRC_ALPHA": 14,
+    "GL_DST_COLOR GL_ZERO": 29,
+    "GL_SRC_ALPHA GL_ONE": 12,
+    "GL_DST_COLOR GL_ONE": 12
+   },
+   "stage": {
+    "clampMap": 65,
+    "detail": 59,
+    "alphaFunc GT0": 10,
+    "alphaFunc GE128": 5,
+    "depthWrite": 9
+   },
+   "rgbGen": {
+    "distanceRamp": 59,
+    "identity": 12,
+    "const": 21,
+    "vertex": 659,
+    "wave": 3
+   },
+   "alphaGen": {
+    "wave": 1
+   },
+   "tcMod": {
+    "turb": 9,
+    "scroll": 14,
+    "rotate": 1,
+    "scale": 12
+   },
+   "tcGen": {
+    "environment": 18
+   }
+  },
+  "washoi_dm11": {
+   "faces": 675,
+   "textures": 123,
+   "shaders": {
+    "image only": 162,
+    "with a shader": 513
+   },
+   "shader": {
+    "glossIntensity": 14,
+    "glossExponent": 43,
+    "cull none": 83,
+    "nopicmip": 135,
+    "cull front": 2,
+    "nomipmaps": 19,
+    "sort banner": 17,
+    "sort additive": 17,
+    "polygonOffset": 26,
+    "surfaceLight": 1,
+    "sort portal": 1,
+    "skyParms": 36,
+    "sort underwater": 2,
+    "softParticle": 18
+   },
+   "surfaceparm": {
+    "nonsolid": 146,
+    "nomarks": 162,
+    "trans": 127,
+    "nolightmap": 181,
+    "alphashadow": 2,
+    "nodlight": 35,
+    "lightfilter": 17,
+    "noimpact": 49,
+    "water": 3,
+    "sky": 36
+   },
+   "deform": {
+    "autosprite2": 35,
+    "autosprite": 27
+   },
+   "conditional": {
+    "unsupported": 2,
+    "deluxe": 1
+   },
+   "stageCount": {
+    "0": 36,
+    "1": 441,
+    "2": 31,
+    "3": 4,
+    "4": 1
+   },
+   "stageMap": {
+    "material": 367,
+    "animMap": 2,
+    "texture": 146,
+    "$lightmap": 1,
+    "$whiteimage": 3
+   },
+   "blend": {
+    "none (opaque)": 362,
+    "GL_SRC_ALPHA GL_ONE_MINUS_SRC_ALPHA": 88,
+    "GL_ONE GL_ONE": 25,
+    "GL_SRC_ALPHA GL_ONE": 23,
+    "GL_ONE GL_ONE_MINUS_SRC_COLOR": 10,
+    "GL_DST_COLOR GL_ZERO": 5,
+    "GL_DST_COLOR GL_ONE": 5,
+    "GL_ONE GL_DST_COLOR": 1
+   },
+   "stage": {
+    "alphaFunc GT0": 55,
+    "depthWrite": 46,
+    "alphaFunc GE128": 25,
+    "detail": 64,
+    "clampMap": 42
+   },
+   "rgbGen": {
+    "vertex": 93,
+    "wave": 9,
+    "distanceRamp": 21,
+    "identity": 39,
+    "const": 10
+   },
+   "alphaGen": {
+    "wave": 11,
+    "vertex": 21,
+    "const": 4,
+    "distanceRamp": 18
+   },
+   "tcMod": {
+    "scale": 14,
+    "scroll": 13
+   },
+   "tcGen": {
+    "environment": 4
+   }
+  },
+  "washoi_dm14": {
+   "faces": 1349,
+   "textures": 99,
+   "shaders": {
+    "image only": 354,
+    "with a shader": 995
+   },
+   "shader": {
+    "cull none": 126,
+    "glossIntensity": 102,
+    "glossExponent": 129,
+    "nopicmip": 138,
+    "softParticle": 34,
+    "skyParms": 9,
+    "surfaceLight": 4,
+    "polygonOffset": 37,
+    "sort alphatest": 32
+   },
+   "surfaceparm": {
+    "nomarks": 375,
+    "nodlight": 195,
+    "nolightmap": 348,
+    "trans": 96,
+    "nonsolid": 104,
+    "noimpact": 9,
+    "sky": 9,
+    "alphashadow": 2,
+    "metalsteps": 2
+   },
+   "deform": {
+    "autosprite": 1,
+    "autosprite2": 33
+   },
+   "conditional": {
+    "textureCubeMap": 2,
+    "!textureCubeMap": 2,
+    "deluxe": 13,
+    "!deluxe": 13
+   },
+   "stageCount": {
+    "0": 9,
+    "1": 949,
+    "2": 16,
+    "3": 5,
+    "4": 7,
+    "5": 4,
+    "6": 5
+   },
+   "stageMap": {
+    "material": 677,
+    "texture": 375,
+    "cubeMap": 2,
+    "animMap": 7,
+    "$lightmap": 13
+   },
+   "blend": {
+    "none (opaque)": 868,
+    "GL_ONE GL_ONE": 111,
+    "GL_SRC_ALPHA GL_ONE_MINUS_SRC_ALPHA": 49,
+    "GL_ONE GL_ONE_MINUS_SRC_COLOR": 1,
+    "GL_DST_COLOR GL_ZERO": 13,
+    "GL_SRC_ALPHA GL_ONE": 32
+   },
+   "stage": {
+    "clampMap": 42,
+    "alphaFunc GT0": 2,
+    "depthWrite": 34,
+    "detail": 34,
+    "alphaFunc GE128": 32
+   },
+   "rgbGen": {
+    "identity": 14,
+    "wave": 21,
+    "vertex": 95,
+    "distanceRamp": 1
+   },
+   "alphaGen": {
+    "wave": 3,
+    "distanceRamp": 32
+   },
+   "tcMod": {
+    "scroll": 61,
+    "scale": 40,
+    "rotate": 3
+   },
+   "tcGen": {
+    "environment": 19,
+    "surround": 2
+   }
+  },
+  "washoi_dm2": {
+   "faces": 7475,
+   "textures": 103,
+   "shaders": {
+    "with a shader": 3873,
+    "image only": 3602
+   },
+   "shader": {
+    "glossIntensity": 422,
+    "glossExponent": 464,
+    "cull none": 66,
+    "softParticle": 465,
+    "nomipmaps": 7,
+    "nopicmip": 444,
+    "polygonOffset": 9,
+    "cull front": 408,
+    "skyParms": 3,
+    "sort additive": 3
+   },
+   "surfaceparm": {
+    "nomarks": 2478,
+    "trans": 495,
+    "nonsolid": 493,
+    "nolightmap": 815,
+    "noimpact": 7,
+    "alphashadow": 4,
+    "nodlight": 1980,
+    "sky": 3
+   },
+   "deform": {
+    "autosprite": 61,
+    "autosprite2": 1
+   },
+   "conditional": {
+    "!deluxe": 1906,
+    "deluxe": 1906
+   },
+   "stageCount": {
+    "0": 3,
+    "1": 1940,
+    "2": 19,
+    "3": 164,
+    "4": 1747
+   },
+   "stageMap": {
+    "material": 3197,
+    "texture": 4444,
+    "$lightmap": 1817
+   },
+   "blend": {
+    "none (opaque)": 5280,
+    "GL_ONE GL_ONE": 86,
+    "GL_ONE GL_ONE_MINUS_SRC_COLOR": 4,
+    "GL_SRC_ALPHA GL_ONE_MINUS_SRC_ALPHA": 1863,
+    "GL_SRC_ALPHA GL_ONE": 408,
+    "GL_DST_COLOR GL_ZERO": 1817
+   },
+   "stage": {
+    "clampMap": 473,
+    "detail": 471,
+    "alphaFunc GE128": 8,
+    "depthWrite": 4,
+    "alphaFunc GT0": 2
+   },
+   "rgbGen": {
+    "distanceRamp": 465,
+    "wave": 14,
+    "const": 7,
+    "vertex": 54
+   },
+   "alphaGen": {
+    "const": 15
+   },
+   "tcMod": {
+    "stretch": 8,
+    "rotate": 8,
+    "scroll": 5
+   },
+   "tcGen": {
+    "environment": 10
+   }
+  },
+  "washoi_dm5": {
+   "faces": 1353,
+   "textures": 155,
+   "shaders": {
+    "image only": 439,
+    "with a shader": 914
+   },
+   "shader": {
+    "glossIntensity": 49,
+    "glossExponent": 110,
+    "nopicmip": 266,
+    "cull none": 121,
+    "nomipmaps": 13,
+    "sort banner": 18,
+    "sort additive": 18,
+    "sort 7": 15,
+    "surfaceLight": 6,
+    "cull front": 1,
+    "softParticle": 23,
+    "sort underwater": 22,
+    "skyParms": 59,
+    "polygonOffset": 23
+   },
+   "surfaceparm": {
+    "nolightmap": 416,
+    "nonsolid": 299,
+    "nomarks": 398,
+    "trans": 271,
+    "alphashadow": 21,
+    "nodlight": 62,
+    "water": 22,
+    "sky": 59,
+    "noimpact": 155
+   },
+   "deform": {
+    "autosprite": 37,
+    "autosprite2": 39
+   },
+   "conditional": {
+    "textureCubeMap": 3,
+    "!textureCubeMap": 3
+   },
+   "stageCount": {
+    "0": 59,
+    "1": 811,
+    "2": 32,
+    "3": 5,
+    "4": 7
+   },
+   "stageMap": {
+    "material": 557,
+    "texture": 350,
+    "cubeMap": 3,
+    "animMap": 3,
+    "$lightmap": 1,
+    "$whiteimage": 4
+   },
+   "blend": {
+    "none (opaque)": 591,
+    "GL_ONE GL_ONE": 155,
+    "GL_SRC_ALPHA GL_ONE_MINUS_SRC_ALPHA": 75,
+    "GL_ONE GL_ONE_MINUS_SRC_COLOR": 18,
+    "GL_SRC_ALPHA GL_ONE": 25,
+    "GL_DST_COLOR GL_ZERO": 10,
+    "GL_DST_COLOR GL_ONE": 44
+   },
+   "stage": {
+    "alphaFunc GE128": 21,
+    "depthWrite": 24,
+    "clampMap": 50,
+    "detail": 67,
+    "alphaFunc GT0": 39
+   },
+   "rgbGen": {
+    "vertex": 154,
+    "identity": 151,
+    "wave": 3,
+    "distanceRamp": 24,
+    "const": 48
+   },
+   "alphaGen": {
+    "wave": 1,
+    "const": 9,
+    "vertex": 14,
+    "distanceRamp": 20
+   },
+   "tcMod": {
+    "scale": 91,
+    "rotate": 1,
+    "scroll": 44
+   },
+   "tcGen": {
+    "surround": 3,
+    "environment": 11
+   }
+  },
+  "washoi_dm7": {
+   "faces": 882,
+   "textures": 82,
+   "shaders": {
+    "image only": 449,
+    "with a shader": 433
+   },
+   "shader": {
+    "cull none": 39,
+    "nopicmip": 48,
+    "nomipmaps": 2,
+    "glossExponent": 44,
+    "surfaceLight": 9,
+    "cull front": 2,
+    "glossIntensity": 33,
+    "skyParms": 28,
+    "polygonOffset": 2,
+    "softParticle": 14
+   },
+   "surfaceparm": {
+    "dust": 14,
+    "trans": 32,
+    "alphashadow": 18,
+    "nomarks": 205,
+    "metalsteps": 2,
+    "lightfilter": 11,
+    "nonsolid": 49,
+    "noimpact": 45,
+    "nolightmap": 154,
+    "nodlight": 112,
+    "sky": 28,
+    "slime": 4,
+    "lava": 2
+   },
+   "deform": {
+    "autosprite2": 15
+   },
+   "conditional": {},
+   "stageCount": {
+    "0": 28,
+    "1": 358,
+    "2": 18,
+    "3": 29
+   },
+   "stageMap": {
+    "material": 257,
+    "texture": 193,
+    "$lightmap": 29,
+    "animMap": 2
+   },
+   "blend": {
+    "none (opaque)": 379,
+    "GL_SRC_ALPHA GL_ONE_MINUS_SRC_ALPHA": 10,
+    "GL_ONE GL_ONE": 47,
+    "GL_DST_COLOR GL_ZERO": 29,
+    "GL_ONE GL_ZERO": 2,
+    "GL_SRC_ALPHA GL_ONE": 14
+   },
+   "stage": {
+    "alphaFunc GE128": 27,
+    "depthWrite": 28,
+    "clampMap": 16,
+    "alphaFunc GT0": 3,
+    "detail": 17
+   },
+   "rgbGen": {
+    "vertex": 37,
+    "wave": 7,
+    "identity": 28
+   },
+   "alphaGen": {
+    "wave": 2,
+    "const": 1,
+    "vertex": 2,
+    "distanceRamp": 14
+   },
+   "tcMod": {
+    "scroll": 16,
+    "turb": 12,
+    "scale": 30
+   },
+   "tcGen": {}
+  },
+  "washoi_snd1": {
+   "faces": 2210,
+   "textures": 170,
+   "shaders": {
+    "image only": 699,
+    "with a shader": 1511
+   },
+   "shader": {
+    "nopicmip": 343,
+    "cull none": 181,
+    "glossIntensity": 190,
+    "glossExponent": 231,
+    "nomipmaps": 22,
+    "surfaceLight": 12,
+    "sort 7": 12,
+    "sort banner": 32,
+    "sort additive": 32,
+    "polygonOffset": 61,
+    "sort underwater": 1,
+    "skyParms": 101,
+    "softParticle": 41
+   },
+   "surfaceparm": {
+    "nodraw": 28,
+    "nolightmap": 451,
+    "trans": 287,
+    "nomarks": 426,
+    "alphashadow": 91,
+    "nonsolid": 354,
+    "noimpact": 116,
+    "playerclip": 1,
+    "nowalljump": 1,
+    "lightfilter": 17,
+    "nodlight": 64,
+    "dust": 5,
+    "water": 1,
+    "sky": 101
+   },
+   "deform": {
+    "autosprite": 44,
+    "autosprite2": 73
+   },
+   "conditional": {
+    "!deluxe": 2,
+    "deluxe": 2
+   },
+   "stageCount": {
+    "0": 129,
+    "1": 1353,
+    "2": 24,
+    "3": 5
+   },
+   "stageMap": {
+    "material": 1165,
+    "texture": 243,
+    "animMap": 3,
+    "$lightmap": 5
+   },
+   "blend": {
+    "none (opaque)": 1139,
+    "GL_SRC_ALPHA GL_ONE_MINUS_SRC_ALPHA": 183,
+    "GL_ONE GL_ONE": 10,
+    "GL_DST_COLOR GL_ZERO": 27,
+    "GL_ONE GL_ONE_MINUS_SRC_COLOR": 12,
+    "GL_DST_COLOR GL_ONE": 2,
+    "GL_SRC_ALPHA GL_ONE": 43
+   },
+   "stage": {
+    "alphaFunc GE128": 106,
+    "depthWrite": 160,
+    "alphaFunc GT0": 118,
+    "clampMap": 61,
+    "detail": 111
+   },
+   "rgbGen": {
+    "vertex": 196,
+    "distanceRamp": 16,
+    "identity": 75,
+    "const": 4
+   },
+   "alphaGen": {
+    "wave": 13,
+    "const": 3,
+    "vertex": 47,
+    "distanceRamp": 41
+   },
+   "tcMod": {
+    "scale": 5,
+    "rotate": 3,
+    "scroll": 2
+   },
+   "tcGen": {
+    "environment": 8
+   }
+  }
+ }
+}

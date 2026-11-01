@@ -1,4 +1,4 @@
-//! The renderer's first slice draws a shipped map: from each spawn point of
+//! The renderer draws a shipped map: from each spawn point of
 //! washoi_dm2, nearly every pixel must be world, not the clear colour. A
 //! flipped cull side or a broken camera leaves most of the frame empty.
 //!
@@ -11,6 +11,7 @@ use std::path::PathBuf;
 use shagger::loader::bsp::bsp_loader::load;
 use shagger::loader::pk3::node_pk3::ingest_pk3_dir;
 use shagger::loader::pk3::pk3_loader::Pk3Loader;
+use shagger::loader::shader::q3_shader_registry::Q3ShaderRegistry;
 use shagger::loader::texture::resolve_and_load_texture;
 use shagger::physics::player_physics_constants::DEFAULT_VIEWHEIGHT;
 use shagger::rendering::camera::Camera;
@@ -33,7 +34,11 @@ fn dm2_fills_the_frame_from_every_spawn() {
     let mut pk3 = Pk3Loader::new();
     assert!(ingest_pk3_dir(&mut pk3, &dir.join("pk3")) > 0);
     let bsp = load(&pk3.get_file("maps/washoi_dm2.bsp").unwrap()).unwrap();
-    let geometry = build_world_geometry(&bsp);
+    let mut shaders = Q3ShaderRegistry::new();
+    shaders.load_shaders(&mut pk3);
+    let geometry = build_world_geometry(&bsp, |name, options| {
+        shaders.resolve_material_passes(&pk3, name, options)
+    });
     let renderer = WorldRenderer::new(
         &gpu,
         &bsp,
