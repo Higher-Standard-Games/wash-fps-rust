@@ -2309,7 +2309,7 @@ read it:
     tint and outline;
   - map items: weapons as glTF models; health, armour, ammo and the quad as
     SHAG's procedural sculptures, drawn with ported `StandardMaterial`s;
-  - MD3 projectiles;
+  - MD3 projectiles, with their shader stages;
   - the view model with its own FOV;
   - beams, tracers, muzzle flashes, impacts and explosions;
   - dynamic lights as a forward storage buffer;
@@ -2577,6 +2577,38 @@ fit and did not count the parity harness.
 ## 23. Progress log
 
 Newest first. Each entry names the commits and what proves them.
+
+### Milestone 6, tenth slice: projectile models (November 1, 2026)
+
+- **shagger `435ce6c`.**
+  - `loader::model::md3_loader` ports `MD3Loader.ts`: the parser, the
+    Babylon-axis surface meshes, and `createMaterialFromShader` as
+    `StandardMaterial` parameters with the stage animation
+    `ShaderAnimationSystem` runs on them (`tcMod`s, `rgbGen` and `alphaGen`
+    waves). Not yet: alpha test, glow textures, `animMap`, distance ramps,
+    soft particles, autosprite.
+  - `weapon::projectile_manager` ports the drawing of one projectile: the
+    model and its materials (the gunblade blast's teal glow included) and
+    `faceAlong` with the MD3 turn. `shared::entities::projectile_def`
+    ports `ProjectileDef`.
+  - `StandardMaterial` gains its alpha modes (combine, add, one-one),
+    emissive as illumination, and a per-draw texture matrix, texture level
+    and diffuse colour.
+- **wash-fps-rust.**
+  - `shared::entities::definitions::projectiles` ports the four
+    projectile definitions.
+  - `washoi view --projectile ID,X,Y,Z,YAW[,PITCH]` holds a rocket,
+    grenade, plasma bolt or gunblade blast on the map, its shader stages
+    `--time` seconds in.
+- **Checked against the browser** with `tools/parity`
+  (`PROJECTILES=`), which spawns the same projectiles through SHAG's
+  `ProjectileManager` with their lights off and their stages posed at the
+  same time. All four stand, face and glow as in the browser; views differ
+  by 5 to 6 levels in 255.
+- **Not yet.** Flight, trails, impacts and explosions, the carried light
+  (with dynamic lights), the fade in, projectiles from snapshots.
+- **Next.** Trails and the effects of 21.10 (beams, tracers, muzzle
+  flashes, impacts and explosions), then dynamic lights.
 
 ### Milestone 6, ninth slice: procedural map items (November 1, 2026)
 

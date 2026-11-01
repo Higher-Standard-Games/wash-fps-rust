@@ -13,6 +13,7 @@ use std::collections::HashMap;
 use std::io::Cursor;
 
 use shagger::babylon::materials::standard_material::StandardMaterialParams;
+use shagger::babylon::materials::texture::get_texture_matrix;
 use shagger::babylon::meshes::vertex_data::VertexData;
 use shagger::loader::model::gltf_model::{AlphaMode, GltfModel, ModelImage, ModelMaterial, ModelPrimitive, Skeleton};
 use shagger::loader::pk3::pk3_loader::Pk3Loader;
@@ -239,7 +240,7 @@ impl ProceduralPickups {
                 let mut draw = ModelDraw::new(*model, i, visual.part_world(part, &pose, camera_rotation).as_mat4());
                 draw.emissive = visual.part_emissive(part, &pose);
                 if part.material == PartMaterial::Ring {
-                    draw.uv_offset = Some([pose.ring_offset as f32, 0.0]);
+                    draw.texture_matrix = Some(get_texture_matrix(pose.ring_offset, 0.0, 1.0, 1.0, 0.0));
                 }
                 out.push(draw);
             }

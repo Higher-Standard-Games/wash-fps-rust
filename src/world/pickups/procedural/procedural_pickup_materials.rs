@@ -5,7 +5,7 @@
 //! unlit and emissive, and pulse per pickup. Here a pickup's pulse is its
 //! draw's emissive override rather than a private material clone
 //! (`cloneEnergyMaterial`), and the ring's scroll is its draw's texture
-//! offset.
+//! matrix.
 
 use shagger::babylon::materials::standard_material::{FresnelParameters, StandardMaterialParams, TextureUse};
 use shagger::rendering::glam::Vec3;

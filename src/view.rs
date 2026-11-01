@@ -16,7 +16,7 @@ use shagger::physics::player_physics_constants::DEFAULT_VIEWHEIGHT;
 use shagger::physics::sweep_backend_adapter::SweepBackendAdapter;
 use shagger::physics::sweep_collision_backend::SweepCollisionBackend;
 use shagger::rendering::camera::Camera;
-use shagger::rendering::glam::Mat4;
+use shagger::rendering::glam::{Mat4, Vec3};
 use shagger::rendering::gpu::Gpu;
 use shagger::rendering::model_renderer::{ImageProcessing, ModelDraw, ModelRenderer};
 use shagger::rendering::offscreen::{OFFSCREEN_FORMAT, render_to_rgba};
@@ -26,6 +26,8 @@ use shagger::rendering::world_culling::WorldCulling;
 use shagger::rendering::world_geometry::build_world_geometry;
 use shagger::rendering::world_renderer::{Rgba8Image, WorldRenderer};
 use shagger::shared::collision::shared_collision_world::SharedCollisionWorld;
+use shagger::weapon::projectile_manager::{ProjectileModel, load_projectile_model, projectile_matrix};
+use washoi::shared::entities::definitions::projectiles::projectile_def;
 
 use washoi::client::player_model_visual_settings::{PlayerTeamSlot, get_player_model_visual_style};
 use washoi::client::remote_player_renderer::{MODEL_SCALE, RemotePlayerRenderer};
@@ -68,6 +70,33 @@ pub struct ViewOptions {
     /// Draw every batch instead of culling.
     pub no_cull: bool,
     pub players: Vec<PlayerView>,
+    pub projectiles: Vec<ProjectileView>,
+}
+
+/// A projectile held still on the map (`--projectile`).
+#[derive(Debug, Clone, PartialEq)]
+pub struct ProjectileView {
+    /// The definition's id.
+    pub id: String,
+    /// Its Quake origin.
+    pub origin: [f32; 3],
+    /// The flight's Quake yaw and pitch in degrees (pitch: positive is
+    /// down).
+    pub yaw: f32,
+    pub pitch: f32,
+}
+
+impl ProjectileView {
+    /// Babylon position and flight direction.
+    #[must_use]
+    pub fn babylon(&self) -> (Vec3, Vec3) {
+        let [x, y, z] = self.origin;
+        let (yaw, pitch) = (self.yaw.to_radians(), self.pitch.to_radians());
+        // Quake forward, (cos yaw cos pitch, sin yaw cos pitch, -sin pitch),
+        // in Babylon axes.
+        let dir = Vec3::new(yaw.cos() * pitch.cos(), -pitch.sin(), yaw.sin() * pitch.cos());
+        (Vec3::new(x, z, y), dir)
+    }
 }
 
 /// A player model standing still on the map (`--player`).
@@ -109,6 +138,8 @@ pub struct LoadedMap {
     pub pickups: Vec<PickupEntry>,
     /// Players to stand on the map.
     pub players: Vec<PlayerView>,
+    /// Projectiles to hold on the map.
+    pub projectiles: Vec<ProjectileView>,
 }
 
 /// Reads every package in `data` and the map's BSP from them.
@@ -159,6 +190,7 @@ pub fn load_map(data: &Path, map: &str) -> Result<LoadedMap, String> {
         spawns,
         pickups,
         players: Vec::new(),
+        projectiles: Vec::new(),
     })
 }
 
@@ -175,6 +207,8 @@ pub struct MapRenderer {
     pub item_time: f64,
     /// This frame's draws.
     frame_draws: Vec<ModelDraw>,
+    /// Projectile models and where they are held.
+    pub projectiles: Vec<(ProjectileModel, Mat4)>,
     /// The joint palettes `model_draws` index.
     pub joints: Vec<Mat4>,
     pub sky: Option<SkyRenderer>,
@@ -194,6 +228,9 @@ impl MapRenderer {
             camera_rotation(camera.view().as_dmat4()),
             &mut self.frame_draws,
         );
+        for (model, world) in &self.projectiles {
+            model.draws(*world, self.item_time, &mut self.frame_draws);
+        }
         self.models.prepare(
             gpu,
             camera.view_projection(aspect),
@@ -300,7 +337,28 @@ pub fn build_renderer(gpu: &Gpu, map: &mut LoadedMap, format: wgpu::TextureForma
             Err(why) => eprintln!("player model: {why}"),
         }
     }
+    let mut projectiles = Vec::new();
+    for view in &map.projectiles {
+        let Some(def) = projectile_def(&view.id) else {
+            eprintln!("projectile: no definition {}", view.id);
+            continue;
+        };
+        let Some(path) = def.model_path else { continue };
+        let light = def.light_color.map(|c| Vec3::new(c.r as f32, c.g as f32, c.b as f32));
+        match load_projectile_model(gpu, &mut models, &mut map.pk3, &map.shaders, def.id, path, light) {
+            Ok(model) => {
+                if !model.missing_textures.is_empty() {
+                    println!("  no projectile texture: {}", model.missing_textures.join(", "));
+                }
+                let (position, direction) = view.babylon();
+                let scale = def.scale.unwrap_or(1.0) as f32;
+                projectiles.push((model, projectile_matrix(position, direction, scale)));
+            }
+            Err(why) => eprintln!("projectile model: {why}"),
+        }
+    }
     MapRenderer {
+        projectiles,
         world: renderer,
         models,
         model_draws,
@@ -323,6 +381,7 @@ pub fn run(o: &ViewOptions) -> i32 {
         }
     };
     map.players.clone_from(&o.players);
+    map.projectiles.clone_from(&o.projectiles);
     let at = o.at.map(|[x, y, z, angle]| Camera::from_q3([x, y, z], angle));
     let Some(mut camera) = at.or_else(|| map.spawns.get(o.spawn).or(map.spawns.first()).copied()) else {
         eprintln!("{} has no spawn point", o.map);
