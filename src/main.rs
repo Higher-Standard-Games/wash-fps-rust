@@ -4,6 +4,7 @@
 //! prints the scoreboard.
 //!
 //! ```text
+//! washoi view <map> [--data DIR] [--spawn N] [--screenshot FILE.png] [--size WxH] [--seconds N]
 //! washoi connect <ws://game-server> [--name NAME] [--ticket TICKET] [--seconds N] [--play]
 //! washoi lobby <ws://lobby> [--key-file FILE] list
 //! washoi lobby <ws://lobby> [--key-file FILE] spectate [--seconds N]
@@ -15,6 +16,13 @@
 //! new account's key (sent once, in `welcome`) is written to it. Without it
 //! every login makes a new account. `--play` joins the match and runs forward
 //! in a slow circle, so the command path is exercised too.
+//!
+//! `view` draws a map with the renderer's first slice (`view.rs`), from the
+//! packages in `--data` (default `target/washoi-maps/pk3`, which
+//! `tools/fetch_maps.sh` fills).
+
+mod view;
+mod window;
 
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
@@ -31,7 +39,8 @@ use washoi::shared::net::snapshot_events::{SnapshotEvent, WashoiEvents};
 fn usage() -> ! {
     eprintln!(
         "washoi {}\n\
-         usage: washoi connect <ws://game-server> [--name NAME] [--ticket TICKET] [--seconds N] [--play]\n\
+         usage: washoi view <map> [--data DIR] [--spawn N] [--screenshot FILE.png] [--size WxH] [--seconds N]\n\
+         \x20      washoi connect <ws://game-server> [--name NAME] [--ticket TICKET] [--seconds N] [--play]\n\
          \x20      washoi lobby <ws://lobby> [--key-file FILE] list\n\
          \x20      washoi lobby <ws://lobby> [--key-file FILE] spectate [--seconds N]\n\
          \x20      washoi lobby <ws://lobby> [--key-file FILE] queue <gametype> [--seconds N] [--play]\n\
@@ -49,6 +58,10 @@ struct Options {
     seconds: Option<f64>,
     play: bool,
     key_file: Option<PathBuf>,
+    data: Option<PathBuf>,
+    screenshot: Option<PathBuf>,
+    spawn: usize,
+    size: Option<(u32, u32)>,
     words: Vec<String>,
 }
 
@@ -63,6 +76,17 @@ fn parse_options(args: impl Iterator<Item = String>) -> Options {
             "--seconds" => o.seconds = Some(value().parse().unwrap_or_else(|_| usage())),
             "--key-file" => o.key_file = Some(PathBuf::from(value())),
             "--play" => o.play = true,
+            "--data" => o.data = Some(PathBuf::from(value())),
+            "--screenshot" => o.screenshot = Some(PathBuf::from(value())),
+            "--spawn" => o.spawn = value().parse().unwrap_or_else(|_| usage()),
+            "--size" => {
+                let v = value();
+                let (w, h) = v.split_once('x').unwrap_or_else(|| usage());
+                o.size = Some((
+                    w.parse().unwrap_or_else(|_| usage()),
+                    h.parse().unwrap_or_else(|_| usage()),
+                ));
+            }
             flag if flag.starts_with("--") => usage(),
             _ => o.words.push(arg),
         }
@@ -84,6 +108,21 @@ fn main() {
             o.play,
         ),
         "lobby" => lobby(&url, &o),
+        "view" => {
+            let (width, height) = o.size.unwrap_or((1280, 720));
+            view::run(&view::ViewOptions {
+                seconds: o.seconds,
+                map: url,
+                data: o
+                    .data
+                    .clone()
+                    .unwrap_or_else(|| PathBuf::from("target/washoi-maps/pk3")),
+                screenshot: o.screenshot.clone(),
+                spawn: o.spawn,
+                width,
+                height,
+            })
+        }
         _ => usage(),
     };
     std::process::exit(code);

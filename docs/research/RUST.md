@@ -2567,6 +2567,60 @@ fit and did not count the parity harness.
 
 Newest first. Each entry names the commits and what proves them.
 
+### Milestone 6, first slice: the map world on screen (November 1, 2026)
+
+- **shagger `acb039a`.** `loader::bsp::mesh` ports `coordinates.ts`,
+  `vertices.ts`, `faceBuilders.ts` (polygons, meshes, and Bezier patches on
+  one shared grid at level 8) and the byte side of `lightmaps.ts` (the IBSP
+  transfer curve, raw FBSP pages, deluxe directions swizzled into Babylon
+  space, `scaleBspVertexColors`).
+- **shagger `c1eed0d`.**
+  - `loader::pk3::pk3_loader` and `node_pk3` port `PK3Loader`'s file index
+    and `NodePk3`'s disk ingest: lower-cased paths, packages in
+    `localeCompare` order (ICU root order for ASCII names, checked against
+    Node), later packages winning.
+  - `loader::texture` ports `TextureExtensions.ts` and the candidate order of
+    `resolveAndLoadTexture` (WebP, the name, TGA, PNG, JPG, then ETC1 KTX,
+    which is not decoded natively).
+  - `loader::bsp::bsp_lighting_profile` ports `BspLightingProfile.ts`.
+  - `rendering` is the first wgpu code: a device with or without a window, a
+    free camera in Babylon's conventions (left-handed, Y up, glam's
+    `directx` projection for wgpu's 0-to-1 depth), the world grouped into
+    batches the way `BspMeshBuilder.buildAll` groups them (texture,
+    layered lightmap, patch), and one WGSL program with
+    `BspBakedLightingPlugin`'s lightmap and deluxe terms. Textures are RGBA8
+    without sRGB decode, as Babylon samples them. `offscreen` renders to an
+    image for screenshots and tests.
+- **wash-fps-rust.** `washoi view <map>` loads every package in a folder,
+  builds the world from a spawn point, and either writes a PNG
+  (`--screenshot`) or opens a winit window with a fly camera (mouse, W A S D,
+  Space and C, Shift).
+- **Proof.**
+  - `render_maps.mjs` runs SHAG's own face builders over all 16,169 faces of
+    the seven shipped maps, its lightmap encoding over every page through
+    Babylon's NullEngine, and its lighting profile over each worldspawn.
+    Rust matches all of it bit for bit (`tests/render_maps_golden.rs`); a
+    one-ulp change to a patch weight fails it.
+  - `tests/render_smoke.rs` renders washoi_dm2 from every spawn point and
+    requires under 2 per cent of the frame to be empty. With the cull side
+    flipped, 42 per cent is.
+  - The build environment has no GPU, so it runs Mesa's lavapipe (Vulkan on
+    the CPU). The window runs there under Xvfb at 31 to 36 fps for 59k to
+    113k triangles at 1280x720.
+- **Versions pinned (section 12).** wgpu 30 and winit 0.30, the pair egui
+  0.37 builds on; glam 0.34; image 0.25; zip 9. winit is built without its
+  drawn Wayland title bar, which pulls in the unmaintained `ttf-parser`.
+- **Minimum Rust is now 1.88** in both repositories. zip 9 is the first
+  release without RUSTSEC-2026-0367 to 0369 and needs 1.88. egui 0.37 will
+  need 1.95 when the HUD starts.
+- **Not yet, in the order planned.**
+  - The Q3 shader parser and registry (21.7). Until then, about a third of
+    each map's textures, the ones a shader script defines, draw white, and
+    so do decals and glass. Sky faces are left out by the BSP flag only.
+  - Sky farbox, PVS and frustum culling, alpha test, autosprites, movers.
+  - The visual parity harness (8.3): the same view rendered by the browser
+    client and by this renderer, compared.
+
 ### Milestone 2: against production (November 1, 2026)
 
 - **shagger `bf7105a`.** The first `wss://` connection panicked: tokio-tungstenite

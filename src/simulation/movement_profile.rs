@@ -396,26 +396,28 @@ impl MovementProfile {
             );
         }
 
-        if self.config.ledge_grab_enabled && !is_swimming(self.water_level) && !self.in_ladder_volume {
-            if let Some(input) = input {
-                let grounded = self.is_grounded;
-                if self.ledge_grab.update(
-                    &mut new_pos,
-                    &mut new_vel,
-                    input,
-                    re(&mut collision),
-                    now_ms,
-                    &self.config,
-                    grounded,
-                ) {
-                    return AdvancedMovementResult {
-                        is_crouching: self.slide.is_crouching,
-                        ledge_grab_state: self.ledge_grab.state,
-                        crouch_view_offset: self.slide.crouch_view_offset,
-                        ledge_grab_phase: self.ledge_grab.phase,
-                        ..AdvancedMovementResult::base(new_pos, new_vel, false)
-                    };
-                }
+        if self.config.ledge_grab_enabled
+            && !is_swimming(self.water_level)
+            && !self.in_ladder_volume
+            && let Some(input) = input
+        {
+            let grounded = self.is_grounded;
+            if self.ledge_grab.update(
+                &mut new_pos,
+                &mut new_vel,
+                input,
+                re(&mut collision),
+                now_ms,
+                &self.config,
+                grounded,
+            ) {
+                return AdvancedMovementResult {
+                    is_crouching: self.slide.is_crouching,
+                    ledge_grab_state: self.ledge_grab.state,
+                    crouch_view_offset: self.slide.crouch_view_offset,
+                    ledge_grab_phase: self.ledge_grab.phase,
+                    ..AdvancedMovementResult::base(new_pos, new_vel, false)
+                };
             }
         }
 
