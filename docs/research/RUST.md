@@ -2568,6 +2568,24 @@ fit and did not count the parity harness.
 
 Newest first. Each entry names the commits and what proves them.
 
+### Milestone 6, sixth slice: map pickups and the parity harness (November 1, 2026)
+
+- **Map pickups.** `shared::bsp::pickup_table` ports wash-fps's
+  `PickupTable.ts`. `shared::items::item_throw` ports `ItemThrow.ts`: the
+  item throw, the spawn toss and `landMapPickups`. `tests/pickups_golden.rs`
+  (shagger `tools/golden/pickups.mjs`) matches all 187 pickups of the seven
+  maps bit for bit: classname, kind, origin and landing spot.
+- **Parity harness (8.3).** `tools/parity` drives SHAG's fps game headless
+  in Playwright's Chromium (SwiftShader WebGL2). It plays a demo to load a
+  map, pauses it, holds the camera at Quake 3 views with only the world and
+  sky drawn, and compares each view with `washoi view`.
+  - On dm2 and dm14 the geometry, the camera and the far box line up
+    exactly. The mean difference is 4 to 8 levels in 255.
+  - What is left is the browser's normal and gloss maps and its image
+    processing (exposure and contrast), both still to come in 21.10.
+- **Next.** glTF models in shagger, then the weapon pickups drawn where
+  `landMapPickups` puts them, checked against the browser with this harness.
+
 ### Milestone 6, fifth slice: PVS and frustum culling (November 1, 2026)
 
 - **shagger `cb67eb9`.**

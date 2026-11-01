@@ -90,7 +90,7 @@ fn parse_options(args: impl Iterator<Item = String>) -> Options {
                 o.at = Some(<[f32; 4]>::try_from(v).unwrap_or_else(|_| usage()));
             }
             "--no-cull" => o.no_cull = true,
-            "--pitch" => o.pitch = value().parse().unwrap_or_else(|_| usage()),
+            "--pitch" => o.pitch = value().trim().parse().unwrap_or_else(|_| usage()),
             "--time" => o.time = value().parse().unwrap_or_else(|_| usage()),
             "--spawn" => o.spawn = value().parse().unwrap_or_else(|_| usage()),
             "--size" => {
