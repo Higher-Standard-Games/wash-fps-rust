@@ -5,7 +5,7 @@ version = 4
 [[package]]
 name = "shagger"
 version = "0.0.1"
-source = "git+https://github.com/Higher-Standard-Games/shagger?rev=42a23dc2dea2cd1c8cc347bc83a4542064b13130#42a23dc2dea2cd1c8cc347bc83a4542064b13130"
+source = "git+https://github.com/Higher-Standard-Games/shagger?rev=de53d94a4cd042023ddc2e5c790ae25f31b3e131#de53d94a4cd042023ddc2e5c790ae25f31b3e131"
 dependencies = [
  "shagger_shared",
 ]
@@ -13,7 +13,7 @@ dependencies = [
 [[package]]
 name = "shagger_shared"
 version = "0.0.1"
-source = "git+https://github.com/Higher-Standard-Games/shagger?rev=42a23dc2dea2cd1c8cc347bc83a4542064b13130#42a23dc2dea2cd1c8cc347bc83a4542064b13130"
+source = "git+https://github.com/Higher-Standard-Games/shagger?rev=de53d94a4cd042023ddc2e5c790ae25f31b3e131#de53d94a4cd042023ddc2e5c790ae25f31b3e131"
 
 [[package]]
 name = "washoi"

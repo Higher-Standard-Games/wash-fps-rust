@@ -1,8 +1,8 @@
 # A native Washoi client in Rust
 
 Opened: October 31, 2026. Status: research rounds 1 to 6 done; milestone 0
-done; milestone 1 done except demos; milestone 3 has map loading and
-collision (section 23).
+done; milestone 1 done except demos; milestone 3 has map loading,
+collision and the movement profile (section 23).
 
 This file lives in wash-fps-rust and is the plan of record. It started in
 wash-fps (`docs/research/RUST.md` on `staging`), and that copy is no longer
@@ -2566,6 +2566,32 @@ fit and did not count the parity harness.
 ## 23. Progress log
 
 Newest first. Each entry names the commits and what proves them.
+
+### Milestone 3, second part: the movement profile (November 1, 2026)
+
+- **shagger `9b95e87`.** `shagger_shared::fdlibm` ports V8's `sin` and `cos`
+  (fdlibm, Sun's notice kept), exposed as `js::js_sin` and `js::js_cos`.
+  `f64::sin` differs from V8 for about 3% of inputs. Proof: 18,000 vectors
+  from V8, including huge arguments that take `kernel_rem_pio2`.
+- **shagger `de53d94`.** `bsp::trigger_table`, `server::simulation::
+  input_sanitizer`, the network `input_component` buttons and the
+  `movement_profile` contract, plus `js_parse_int10` and
+  `js_number_to_string`. `tools/golden/maps.mjs` is the map builder shared by
+  the collision and movement generators.
+- **wash-fps-rust.** `liquid` and `simulation` port wash-fps's
+  `FpsMovementProfile` with acceleration, crouch and prone, slide, wall
+  charge and wall jump, ledge grab, swim and water jump, ladders, knockback,
+  teleporters and jumppads, on top of shagger's collision world.
+- **Proof.** `tools/golden/movement.mjs` runs wash-fps's own profile (SHAG's
+  pinned wash-fps commit, at `shag/src/games/fps`) on 40 synthetic maps with
+  walls, ledges, pools, ladders, teleporters and jumppads, 4 runs of 180 steps
+  each, stepping lifts and knockback drag the way `V2NetworkClient` does.
+  Each step records position and velocity bits plus a hash over every result
+  field and the full saved state. Rust matches all 28,800 steps. Mutation
+  checks (swim with `f64::sin`, a rounded wall-jump rise, crouch timing,
+  prone, water jump, ledge abort, jumppad) each fail the test.
+- **Next.** The `sim:dump` harness against real maps, then
+  `V2NetworkClient`, `InputHistory` and reconciliation (milestone 4).
 
 ### Milestone 3, first part: map loading and collision (November 1, 2026)
 
