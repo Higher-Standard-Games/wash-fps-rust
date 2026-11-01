@@ -1,13 +1,15 @@
 const { open, boot, waitForMap, sleep } = require('./lib.cjs');
-// usage: views.cjs <demo> <prefix> "<x,y,z,yawDeg,pitchDeg>;..." [WxH] [keep regex] ["<x,y,z,yawDeg,clip,frame>;..."]
+// usage: views.cjs <demo> <prefix> "<x,y,z,yawDeg,pitchDeg>;..." [WxH] [keep regex] ["<x,y,z,yawDeg,clip,frame>;..."] [item seconds]
 // Q3 position and angles (pitch: positive looks down). Writes <prefix>_<i>.png.
 // Map weapon pickups are shown (all of them, as if available), as washoi view
 // draws them; every other mesh the keep regex does not name is hidden.
 // Players (the last argument) stand at Quake origins as Vanguard models in
 // the FFA style, their clip held at a frame, as washoi view --player draws them.
+// With item seconds, every procedural pickup is shown, available and in view,
+// posed that many seconds after it was built, as washoi view --time draws it.
 (async () => {
   setTimeout(() => process.exit(3), 1_500_000).unref();
-  const [demo, prefix, list, size = '1280x720', keepRe = '^(bsp|skybox)', players = ''] = process.argv.slice(2);
+  const [demo, prefix, list, size = '1280x720', keepRe = '^(bsp|skybox)', players = '', itemTime = ''] = process.argv.slice(2);
   const [w, h] = size.split('x').map(Number);
   const b = await open({ width: w, height: h });
   try {
@@ -16,12 +18,12 @@ const { open, boot, waitForMap, sleep } = require('./lib.cjs');
     b.command('demoplay');
     await waitForMap(b);
     await sleep(2000);
-    await b.ev(async ([keepRe, players]) => {
+    await b.ev(async ([keepRe, players, itemTime]) => {
       const { DemoService } = await import('/src/games/fps/client/DemoService.ts');
       DemoService.getInstance().activeDemoViewer?.pause();
       const scene = window.scene;
       const camera = scene.activeCameras?.[0] ?? scene.activeCamera;
-      const keep = new RegExp(`${keepRe}|^probe_player`);
+      const keep = new RegExp(`${keepRe}|^probe_player${itemTime ? '|^pp_' : ''}`);
       if (players) {
         const { PlayerModelManager } = await import('/src/engine/animation/PlayerModelManager.ts');
         const { getPlayerModelVisualStyle } = await import('/src/games/fps/client/PlayerModelVisualSettings.ts');
@@ -47,7 +49,18 @@ const { open, boot, waitForMap, sleep } = require('./lib.cjs');
         for (const m of [p.mesh, ...p.mesh.getChildMeshes(false)]) weapons.add(m);
       }
       window.__probeView = [0, 0, 0, 0, 0];
+      const owners = itemTime ? [...FPSPickup.allPickups].filter((p) => p.visual) : [];
+      // A pickup judges its visual in view from the camera before it moved.
+      for (const p of owners) p.isInView = () => true;
+      const items = owners.map((p) => p.visual);
       const place = () => {
+        for (const v of items) {
+          v.visible = true;
+          v.inView = true;
+          v.assembleAge = Number.POSITIVE_INFINITY;
+          v.cosmetic.setEnabled(true);
+          v.update(0, Number(itemTime));
+        }
         const [x, y, z, yaw, pitch] = window.__probeView;
         camera.position.set(x, z, y);
         if (camera.rotationQuaternion) camera.rotationQuaternion = null;
@@ -62,7 +75,7 @@ const { open, boot, waitForMap, sleep } = require('./lib.cjs');
       };
       scene.onBeforeCameraRenderObservable.add(place);
       for (const el of document.body.querySelectorAll('body > *')) if (!el.querySelector('canvas') && el.tagName !== 'CANVAS') el.style.visibility = 'hidden';
-    }, [keepRe, players]);
+    }, [keepRe, players, itemTime]);
     for (const [i, at] of list.split(';').entries()) {
       await b.ev((v) => { window.__probeView = v; }, at.split(',').map(Number));
       await sleep(5000);

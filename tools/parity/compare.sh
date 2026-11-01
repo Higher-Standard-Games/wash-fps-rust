@@ -8,15 +8,17 @@
 # with the shipped packages (see README.md); SKIP_BROWSER=1 reuses its shots.
 # Writes <prefix>_b_<i>.png, <prefix>_r_<i>.png and <prefix>_cmp_<i>.png and
 # prints the mean difference per channel. PLAYERS="<x,y,z,yaw,clip,frame>;..."
-# stands player models in both halves.
+# stands player models in both halves. ITEMS=<seconds> shows the procedural
+# pickups in both, posed that many seconds in.
 set -e
 HERE=$(cd "$(dirname "$0")" && pwd)
 ROOT=$(cd "$HERE/../.." && pwd)
 map=$1; demo=$2; prefix=$(realpath -m "$3"); views=$4
 if [ -z "$SKIP_BROWSER" ]; then
-  NODE_PATH=$(npm root -g) node "$HERE/views.cjs" "$demo" "${prefix}_b" "$views" 1280x720 '^(bsp|skybox)' "$PLAYERS" >/dev/null
+  NODE_PATH=$(npm root -g) node "$HERE/views.cjs" "$demo" "${prefix}_b" "$views" 1280x720 '^(bsp|skybox)' "$PLAYERS" "$ITEMS" >/dev/null
 fi
 player_args=()
+[ -n "$ITEMS" ] && player_args+=(--time "$ITEMS")
 if [ -n "$PLAYERS" ]; then
   IFS=';' read -ra plist <<< "$PLAYERS"
   for p in "${plist[@]}"; do player_args+=(--player " $p"); done

@@ -2307,7 +2307,9 @@ read it:
   - glTF players with skinning, lit by the scene lights (SHAG's players
     take no light grid and switch clips without blending), with their team
     tint and outline;
-  - MD3 items and projectiles;
+  - map items: weapons as glTF models; health, armour, ammo and the quad as
+    SHAG's procedural sculptures, drawn with ported `StandardMaterial`s;
+  - MD3 projectiles;
   - the view model with its own FOV;
   - beams, tracers, muzzle flashes, impacts and explosions;
   - dynamic lights as a forward storage buffer;
@@ -2575,6 +2577,39 @@ fit and did not count the parity harness.
 ## 23. Progress log
 
 Newest first. Each entry names the commits and what proves them.
+
+### Milestone 6, ninth slice: procedural map items (November 1, 2026)
+
+SHAG draws health, armour, ammo and the quad as generated sculptures
+(wash-fps `world/pickups/procedural`), not MD3 models, so this slice ports
+those; MD3 is left for projectiles.
+
+- **shagger `156f988`.**
+  - `babylon::meshes` ports `VertexData` (normals, transform, bake, merge,
+    flat shading) and `MeshBuilder`'s box, sphere, torus, plane and
+    cylinder.
+  - `babylon::materials::standard_material` and `standard.wgsl` port the
+    `StandardMaterial` terms the pickups use: hemispheric and directional
+    diffuse and specular, emissive colour and texture, emissive and
+    opacity Fresnel, diffuse alpha, RGB opacity, ambient and contrast.
+  - `rendering::model_renderer` draws standard materials, with a per-draw
+    emissive (the pulse) and texture offset (the ring scroll), per-material
+    depth write, and the separate culling pass (back faces, then front).
+    Scene lights carry their specular colours.
+- **wash-fps-rust.**
+  - `world::pickups::procedural` ports the recipes, geometry, materials,
+    asset cache and visual: hover, bob, spin, breathing, pulse, the shell's
+    colour flow, ring pivots and scroll, and the high tiers' billboarded
+    cross. `world::pickups::ammo_icon_texture` loads the crate icons.
+  - `washoi view` draws every map item, posed `--time` seconds in.
+- **Checked against the browser** with `tools/parity` (`ITEMS=<seconds>`
+  poses SHAG's visuals at the same time). Every dm2 prototype has the
+  browser's vertex and index counts. Mega and 25 health, an armour and an
+  ammo crate stand, turn, pulse and shade as in the browser; views differ
+  by 5 to 6 levels in 255, as without items.
+- **Not yet.** Collect and respawn transients, the respawn assembly and
+  availability from snapshots.
+- **Next.** MD3 projectiles (21.10).
 
 ### Milestone 6, eighth slice: skinned players (November 1, 2026)
 

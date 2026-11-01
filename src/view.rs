@@ -32,6 +32,8 @@ use washoi::client::remote_player_renderer::{MODEL_SCALE, RemotePlayerRenderer};
 use washoi::shared::bsp::pickup_table::{PickupEntry, extract_pickups};
 use washoi::shared::items::item_throw::land_map_pickups;
 use washoi::world::fps_pickup::build_weapon_pickups;
+use washoi::world::pickups::procedural::procedural_pickup_factory::{ProceduralPickups, build_procedural_pickups};
+use washoi::world::pickups::procedural::procedural_pickup_visual::camera_rotation;
 
 /// `SPAWN_CLASSNAMES` (wash-fps `shared/bsp/BspDataLoader.ts`).
 const SPAWN_CLASSNAMES: [&str; 4] = [
@@ -165,7 +167,14 @@ pub fn load_map(data: &Path, map: &str) -> Result<LoadedMap, String> {
 pub struct MapRenderer {
     pub world: WorldRenderer,
     pub models: ModelRenderer,
+    /// Draws that stay put: weapon pickups and players.
     pub model_draws: Vec<ModelDraw>,
+    /// Health, armour, ammo and the quad, posed each frame.
+    pub items: ProceduralPickups,
+    /// Seconds since the items were built (`visualElapsed`).
+    pub item_time: f64,
+    /// This frame's draws.
+    frame_draws: Vec<ModelDraw>,
     /// The joint palettes `model_draws` index.
     pub joints: Vec<Mat4>,
     pub sky: Option<SkyRenderer>,
@@ -179,11 +188,17 @@ impl MapRenderer {
     pub fn prepare(&mut self, gpu: &Gpu, camera: &Camera, aspect: f32) {
         self.culling.update(camera, aspect);
         self.world.prepare(gpu, camera.view_projection(aspect), camera.position);
+        self.frame_draws.clone_from(&self.model_draws);
+        self.items.draws(
+            self.item_time,
+            camera_rotation(camera.view().as_dmat4()),
+            &mut self.frame_draws,
+        );
         self.models.prepare(
             gpu,
             camera.view_projection(aspect),
             camera.position,
-            &self.model_draws,
+            &self.frame_draws,
             &self.joints,
         );
         if let Some(sky) = &self.sky {
@@ -263,6 +278,11 @@ pub fn build_renderer(gpu: &Gpu, map: &mut LoadedMap, format: wgpu::TextureForma
         eprintln!("pickup model: {failure}");
     }
     let mut model_draws = pickups.draws;
+    let items = build_procedural_pickups(gpu, &mut map.pk3, &mut models, &map.pickups);
+    println!("items: {} procedural pickups", items.len());
+    if !items.missing_icons.is_empty() {
+        println!("  no ammo icon: {}", items.missing_icons.join(", "));
+    }
     let mut joints = Vec::new();
     if !map.players.is_empty() {
         let pk3 = &mut map.pk3;
@@ -284,6 +304,9 @@ pub fn build_renderer(gpu: &Gpu, map: &mut LoadedMap, format: wgpu::TextureForma
         world: renderer,
         models,
         model_draws,
+        items,
+        item_time: 0.0,
+        frame_draws: Vec::new(),
         joints,
         sky,
         culling,
@@ -327,6 +350,7 @@ pub fn run(o: &ViewOptions) -> i32 {
     renderer.cull = !o.no_cull;
     // Shader animation as it stands `--time` seconds after the map loads.
     renderer.world.animate(&gpu, o.time);
+    renderer.item_time = o.time;
     renderer.prepare(&gpu, &camera, o.width as f32 / o.height as f32);
     match renderer.culling.pvs_stats() {
         Some(pvs) => println!(
