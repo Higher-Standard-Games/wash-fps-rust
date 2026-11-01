@@ -14,7 +14,7 @@ repository = "https://github.com/Higher-Standard-Games/wash-fps-rust"
 #   [patch."https://github.com/Higher-Standard-Games/shagger"]
 #   shagger = { path = "../shagger/crates/shagger" }
 #   shagger_shared = { path = "../shagger/crates/shagger_shared" }
-shagger = { git = "https://github.com/Higher-Standard-Games/shagger", rev = "dc5f2263ff8f5957dc6b23e898714db2600f53f4" }
+shagger = { git = "https://github.com/Higher-Standard-Games/shagger", rev = "bf7105a3afd191b4e01ed64d40d1cb169a24c871" }
 
 [lints.rust]
 unsafe_code = "deny"

@@ -8,6 +8,7 @@
 //! washoi lobby <ws://lobby> [--key-file FILE] list
 //! washoi lobby <ws://lobby> [--key-file FILE] spectate [--seconds N]
 //! washoi lobby <ws://lobby> [--key-file FILE] queue <gametype> [--seconds N] [--play]
+//! washoi lobby <ws://lobby> [--key-file FILE] bot [gametype] [difficulty] [--seconds N] [--play]
 //! ```
 //!
 //! `--key-file` keeps the account key: it is read when the file exists, and a
@@ -33,7 +34,8 @@ fn usage() -> ! {
          usage: washoi connect <ws://game-server> [--name NAME] [--ticket TICKET] [--seconds N] [--play]\n\
          \x20      washoi lobby <ws://lobby> [--key-file FILE] list\n\
          \x20      washoi lobby <ws://lobby> [--key-file FILE] spectate [--seconds N]\n\
-         \x20      washoi lobby <ws://lobby> [--key-file FILE] queue <gametype> [--seconds N] [--play]",
+         \x20      washoi lobby <ws://lobby> [--key-file FILE] queue <gametype> [--seconds N] [--play]\n\
+         \x20      washoi lobby <ws://lobby> [--key-file FILE] bot [gametype] [difficulty] [--seconds N] [--play]",
         washoi::VERSION
     );
     std::process::exit(2);
@@ -107,6 +109,8 @@ fn lobby(url: &str, o: &Options) -> i32 {
     let mut name = String::new();
     let mut lobby_id: Option<String> = None;
     let mut queued = false;
+    let mut bot_match = false;
+    let mut readied = false;
     let deadline = Instant::now() + Duration::from_secs(120);
 
     while Instant::now() < deadline {
@@ -168,6 +172,12 @@ fn lobby(url: &str, o: &Options) -> i32 {
                         client.disconnect();
                         return play_match(&server, &name, None, o.seconds.unwrap_or(15.0), false);
                     }
+                    Some("bot") => {
+                        let gametype = o.words.get(1).map_or("duel", String::as_str);
+                        println!("creating a private {gametype} room against a bot");
+                        client.create_lobby(gametype, true);
+                        bot_match = true;
+                    }
                     Some("queue") => {
                         let gametype = o.words.get(1).map_or("duel", String::as_str);
                         println!("queueing for {gametype}");
@@ -176,6 +186,26 @@ fn lobby(url: &str, o: &Options) -> i32 {
                     }
                     _ => usage(),
                 }
+            }
+            LobbyEvent::Message(LobbyIn::RoomState(room)) if bot_match && lobby_id.is_none() => {
+                let id = room.get("id").and_then(|v| v.as_str()).unwrap_or_default().to_owned();
+                println!("in room {id}; inviting a bot");
+                client.invite_bot(&id, o.words.get(2).map(String::as_str));
+                lobby_id = Some(id);
+            }
+            LobbyEvent::Message(LobbyIn::Other { kind, message }) if kind == "lobby:bot_invited" && !readied => {
+                let bot = message.get("name").and_then(|v| v.as_str()).unwrap_or("?");
+                let level = message.get("difficulty").and_then(|v| v.as_str()).unwrap_or("?");
+                println!("bot {bot} ({level}) is joining; ready");
+                if let Some(id) = &lobby_id {
+                    client.set_ready(id, true);
+                }
+                readied = true;
+            }
+            LobbyEvent::Message(LobbyIn::Other { kind, message }) if kind == "lobby:bot_invite_failed" => {
+                let why = message.get("error").and_then(|v| v.as_str()).unwrap_or("?");
+                println!("bot invite failed: {why}");
+                return 1;
             }
             LobbyEvent::Message(LobbyIn::RoomState(room)) if queued => {
                 let id = room.get("id").and_then(|v| v.as_str()).unwrap_or_default().to_owned();

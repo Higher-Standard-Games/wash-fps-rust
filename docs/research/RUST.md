@@ -2567,6 +2567,27 @@ fit and did not count the parity harness.
 
 Newest first. Each entry names the commits and what proves them.
 
+### Milestone 2: against production (November 1, 2026)
+
+- **shagger `bf7105a`.** The first `wss://` connection panicked: tokio-tungstenite
+  enables no rustls crypto provider, and the local tests only used `ws://`.
+  `network::client::tls` now builds one connector for the lobby and game
+  connections: rustls with `ring`, the bundled Mozilla roots, and any PEM
+  certificates in `SSL_CERT_FILE` (the counterpart of Node's
+  `NODE_EXTRA_CA_CERTS`, for networks that re-sign TLS).
+- **wash-fps-rust.** `washoi lobby <lobby> bot [gametype] [difficulty]`
+  creates a private room, invites a lobby bot (`lobby:invite_bot`), readies
+  once `lobby:bot_invited` arrives and plays the match `lobby:connect` names.
+- **Proof, live on `wss://eu.washoi.net/lobby`.** One new account logs in, the
+  key is kept in a key file, the welcome lists the four gametypes, a private
+  duel is created, the bot Tamago (Hard) joins, the lobby starts the match on
+  `washoi_dm5` and sends `lobby:connect` for `wss://eu.washoi.net:7777` with a
+  ticket.
+- **Left.** The game server leg on production: the build environment's
+  egress relay carries port 443 but not the game ports 7777 to 7850, and
+  SHAG's own Node client times out there the same way, so it waits for a run
+  from a normal network. It works against local servers.
+
 ### Milestone 2: the headless client, against local servers (November 1, 2026)
 
 - **shagger `91ed8d9`.** `network::client` ports `ClockSync.ts`,
