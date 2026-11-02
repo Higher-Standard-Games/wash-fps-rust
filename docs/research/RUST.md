@@ -2582,6 +2582,38 @@ fit and did not count the parity harness.
 
 Newest first. Each entry names the commits and what proves them.
 
+### Milestone 10, fifth slice: key bindings (November 2, 2026)
+
+- **shagger `a96f332`.** A new `input/` folder. `input_types.rs` and
+  `binding_validation.rs` port `InputTypes.ts` and `BindingValidation.ts`
+  (bindings serialise with the TypeScript's field order).
+  `input_system.rs` ports the binding half of `InputSystem.ts`: actions,
+  the context stack, each action's held, pressed and released state from
+  raw keys, buttons and the wheel, `releaseHeldInput`, `rebind`,
+  `resetBinding`, `resetAllBindings`, load and reload, export and import.
+  Overrides are the synced storage entry `shag_keybindings` in
+  `synced-storage.json`, so settings sync carries them; the sync now
+  rereads that file when it checks. `key_codes.rs` names winit keys as
+  `KeyboardEvent.code` does. Not ported: SHAG's camera and menu actions,
+  axes, touch, gamepads, the fullscreen keyboard lock.
+- **wash-fps-rust.** `client/fps_actions.rs` ports `FPSActions.ts` (the
+  30 actions, both contexts, key labels). The match window's player input
+  now reads actions through the bindings instead of fixed keys; the first
+  click still captures the mouse rather than firing. `settings_model.rs`
+  gains the keys half (`SETTINGS_ACTIONS`, the groups and their colours,
+  the keyboard rows, `codesFor`, `actionFor`, `assignKey` with one action
+  per key, `resetKeys`, and the controls page reset). The new
+  `client/settings/controls_page.rs` draws the keyboard and mouse coloured
+  by action, the key menu, the action list with removable chips, and
+  press-to-bind (the menu window hands it the next key, button or wheel
+  turn). Symbols Washoi's fonts lack (⌫, arrows) are written out.
+- **Proof.** Unit tests for validation, action state through a frame,
+  saving and loading, browser key names, the FPS defaults, and
+  `assignKey` (a key moves between actions, unlisted slots lose it, fixed
+  keys refuse, a return to the defaults saves no override). The menu
+  screenshot of the controls page drew a saved override (Q on Reload,
+  taken from the blade) from `synced-storage.json`.
+
 ### Milestone 10, fourth slice: settings sync, leaderboard and profile (November 2, 2026)
 
 - **shagger `98499f1`, `3ecd2e4`.** `shagger_shared::settings::synced_settings`

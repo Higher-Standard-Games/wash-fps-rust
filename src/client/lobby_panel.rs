@@ -302,6 +302,13 @@ impl LobbyPanel {
         }
         if let Some(sync) = &mut self.settings_sync {
             with_cvars(|c| sync.on_message(&message, &mut self.client, c));
+            // A download may have brought other bindings
+            // (`reloadBindingsFromStorage`).
+            if matches!(&message, LobbyIn::Other { kind, .. } if kind == "settings:data") {
+                shagger::input::input_system::with_input(
+                    shagger::input::input_system::InputSystem::reload_bindings_from_storage,
+                );
+            }
         }
         if let LobbyIn::Other { kind, message } = &message {
             self.leaderboard.on_message(kind, message);

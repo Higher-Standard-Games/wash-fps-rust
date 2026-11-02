@@ -18,15 +18,18 @@ use shagger::rendering::offscreen::{begin_main_pass, begin_overlay_pass, begin_u
 
 use shagger::camera::fov_settings::current_base_fov;
 use shagger::core::cvar::with_cvars;
+use shagger::input::input_system::{InputSystem, with_input};
+use shagger::input::key_codes::{dom_code, dom_mouse_button};
 use shagger::movement::movement_vars::movement_var;
 use shagger::rendering::wgpu;
 use shagger::weapon::weapon_view_manager::ViewModelInput;
+use washoi::client::fps_actions::fps;
 use washoi::client::fps_hud::FpsHud;
 use washoi::client::fps_movement_audio::play_jumppad_launch;
 use washoi::client::live_play::PlayInput;
 use winit::application::ApplicationHandler;
 use winit::dpi::PhysicalSize;
-use winit::event::{DeviceEvent, DeviceId, ElementState, MouseButton, WindowEvent};
+use winit::event::{DeviceEvent, DeviceId, ElementState, MouseButton, MouseScrollDelta, WindowEvent};
 use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop};
 use winit::keyboard::{KeyCode, PhysicalKey};
 use winit::platform::run_on_demand::EventLoopExtRunOnDemand;
@@ -138,6 +141,7 @@ impl App {
                     self.set_captured(false);
                     self.held.clear();
                     self.firing = false;
+                    with_input(InputSystem::release_held_input);
                 }
             }
             return true;
@@ -184,6 +188,7 @@ impl App {
                 // Nothing stays held while typing.
                 self.held.clear();
                 self.firing = false;
+                with_input(InputSystem::release_held_input);
                 return true;
             }
             return false;
@@ -208,42 +213,30 @@ impl App {
         true
     }
 
-    /// This frame's keys and mouse as a player's input (`FPSActions`'
-    /// default binds: WASD, Space, C, Shift, the mouse buttons, R, E, 1-9).
+    /// This frame's actions as a player's input, through the player's
+    /// bindings (`FPSActions`).
     fn play_input(&self) -> PlayInput {
-        let key = |k| self.held.contains(&k);
-        const SLOTS: [KeyCode; 9] = [
-            KeyCode::Digit1,
-            KeyCode::Digit2,
-            KeyCode::Digit3,
-            KeyCode::Digit4,
-            KeyCode::Digit5,
-            KeyCode::Digit6,
-            KeyCode::Digit7,
-            KeyCode::Digit8,
-            KeyCode::Digit9,
-        ];
-        PlayInput {
-            forward: key(KeyCode::KeyW),
-            backward: key(KeyCode::KeyS),
-            left: key(KeyCode::KeyA),
-            right: key(KeyCode::KeyD),
-            jump: key(KeyCode::Space),
-            crouch: key(KeyCode::KeyC) || key(KeyCode::ControlLeft),
-            sprint: key(KeyCode::ShiftLeft),
-            fire: self.firing,
-            alt_fire: self.aiming,
-            reload: key(KeyCode::KeyR),
-            use_key: key(KeyCode::KeyE),
+        with_input(|i| PlayInput {
+            forward: i.is_active(fps::MOVE_FORWARD),
+            backward: i.is_active(fps::MOVE_BACKWARD),
+            left: i.is_active(fps::MOVE_LEFT),
+            right: i.is_active(fps::MOVE_RIGHT),
+            jump: i.is_active(fps::JUMP),
+            crouch: i.is_active(fps::CROUCH),
+            sprint: i.is_active(fps::SPRINT),
+            // The first click captures the mouse rather than firing.
+            fire: self.captured && i.is_active(fps::FIRE),
+            alt_fire: i.is_active(fps::AIM),
+            reload: i.is_active(fps::RELOAD),
+            use_key: i.is_active(fps::USE),
             yaw: f64::from(self.camera.yaw),
             pitch: f64::from(self.camera.pitch),
-            // `fps_weapon_1` is also on Q.
-            weapon_slot: if key(KeyCode::KeyQ) {
-                1
-            } else {
-                SLOTS.iter().position(|&k| key(k)).map_or(0, |i| i as u8 + 1)
-            },
-        }
+            // Held rather than pressed: the input is sampled each tick.
+            weapon_slot: fps::WEAPONS
+                .iter()
+                .position(|id| i.is_active(id))
+                .map_or(0, |n| n as u8 + 1),
+        })
     }
 
     fn step(&mut self, dt: f32) {
@@ -270,7 +263,10 @@ impl App {
         let now = Instant::now();
         let dt = now.duration_since(self.last).as_secs_f32().min(0.1);
         self.last = now;
+        with_input(InputSystem::update);
+        self.aiming = with_input(|i| i.is_active(fps::AIM));
         self.step(dt);
+        with_input(InputSystem::end_frame);
         // `cl_fov`, as `currentBaseFov` gives every camera.
         self.camera.fov_y = with_cvars(|c| current_base_fov(c)) as f32;
         let Some(s) = &mut self.surface else { return };
@@ -442,6 +438,26 @@ impl ApplicationHandler for App {
         if self.console_event(&event) {
             return;
         }
+        match &event {
+            WindowEvent::MouseInput { state, button, .. } => {
+                if let Some(b) = dom_mouse_button(*button) {
+                    with_input(|i| match state {
+                        ElementState::Pressed => i.mouse_down(b),
+                        ElementState::Released => i.mouse_up(b),
+                    });
+                }
+            }
+            // `WheelEvent.deltaY`: positive scrolls down, where winit's
+            // positive scrolls up.
+            WindowEvent::MouseWheel { delta, .. } => {
+                let dy = match delta {
+                    MouseScrollDelta::LineDelta(_, y) => -f64::from(*y) * 100.0,
+                    MouseScrollDelta::PixelDelta(p) => -p.y,
+                };
+                with_input(|i| i.wheel(dy));
+            }
+            _ => {}
+        }
         match event {
             WindowEvent::CloseRequested => event_loop.exit(),
             WindowEvent::Resized(size) => {
@@ -459,6 +475,10 @@ impl ApplicationHandler for App {
                 if self.chat_key(code, &event) {
                     return;
                 }
+                with_input(|i| match event.state {
+                    ElementState::Pressed => i.key_down(&dom_code(code)),
+                    ElementState::Released => i.key_up(&dom_code(code)),
+                });
                 match event.state {
                     ElementState::Pressed if code == KeyCode::Escape => {
                         if self.captured {
@@ -493,14 +513,10 @@ impl ApplicationHandler for App {
                     self.firing = state == ElementState::Pressed;
                 }
             }
-            WindowEvent::MouseInput {
-                state,
-                button: MouseButton::Right,
-                ..
-            } => self.aiming = state == ElementState::Pressed,
             WindowEvent::Focused(false) => {
                 self.held.clear();
                 self.firing = false;
+                with_input(InputSystem::release_held_input);
                 self.set_captured(false);
             }
             WindowEvent::RedrawRequested => {

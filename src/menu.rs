@@ -10,6 +10,7 @@ use std::path::Path;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
+use shagger::input::key_codes::{dom_code, dom_mouse_button};
 use shagger::rendering::gpu::Gpu;
 use shagger::rendering::offscreen::{OFFSCREEN_FORMAT, render_encoded_to_rgba};
 use shagger::rendering::wgpu;
@@ -19,7 +20,7 @@ use washoi::client::settings::fps_settings_view::FpsSettingsView;
 use washoi::client::settings::settings_model::SETTINGS_PAGES;
 use washoi::console::GameConsole;
 use winit::application::ApplicationHandler;
-use winit::event::{ElementState, WindowEvent};
+use winit::event::{ElementState, MouseScrollDelta, WindowEvent};
 use winit::event_loop::ActiveEventLoop;
 use winit::keyboard::{KeyCode, PhysicalKey};
 use winit::window::{Window, WindowId};
@@ -145,6 +146,14 @@ impl ApplicationHandler for MenuApp {
             }
             return;
         }
+        // A key, button or wheel turn for the action waiting on the
+        // controls page goes there, not to the menu.
+        if let (Some(code), Some(settings), Some(m)) = (bind_code(&event), &mut self.panel.settings, &self.open) {
+            let now = m.layer.ctx.input(|i| i.time);
+            if settings.controls.take_input(&code, now) {
+                return;
+            }
+        }
         if let Some(m) = &mut self.open
             && m.layer.on_window_event(&m.window, &event)
         {
@@ -173,6 +182,33 @@ impl ApplicationHandler for MenuApp {
         if let Some(m) = &self.open {
             m.window.request_redraw();
         }
+    }
+}
+
+/// A pressed key, button or wheel turn as the controls page names it
+/// (`InputCode`).
+fn bind_code(event: &WindowEvent) -> Option<String> {
+    match event {
+        WindowEvent::KeyboardInput { event: key, .. } if key.state == ElementState::Pressed && !key.repeat => {
+            match key.physical_key {
+                PhysicalKey::Code(code) => Some(dom_code(code)),
+                PhysicalKey::Unidentified(_) => None,
+            }
+        }
+        WindowEvent::MouseInput {
+            state: ElementState::Pressed,
+            button,
+            ..
+        } => dom_mouse_button(*button).map(|b| format!("mouse:{}", b.name())),
+        WindowEvent::MouseWheel { delta, .. } => {
+            let y = match delta {
+                MouseScrollDelta::LineDelta(_, y) => f64::from(*y),
+                MouseScrollDelta::PixelDelta(p) => p.y,
+            };
+            // winit's positive turns up, the browser's `deltaY` down.
+            (y != 0.0).then(|| if y > 0.0 { "wheel:up" } else { "wheel:down" }.to_owned())
+        }
+        _ => None,
     }
 }
 
@@ -228,7 +264,7 @@ pub fn screenshot(
             .find(|(_, title, _)| title.eq_ignore_ascii_case(page))
             .map(|p| p.0)
             .ok_or_else(|| format!("no settings page {page}"))?;
-        panel.settings = Some(FpsSettingsView { page: id });
+        panel.settings = Some(FpsSettingsView::open(id));
     }
     let mut console = GameConsole::new(None);
     if let Some(lines) = &shot.console {

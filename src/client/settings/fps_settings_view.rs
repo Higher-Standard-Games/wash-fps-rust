@@ -3,13 +3,15 @@
 //! the same fields, ranges, steps and words, drawn with egui. Every field
 //! reads and writes a cvar, which saves itself.
 //!
-//! Not yet: the key binding board (it comes with the input system's
-//! bindings), the team colour and voice pickers, and the video page's
+//! Not yet: the team colour and voice pickers, and the video page's
 //! effects, which land with milestone 11's renderer work.
 
 use shagger::core::cvar::{CvarType, with_cvars};
 use shagger::ui::egui_layer::egui;
 
+use shagger::input::input_system::{InputSystem, with_input};
+
+use super::controls_page::ControlsPage;
 use super::settings_model::{SETTINGS_PAGES, SettingsPageId, reset_page};
 
 /// `formatPercent`.
@@ -21,13 +23,12 @@ fn format_percent(v: f64) -> String {
 #[derive(Debug)]
 pub struct FpsSettingsView {
     pub page: SettingsPageId,
+    pub controls: ControlsPage,
 }
 
 impl Default for FpsSettingsView {
     fn default() -> Self {
-        Self {
-            page: SettingsPageId::Controls,
-        }
+        Self::open(SettingsPageId::Controls)
     }
 }
 
@@ -121,7 +122,7 @@ fn hex_field(ui: &mut egui::Ui, name: &str, cvar: &str) {
     });
 }
 
-fn card(ui: &mut egui::Ui, title: &str, body: impl FnOnce(&mut egui::Ui)) {
+pub(super) fn card(ui: &mut egui::Ui, title: &str, body: impl FnOnce(&mut egui::Ui)) {
     egui::Frame::group(ui.style()).inner_margin(12.0).show(ui, |ui| {
         ui.set_width(ui.available_width());
         ui.label(egui::RichText::new(title).heading());
@@ -131,11 +132,23 @@ fn card(ui: &mut egui::Ui, title: &str, body: impl FnOnce(&mut egui::Ui)) {
 }
 
 impl FpsSettingsView {
+    /// The screen on `page`, with the bindings as saved (`open`).
+    #[must_use]
+    pub fn open(page: SettingsPageId) -> Self {
+        with_input(InputSystem::reload_bindings_from_storage);
+        Self {
+            page,
+            controls: ControlsPage::default(),
+        }
+    }
+
     /// The page list, for the rail.
     pub fn page_nav(&mut self, ui: &mut egui::Ui) {
         for (id, title, hint) in SETTINGS_PAGES {
             let text = format!("{title}  ·  {hint}");
-            ui.selectable_value(&mut self.page, id, text);
+            if ui.selectable_value(&mut self.page, id, text).changed() {
+                self.controls.deactivate();
+            }
         }
     }
 
@@ -148,12 +161,15 @@ impl FpsSettingsView {
             ui.heading(title);
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 if ui.button("Reset page").clicked() {
-                    with_cvars(|c| reset_page(c, self.page));
+                    with_cvars(|c| with_input(|i| reset_page(c, i, self.page)));
                 }
             });
         });
         egui::ScrollArea::vertical().show(ui, |ui| match self.page {
-            SettingsPageId::Controls => controls(ui),
+            SettingsPageId::Controls => {
+                self.controls.ui(ui);
+                controls(ui);
+            }
             SettingsPageId::Gameplay => gameplay(ui),
             SettingsPageId::Video => video(ui),
             SettingsPageId::Audio => audio(ui),

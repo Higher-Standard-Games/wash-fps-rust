@@ -305,7 +305,14 @@ fn main() {
     // The cvars, saved as the browser saves `engine_cvars`. Release builds
     // are the shipped game, which keeps `developer` at 0.
     let storage = o.cvars.clone().or_else(|| config_dir().map(|d| d.join("cvars.json")));
+    // The bindings sit beside the cvars, in `synced-storage.json`.
+    let input_dir = storage
+        .as_ref()
+        .and_then(|p| p.parent())
+        .map(std::path::Path::to_path_buf);
     shagger::core::cvar::init_cvars(storage, !cfg!(debug_assertions));
+    shagger::input::input_system::with_input(washoi::client::fps_actions::register_fps_actions);
+    shagger::input::input_system::init_input(input_dir);
     shagger::core::cvar::with_cvars(washoi::client::settings::settings_model::register_client_cvars);
     let code = match mode.as_str() {
         "connect" => play_match(

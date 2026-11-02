@@ -4,6 +4,7 @@
 pub mod ammo_status;
 pub mod crosshair;
 pub mod demo_playback;
+pub mod fps_actions;
 pub mod fps_announcer;
 pub mod fps_bomb_audio;
 pub mod fps_combat_audio;
