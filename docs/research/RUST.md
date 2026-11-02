@@ -2582,6 +2582,29 @@ fit and did not count the parity harness.
 
 Newest first. Each entry names the commits and what proves them.
 
+### Milestone 8, fourth slice: music playlists (November 2, 2026)
+
+- **shagger `cac2376`.** `audio/music.rs` ports `AudioManager.ts`'s music
+  half: `Playlist` from `*.playlist.json`, `startPlaylist` (same name
+  skipped, Fisher-Yates shuffle, music off remembers it), `stopPlaylist`,
+  missing tracks skipped (the playlists list
+  `Noodlesoup_Telefragged_Me.mp3`, which no package holds), no fade
+  between tracks, the 0.02-per-50-ms fades, `s_volume`, `s_musicenabled`
+  and muted playlists. MP3s decode with `minimp3` (MIT around CC0 C;
+  `nanomp3` needs Rust 1.89) and stream through an rtrb ring into new
+  stream voices on the music bus, which the sound effects' `StopAll`
+  leaves alone. A thread decodes ahead on a sound card; offline, `update`
+  decodes, so a render to a file is the same every run.
+- **wash-fps-rust.** `GameAudio` reads `game`, `endgame` and `menu`
+  `.playlist.json` beside the packages (`tools/fetch_maps.sh` fetches
+  them), loads the packages holding their tracks, plays the game playlist
+  while watching (`DemoService.ts`) and the endgame's in PostGame
+  (`Game.ts`'s `watchMatchPhase`).
+- **Proof.** Unit tests (parse, shuffle keeps every track, a playlist
+  with nothing to play stops); with `SHAGGER_TEST_MP3` set, a real track
+  fades in to the 0.5 volume and a cut one ends its playlist. 20 s of the
+  dm14 demo with and without the game playlist differ by the music.
+
 ### Milestone 8, third slice: the match state and the announcer (November 2, 2026)
 
 - **wash-fps-rust.** `client/match_state_manager.rs` ports

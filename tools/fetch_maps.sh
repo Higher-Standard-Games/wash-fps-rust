@@ -6,8 +6,9 @@
 #
 # Follows the client's startup (RUST.md 20.2): the manifest names the index,
 # the index lists each package's SHA-256, and every package is checked against
-# it. Packages already downloaded with the right digest are kept. Set
-# WASHOI_DATA to use another region (default https://eu.washoi.net/data).
+# it; the music's playlists are fetched beside the packages. Packages already
+# downloaded with the right digest are kept. Set WASHOI_DATA to use another
+# region (default https://eu.washoi.net/data).
 set -euo pipefail
 dir=${1:-target/washoi-maps}
 data=${WASHOI_DATA:-https://eu.washoi.net/data}
@@ -32,4 +33,8 @@ while read -r name pk3 sha; do
   fi
   unzip -o -q -j "$file" "maps/$name.bsp" -d "$dir"
 done < "$dir/maps.txt"
+# The music's playlists, served beside the packages.
+for playlist in game menu endgame; do
+  curl -fsS -o "$dir/pk3/$playlist.playlist.json" "$data/$playlist.playlist.json"
+done
 ls "$dir"/*.bsp

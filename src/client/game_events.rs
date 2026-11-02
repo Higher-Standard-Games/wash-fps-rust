@@ -17,8 +17,10 @@ use shagger::weapon::rail::rail_profiles::{RailEffectSample, RailImpactKind};
 use std::collections::HashMap;
 
 use shagger::audio::audio_v2_sfx::AudioV2Sfx;
+use shagger::audio::music::{MusicPlayer, Playlist};
 use shagger::loader::pk3::pk3_loader::Pk3Loader;
 use shagger::network::client::snapshot_buffer::EntitySnapshot;
+use std::path::Path;
 
 use crate::client::fps_announcer::{FpsAnnouncer, Lead, MatchMoment, fps_announcer_sound_paths};
 use crate::client::fps_combat_audio::{FpsCombatAudio, fps_combat_sound_paths};
@@ -28,7 +30,7 @@ use crate::client::fps_pickup_audio::{
 };
 use crate::client::fps_player_audio::player_voice_for_entity;
 use crate::client::fps_reload_audio::FpsReloadAudio;
-use crate::client::match_state_manager::MatchStateManager;
+use crate::client::match_state_manager::{MatchPhase, MatchStateManager};
 use crate::shared::net::snapshot_events::{Point, SnapshotEvent};
 
 /// `WEAPON_EFFECT_COLORS`.
@@ -226,7 +228,19 @@ pub struct GameAudio {
     reload: FpsReloadAudio,
     movement: FpsMovementAudio,
     announcer: FpsAnnouncer,
+    /// The playlists (`AudioManager`'s music half) and the packages that
+    /// hold their tracks.
+    pub music: MusicPlayer,
+    playlists: HashMap<String, Playlist>,
+    music_packages: Pk3Loader,
+    music_phase: Option<MatchPhase>,
 }
+
+/// The game's playlists, as `data/<name>.playlist.json` beside the
+/// packages (`Game.ts`, `DemoService.ts`).
+pub const GAME_PLAYLIST: &str = "data/game.playlist.json";
+pub const ENDGAME_PLAYLIST: &str = "data/endgame.playlist.json";
+pub const MENU_PLAYLIST: &str = "data/menu.playlist.json";
 
 impl GameAudio {
     #[must_use]
@@ -237,7 +251,81 @@ impl GameAudio {
             reload: FpsReloadAudio::default(),
             movement: FpsMovementAudio::default(),
             announcer: FpsAnnouncer::default(),
+            music: MusicPlayer::new(),
+            playlists: HashMap::new(),
+            music_packages: Pk3Loader::new(),
+            music_phase: None,
         }
+    }
+
+    /// Reads the playlists from `data` (the packages' directory) and
+    /// loads the packages in it that hold their tracks; `pk3` says which
+    /// those are. Returns how many tracks can play.
+    pub fn load_music(&mut self, pk3: &Pk3Loader, data: &Path) -> usize {
+        let mut packages: Vec<String> = Vec::new();
+        let mut playable = 0;
+        for key in [GAME_PLAYLIST, ENDGAME_PLAYLIST, MENU_PLAYLIST] {
+            let file = data.join(key.trim_start_matches("data/"));
+            let Some(playlist) = std::fs::read_to_string(&file)
+                .ok()
+                .and_then(|text| Playlist::parse(&text).ok())
+            else {
+                continue;
+            };
+            for track in &playlist.tracks {
+                let package = pk3
+                    .package_for_file(&track.file)
+                    .or_else(|| pk3.package_for_file(&format!("music/{}", track.file)));
+                if let Some(package) = package {
+                    playable += 1;
+                    if !packages.iter().any(|p| p == package) {
+                        packages.push(package.to_owned());
+                    }
+                }
+            }
+            self.playlists.insert(key.to_owned(), playlist);
+        }
+        for package in packages {
+            if let Ok(bytes) = std::fs::read(data.join(&package)) {
+                let _ = self.music_packages.add_package(&package, bytes);
+            }
+        }
+        playable
+    }
+
+    /// `loadPlaylist`: a playlist read by `load_music`, by its path.
+    pub fn load_playlist(&mut self, key: &str) {
+        let Some(playlist) = self.playlists.get(key).cloned() else {
+            return;
+        };
+        let packages = &mut self.music_packages;
+        self.music
+            .start_playlist(&mut self.sfx, &mut |p| packages.get_file(p), playlist, Some(key));
+    }
+
+    /// The music of a match being watched (`DemoService`'s `GAME_PLAYLIST`,
+    /// and `Game.ts`'s `watchMatchPhase`: the endgame's in PostGame), and
+    /// the fades and track changes. Call every frame.
+    pub fn update_music(&mut self, match_state: &MatchStateManager, dt: f64) {
+        let phase = match_state.phase();
+        match self.music_phase {
+            None => self.load_playlist(if phase == MatchPhase::PostGame {
+                ENDGAME_PLAYLIST
+            } else {
+                GAME_PLAYLIST
+            }),
+            Some(old) if old != phase => {
+                if phase == MatchPhase::PostGame {
+                    self.load_playlist(ENDGAME_PLAYLIST);
+                } else if old == MatchPhase::PostGame {
+                    self.load_playlist(GAME_PLAYLIST);
+                }
+            }
+            Some(_) => {}
+        }
+        self.music_phase = Some(phase);
+        let packages = &mut self.music_packages;
+        self.music.update(&mut self.sfx, &mut |p| packages.get_file(p), dt);
     }
 
     /// `preloadFPSAudio`: the combat, movement, pickup and powerup banks,

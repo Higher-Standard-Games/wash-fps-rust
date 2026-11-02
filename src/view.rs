@@ -184,6 +184,7 @@ pub fn play_view_sounds(
     });
     // A spectator: the match flow is called, never a lead.
     audio.update_announcer(view.match_state, false, None, dt, now * 1000.0);
+    audio.update_music(view.match_state, dt);
 }
 
 /// What [`play_view_sounds`] needs of a frame.
@@ -1175,8 +1176,9 @@ pub fn run(o: &ViewOptions) -> i32 {
             Ok(sfx) => {
                 let mut audio = GameAudio::new(sfx);
                 println!(
-                    "audio: {} sounds at {} Hz",
+                    "audio: {} sounds, {} music tracks at {} Hz",
                     audio.preload(&mut map.pk3),
+                    audio.load_music(&map.pk3, &o.data),
                     audio.sfx.sample_rate()
                 );
                 Some(audio)
@@ -1211,7 +1213,12 @@ pub fn run(o: &ViewOptions) -> i32 {
         // Offline sound at 48 kHz, 800 frames a step.
         let mut audio = o.audio_out.as_ref().map(|_| {
             let mut audio = GameAudio::new(AudioV2Sfx::offline(AUDIO_OUT_RATE));
-            println!("audio: {} sounds", audio.preload(&mut map.pk3));
+            audio.music.set_shuffle_seed(1);
+            println!(
+                "audio: {} sounds, {} music tracks",
+                audio.preload(&mut map.pk3),
+                audio.load_music(&map.pk3, &o.data)
+            );
             audio
         });
         let mut pcm: Vec<f32> = Vec::new();
