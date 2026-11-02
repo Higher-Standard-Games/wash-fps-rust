@@ -253,6 +253,14 @@ impl LivePlay {
         self.spawn_facing.take()
     }
 
+    /// Says `text` to everyone, or the team (`sendChat`).
+    pub fn say(&self, text: &str, team_only: bool) {
+        self.session.send(SessionRequest::Chat {
+            text: text.to_owned(),
+            team_only,
+        });
+    }
+
     /// The weapon to draw in hand: none while dead or before the server
     /// says which.
     #[must_use]

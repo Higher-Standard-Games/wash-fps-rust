@@ -150,6 +150,8 @@ pub struct ViewOptions {
     pub scoreboard: bool,
     /// Join the match in `watch` as a player (`washoi play`).
     pub join: bool,
+    /// Something to say once in the match (`--say`, headless play).
+    pub say: Option<String>,
 }
 
 /// The HUD's frame of a demo or a match being watched, behind the
@@ -1369,6 +1371,7 @@ pub fn run(o: &ViewOptions) -> i32 {
                 None
             }
         };
+        let mut said = o.say.as_deref();
         for _ in 0..steps.max(1) {
             if live {
                 std::thread::sleep(std::time::Duration::from_micros(16_667));
@@ -1393,6 +1396,11 @@ pub fn run(o: &ViewOptions) -> i32 {
                     camera.position = Vec3::new(eye.x as f32, eye.y as f32, eye.z as f32);
                 }
                 renderer.hold(p.weapon_in_hand());
+                if p.alive
+                    && let Some(text) = said.take()
+                {
+                    p.say(text, false);
+                }
             }
             players = styled_players(view.players);
             projectiles = view.projectiles;

@@ -1,6 +1,7 @@
 //! The HUD widgets (wash-fps `client/hud/widgets`), one file each.
 
 pub mod ammo_counter;
+pub mod chat;
 pub mod event_feed;
 pub mod frag_counter;
 pub mod frag_message;

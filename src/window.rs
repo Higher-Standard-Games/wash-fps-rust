@@ -138,6 +138,47 @@ impl App {
         self.captured = grab;
     }
 
+    /// Talk mode's keys (`FPSChat`'s input): T or Y opens it while
+    /// playing; while open, every key types, Enter sends and Escape
+    /// cancels. True when the key was the chat's.
+    fn chat_key(&mut self, code: KeyCode, event: &winit::event::KeyEvent) -> bool {
+        let Some(Feed::Play(play, _)) = &self.feed else {
+            return false;
+        };
+        let Some(hud) = self.surface.as_mut().and_then(|s| s.hud.as_mut()) else {
+            return false;
+        };
+        let chat = &mut hud.chat;
+        if !chat.is_input_active() {
+            if event.state == ElementState::Pressed && !event.repeat && matches!(code, KeyCode::KeyT | KeyCode::KeyY) {
+                chat.open_input(code == KeyCode::KeyY);
+                // Nothing stays held while typing.
+                self.held.clear();
+                self.firing = false;
+                return true;
+            }
+            return false;
+        }
+        if event.state != ElementState::Pressed {
+            return true;
+        }
+        match code {
+            KeyCode::Enter | KeyCode::NumpadEnter => {
+                if let Some((text, team_only)) = chat.submit() {
+                    play.say(&text, team_only);
+                }
+            }
+            KeyCode::Escape => chat.close_input(),
+            KeyCode::Backspace => chat.backspace(),
+            _ => {
+                if let Some(text) = &event.text {
+                    chat.type_text(text);
+                }
+            }
+        }
+        true
+    }
+
     /// This frame's keys and mouse as a player's input (`FPSActions`'
     /// default binds: WASD, Space, C, Shift, the mouse buttons, R, E, 1-9).
     fn play_input(&self) -> PlayInput {
@@ -348,6 +389,9 @@ impl ApplicationHandler for App {
                 let PhysicalKey::Code(code) = event.physical_key else {
                     return;
                 };
+                if self.chat_key(code, &event) {
+                    return;
+                }
                 match event.state {
                     ElementState::Pressed if code == KeyCode::Escape => {
                         if self.captured {

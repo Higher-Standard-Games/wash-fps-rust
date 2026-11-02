@@ -16,6 +16,7 @@ use crate::client::crosshair::{Crosshair, CrosshairFrame};
 use crate::client::hud::hud_widget::{FpsHudWidget, HudFrame};
 use crate::client::hud::washiki::{Fonts, UI_SCALE};
 use crate::client::hud::widgets::ammo_counter::AmmoCounter;
+use crate::client::hud::widgets::chat::Chat;
 use crate::client::hud::widgets::event_feed::EventFeed;
 use crate::client::hud::widgets::frag_counter::FragCounter;
 use crate::client::hud::widgets::frag_message::FragMessage;
@@ -44,6 +45,7 @@ pub struct FpsHud {
     vitals: VitalsBlock,
     ammo: AmmoCounter,
     crosshair: Crosshair,
+    pub chat: Chat,
     /// The reticle this frame, when someone's eyes are on screen.
     reticle: Option<(String, f64, bool)>,
     /// What the widgets read, kept across frames (the kill feed).
@@ -87,6 +89,7 @@ impl FpsHud {
             vitals: VitalsBlock::default(),
             ammo: AmmoCounter::default(),
             crosshair: Crosshair::default(),
+            chat: Chat::default(),
             reticle: None,
             state: HudState::default(),
         })
@@ -129,6 +132,12 @@ impl FpsHud {
                 } if entity_id == view => {
                     state.process_weapon_state(current_weapon, weapons, ammo);
                 }
+                SnapshotEvent::Chat {
+                    sender_name,
+                    team,
+                    text,
+                    ..
+                } => self.chat.add_message(sender_name, text, team),
                 SnapshotEvent::Damage {
                     entity_id,
                     attacker_id,
@@ -166,6 +175,14 @@ impl FpsHud {
             }
         }
         state.expire_transients(frame.dt);
+        self.chat.tick(frame.dt);
+        if frame.playing {
+            let team = state
+                .entry_for_entity(view)
+                .and_then(|e| e.team_id.clone())
+                .unwrap_or_default();
+            self.chat.set_local_team(&team);
+        }
         self.reticle = (!view.is_empty() && !state.dead).then(|| {
             let weapon = state.current_weapon.clone();
             let out = get_ammo_status(&weapon, state.ammo.get(&weapon).copied()).out_of_ammo;
@@ -224,6 +241,14 @@ impl FpsHud {
                 .draw(&mut self.hud, &fonts, vw - 28.0 * s - ammo_w, bottom - ammo_h);
         }
         self.scoreboard.draw(&mut self.hud, &fonts, 0.0, 0.0);
+        // `.fps-chat`: clear of the bottom bar, over the scoreboard's veil.
+        self.chat.draw(
+            &mut self.hud,
+            &fonts,
+            20.0 * s,
+            vh - 236.0 * s,
+            (460.0 * s).min(vw / 2.0),
+        );
         // `.fps-event-feed` sits over the scoreboard's veil.
         self.event_feed.draw(&mut self.hud, &fonts, 24.0 * s, 64.0 * s);
         if let Some((weapon, speed, out_of_ammo)) = &self.reticle

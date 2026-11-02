@@ -2582,6 +2582,20 @@ fit and did not count the parity harness.
 
 Newest first. Each entry names the commits and what proves them.
 
+### Milestone 9, fourth slice: chat (November 2, 2026)
+
+- **wash-fps-rust.** `client/hud/widgets/chat.rs` ports `Chat.ts`: the
+  last five messages over the game, fading after eight seconds; talk mode
+  (T, or Y for the team) opens the history (up to 360 px) and the input
+  line with its SAY or TEAM stamp and a blinking caret. Enter sends through
+  `SessionRequest::Chat` (no local echo), Escape cancels, `/mute` and
+  `/unmute` stay local, `/say_team` goes to the team. Senders are coloured
+  ally, enemy or spectator; long lines wrap. Demos and watched matches show
+  the `chat` events too. `washoi play --say TEXT` says something once in.
+- **Proof.** A unit test (sending, team lines, mutes); against a local
+  `net:server`, `--say` reaches the server's log and comes back as the
+  wrapped line on screen.
+
 ### Milestone 9, third slice: crosshair, vitals and ammo (November 2, 2026)
 
 - **wash-fps-rust.** `HudState` gains `HUDState.ts`'s combat and weapon

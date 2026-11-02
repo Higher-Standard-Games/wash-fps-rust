@@ -90,7 +90,8 @@ impl SnapshotFeed {
                 | SnapshotEvent::Death { .. }
                 | SnapshotEvent::PickupNotify { .. }
                 | SnapshotEvent::PowerupSpawn { .. }
-                | SnapshotEvent::CombatState { .. } => {
+                | SnapshotEvent::CombatState { .. }
+                | SnapshotEvent::Chat { .. } => {
                     self.effects.push(event.clone());
                 }
                 SnapshotEvent::MatchState(payload) => {
