@@ -573,12 +573,20 @@ pub fn build_renderer(gpu: &Gpu, map: &mut LoadedMap, output_format: wgpu::Textu
             Err(why) => eprintln!("projectile model: {why}"),
         }
     }
-    let view_model = map.weapon.as_deref().and_then(|id| {
+    let mut view_model = map.weapon.as_deref().and_then(|id| {
         WeaponViewModel::load(gpu, &mut map.pk3, id, format)
             .inspect(|_| println!("view model: {id}"))
             .inspect_err(|why| eprintln!("view model: {why}"))
             .ok()
     });
+    // Pipeline precompile at load (21.10): every pipeline the loaded models
+    // can take, so the first frame that shows one does not stall.
+    let started = std::time::Instant::now();
+    let mut compiled = models.precompile(gpu);
+    if let Some(view_model) = &mut view_model {
+        compiled += view_model.precompile(gpu);
+    }
+    println!("pipelines: {compiled} model pipelines in {:.0?}", started.elapsed());
     let mut explosions = ExplosionBatchRenderer::new(gpu, format);
     for view in &map.explosions {
         let Some(look) = explosion_for(&view.id) else {

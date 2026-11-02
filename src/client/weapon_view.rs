@@ -67,6 +67,11 @@ impl WeaponViewModel {
         })
     }
 
+    /// Builds the gun's pipelines now rather than on its first frame.
+    pub fn precompile(&mut self, gpu: &Gpu) -> usize {
+        self.renderer.precompile(gpu)
+    }
+
     /// Places the weapon under `camera` and writes the weapon camera: the
     /// main camera's view with the weapon FOV, near 0.1 and far 1000, lit
     /// by the weapon light (and the blade's).

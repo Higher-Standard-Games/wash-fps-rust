@@ -2580,6 +2580,18 @@ fit and did not count the parity harness.
 
 Newest first. Each entry names the commits and what proves them.
 
+### Milestone 6, twentieth slice: pipeline precompile (November 2, 2026)
+
+- **shagger `ff6abf8`.** `ModelRenderer::precompile` builds every pipeline
+  the uploaded models can take (mirrored or not, outlined or not) from the
+  same `pipeline_keys` that `prepare` uses. The world, sky, effect and
+  explosion renderers already built theirs when created.
+- **wash-fps-rust.** `washoi view` precompiles after loading the map's
+  models and the view model: 32 model pipelines in about 0.2 s on dm2 with
+  a player and the plasma gun.
+- **Not yet.** A `wgpu::PipelineCache` saved between runs (Vulkan only).
+- **Next.** Prediction (milestone 4).
+
 ### Milestone 6, nineteenth slice: the weapon in hand (November 2, 2026)
 
 - **shagger `34e1f90`.**
