@@ -11,7 +11,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use shagger::rendering::camera::Camera;
-use shagger::rendering::glam::Vec3;
+use shagger::rendering::glam::{DVec3, Vec3};
 use shagger::rendering::gpu::Gpu;
 use shagger::rendering::hdr_target::HdrTarget;
 use shagger::rendering::offscreen::{begin_main_pass, begin_overlay_pass, begin_ui_pass};
@@ -19,6 +19,7 @@ use shagger::rendering::offscreen::{begin_main_pass, begin_overlay_pass, begin_u
 use shagger::rendering::wgpu;
 use shagger::weapon::weapon_view_manager::ViewModelInput;
 use washoi::client::fps_hud::FpsHud;
+use washoi::client::fps_movement_audio::play_jumppad_launch;
 use washoi::client::live_play::PlayInput;
 use winit::application::ApplicationHandler;
 use winit::dpi::PhysicalSize;
@@ -274,6 +275,11 @@ impl App {
                 self.grounded = p.grounded();
                 self.follow = None;
                 s.renderer.hold(p.weapon_in_hand());
+                if let Some(at) = p.take_jumppad_launch()
+                    && let Some(audio) = &mut self.audio
+                {
+                    play_jumppad_launch(&mut audio.sfx, DVec3::new(at.x, at.y, at.z), true);
+                }
             }
             let players = styled_players(view.players);
             s.renderer.set_live_players(&players, f64::from(dt));

@@ -76,7 +76,14 @@ impl SnapshotFeed {
         apply_roster(&mut self.teams, state, local_entity_id);
         self.roster = state.players.iter().map(|(k, p)| (k.to_owned(), p.clone())).collect();
         let entities = extract_entities(state, local_entity_id);
-        self.snapshots.push(entities.clone());
+        // The sounds hear every player, our own footsteps too
+        // (`processFPSMovementAudio` reads the whole state); only the
+        // drawing leaves our body out.
+        self.snapshots.push(if local_entity_id.is_empty() {
+            entities.clone()
+        } else {
+            extract_entities(state, "")
+        });
         self.buffer.push(now, state.tick, entities, None);
         for event in &state.events {
             match event {

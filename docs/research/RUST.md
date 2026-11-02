@@ -2582,6 +2582,21 @@ fit and did not count the parity harness.
 
 Newest first. Each entry names the commits and what proves them.
 
+### Milestone 8, sixth slice: our own sounds in play (November 2, 2026)
+
+- **wash-fps-rust.** A player's own footsteps, ladder rungs and jump
+  grunts: the feed's sound snapshots keep our entity (only the drawing
+  leaves it out), as `processFPSMovementAudio` reads the whole state, so
+  they play 2D at our ears. The jump pad's launch plays from prediction on
+  its rising edge (`LocalLiquid.emitLocalCrossing`). Our weapon fire was
+  already heard through the server's echo with our entity as the view's.
+- **Not needed yet.** `target_speaker` ambience and `func_rotating`: none
+  of the seven shipped maps has either entity. Liquid crossings and the
+  drowning gasp come with the water (milestone 11), since the crossing
+  sounds live in `LiquidInteractionSystem` beside the splashes.
+- **Proof.** `washoi lobby ... bot duel --window --audio-out` mixes six
+  seconds of a bot duel from our seat (peak 0.91).
+
 ### Milestone 9, sixth slice: the rest of the player's HUD (November 2, 2026)
 
 - **shagger `aa96611`.** `ui/hud/damage_overlay.rs` ports SHAG's

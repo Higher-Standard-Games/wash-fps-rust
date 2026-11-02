@@ -146,6 +146,7 @@ pub struct LivePlay {
     pub weapon: String,
     pub closed: Option<String>,
     spawn_facing: Rc<Cell<Option<f64>>>,
+    was_jumppad_launching: bool,
 }
 
 impl LivePlay {
@@ -200,6 +201,7 @@ impl LivePlay {
                         weapon: String::new(),
                         closed: None,
                         spawn_facing,
+                        was_jumppad_launching: false,
                     });
                 }
                 Some(SessionEvent::Host(HostEvent::Failed(why)) | SessionEvent::Closed(why)) => {
@@ -259,6 +261,16 @@ impl LivePlay {
             text: text.to_owned(),
             team_only,
         });
+    }
+
+    /// `LocalLiquid.emitLocalCrossing`'s jump pad: where to play the
+    /// launch, on the rising edge of the predicted launch, so it lands on
+    /// the frame the kick is felt rather than a round trip later.
+    pub fn take_jumppad_launch(&mut self) -> Option<Vec3> {
+        let launching = self.alive && self.predictor.movement_state().jumppad_launch;
+        let rising = launching && !self.was_jumppad_launching;
+        self.was_jumppad_launching = launching;
+        rising.then(|| self.predictor.position())
     }
 
     /// The weapon to draw in hand: none while dead or before the server
