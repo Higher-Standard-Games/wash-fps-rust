@@ -371,10 +371,8 @@ impl MapRenderer {
         } else {
             Vec::new()
         };
-        // The world keeps its lights off until its companion surfaces (normal
-        // and gloss maps, drawn as PBRMaterials in the browser) are ported:
-        // those take the lights through PBR's BRDF, not StandardMaterial's.
         self.models.set_dynamic_lights(&lights);
+        self.world.set_dynamic_lights(&lights);
         self.world.prepare(gpu, camera.view_projection(aspect), camera.position);
         self.frame_draws.clone_from(&self.model_draws);
         self.items.draws(

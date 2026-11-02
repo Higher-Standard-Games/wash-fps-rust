@@ -2580,6 +2580,40 @@ fit and did not count the parity harness.
 
 Newest first. Each entry names the commits and what proves them.
 
+### Milestone 6, seventeenth slice: companion surfaces and world lights (November 2, 2026)
+
+- **shagger.**
+  - `loader::bsp::mesh::tangents` ports `buildBspTangents` (Qfusion's
+    image-space frame), proved against V8 with a quad, a mirrored-UV and a
+    degenerate-UV triangle. Every world vertex carries its tangent.
+  - `world_materials` ports `loadOptionalTexture`'s candidates (an explicit
+    image, a blank, or the found base image with `_norm`/`_normal`/`_bump`
+    and `_gloss`/`_spec`), `shouldUseGeneratedPBR`, and the gloss
+    defaults (intensity 1.5, exponent 24, microsurface
+    `1 - sqrt(2 / (e + 2))`).
+  - `world.wgsl` draws a lightmapped pass's companions:
+    - the normal map through Babylon's bump include (`perturbNormal` on
+      the tangent frame);
+    - BspBakedLightingPlugin's baked gloss (`bspSpec`, Blinn-Phong on the
+      deluxe direction, gloss map times intensity);
+    - StandardMaterial's dynamic specular, with the gloss map as the
+      specular colour (`specularTexture` replaces `specularColor`, so the
+      intensity drops out there, as in Babylon);
+    - the generated specular-gloss PBR material: baked terms multiplied in
+      display space, dynamic lights through Lambert diffuse (EON at zero
+      diffuse roughness) and height-correlated Smith GGX, with the standard
+      linear falloff. Babylon's multiple-scattering energy factor needs the
+      environment BRDF lookup, and is left out.
+- **wash-fps-rust.** The world takes the dynamic lights.
+- **Parity** (`washoi_dm2`):
+  - Static views: the far corridor goes from 4.5 to 0.8 levels (it was the
+    "three levels darker" gap); the pickup view from about 11 to 8, the rest
+    being the browser's hidden health pickup and its red debris.
+  - `LIGHTS=1` held projectiles: from 4.3 to 0.2 levels.
+  - `LIGHTS=1` explosions: from about 7 to 4 levels.
+- **Next.** Glow maps (`glowTexture` emissive and the shine overlay), then
+  the remaining 21.10 items.
+
 ### Milestone 6, sixteenth slice: dynamic lights, models first (November 2, 2026)
 
 - **shagger.**
