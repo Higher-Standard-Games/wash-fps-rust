@@ -36,7 +36,7 @@ use shagger::rendering::world_renderer::{Rgba8Image, WorldRenderer};
 use shagger::shared::collision::shared_collision_world::SharedCollisionWorld;
 use shagger::shared::entities::projectile_def::ProjectileDef;
 use shagger::shared::spread_utils::mulberry32;
-use shagger::weapon::explosion::explosion_batch_renderer::ExplosionBatchRenderer;
+use shagger::weapon::explosion::explosion_batch_renderer::{ExplosionBatchRenderer, ExplosionLook};
 use shagger::weapon::explosion_effect::{explosion_flash, explosion_for};
 use shagger::weapon::impact::impact_spark_renderer::{ImpactSparkBurst, ImpactSparkRenderer};
 use shagger::weapon::muzzle::muzzle_flash_renderer::{MuzzleFlashRenderer, MuzzleFlashSpawn, MuzzleFlashStyle};
@@ -53,6 +53,7 @@ use washoi::client::demo_playback::{DemoPlayback, DemoView, LiveProjectile};
 use washoi::client::live_watch::LiveWatch;
 use washoi::client::weapon_view::WeaponViewModel;
 use washoi::shared::entities::definitions::projectiles::{PROJECTILES, projectile_def};
+use washoi::shared::net::snapshot_events::SnapshotEvent;
 
 use washoi::client::player_model_visual_settings::{PlayerTeamSlot, get_player_model_visual_style};
 use washoi::client::remote_player_renderer::{MODEL_SCALE, RemotePlayerRenderer};
@@ -400,6 +401,11 @@ pub struct MapRenderer {
     live_projectile_lights: HashMap<String, PooledLight>,
     /// The pool's clock for them.
     live_light_clock: f64,
+    /// The effects' clock (seconds) for a demo or match; held effects
+    /// (`--explosion` and the like) stay at 0.
+    pub effect_time: f64,
+    /// Explosion flashes from events: their lights, looks and start times.
+    live_flashes: Vec<(PooledLight, &'static ExplosionLook, f64)>,
     pub sky: Option<SkyRenderer>,
     pub culling: WorldCulling,
     /// Off draws every batch (`--no-cull`), for comparing.
@@ -505,6 +511,82 @@ impl MapRenderer {
         }
     }
 
+    /// Advances the effects' clock by `dt` and starts the effects of the
+    /// events that arrived (`GameEvents.ts`): a projectile's impact explodes
+    /// with its flash, an Electrobolt shot draws its rail.
+    pub fn play_effects(&mut self, events: &[SnapshotEvent], dt: f64) {
+        self.effect_time += dt;
+        let now = self.effect_time;
+        self.explosions.update(now);
+        for event in events {
+            match event {
+                SnapshotEvent::ProjectileImpact { def_id, at, normal } => {
+                    // Older demos name the weapon; anything else is a rocket.
+                    let projectile = match def_id.as_str() {
+                        "glauncher" => "grenade",
+                        "plasmagun" => "plasma_bolt",
+                        "rlauncher" => "rocket",
+                        other => other,
+                    };
+                    let look = explosion_for(projectile)
+                        .unwrap_or_else(|| explosion_for("rocket").expect("the rocket explodes"));
+                    let position = DVec3::new(at.x, at.y, at.z);
+                    let normal = DVec3::new(normal.x, normal.y, normal.z);
+                    let mut random = mulberry32(self.live_flashes.len() as u32 + now.to_bits() as u32);
+                    self.explosions.spawn(now, position, look, normal, &mut random);
+                    if let Some((intensity, range)) = explosion_flash(look, 0.0) {
+                        let light = self.lights.acquire(
+                            self.live_light_clock,
+                            position.as_vec3(),
+                            look.outer_color,
+                            intensity,
+                            range,
+                        );
+                        self.live_flashes.push((light, look, now));
+                    }
+                }
+                SnapshotEvent::Beam {
+                    electro_rail: true,
+                    origin,
+                    end,
+                    normal,
+                    impact_kind,
+                    ..
+                } => self.rails.fire_rail(
+                    now,
+                    &RailEffectSample {
+                        start: DVec3::new(origin.x, origin.y, origin.z),
+                        end: DVec3::new(end.x, end.y, end.z),
+                        // WEAPON_EFFECT_COLORS.electrobolt
+                        color: Vec3::new(0.3, 0.6, 1.0),
+                        impact_kind: match impact_kind {
+                            2 => RailImpactKind::Player,
+                            1 => RailImpactKind::World,
+                            _ => RailImpactKind::None,
+                        },
+                        impact_normal: Some(DVec3::new(normal.x, normal.y, normal.z)),
+                        intensity: None,
+                    },
+                    None,
+                ),
+                _ => {}
+            }
+        }
+        // Fade the flashes, and give back the ones that are out.
+        let lights = &mut self.lights;
+        self.live_flashes
+            .retain(|&(light, look, born)| match explosion_flash(look, now - born) {
+                Some((intensity, range)) => {
+                    lights.set_intensity_range(light, intensity, range);
+                    true
+                }
+                None => {
+                    lights.release(light);
+                    false
+                }
+            });
+    }
+
     pub fn prepare(&mut self, gpu: &Gpu, camera: &Camera, size: [f32; 2]) {
         let aspect = size[0] / size[1];
         self.culling.update(camera, aspect);
@@ -538,14 +620,14 @@ impl MapRenderer {
             &self.joints,
         );
         self.explosions
-            .prepare(gpu, camera.view_projection(aspect), camera.view(), 0.0);
+            .prepare(gpu, camera.view_projection(aspect), camera.view(), self.effect_time);
         let frame = EffectFrame {
             view_proj: camera.view_projection(aspect),
             view: camera.view(),
             projection: camera.projection(aspect),
             camera_position: camera.position,
             viewport: size,
-            time: 0.0,
+            time: self.effect_time,
         };
         self.tracers.prepare(gpu, &frame);
         self.muzzle_flashes.prepare(gpu, &frame);
@@ -874,6 +956,8 @@ pub fn build_renderer(gpu: &Gpu, map: &mut LoadedMap, output_format: wgpu::Textu
         live_projectile_models,
         live_projectile_lights: HashMap::new(),
         live_light_clock: 0.0,
+        effect_time: 0.0,
+        live_flashes: Vec::new(),
         sky,
         culling,
         cull: true,
@@ -989,6 +1073,15 @@ pub fn run(o: &ViewOptions) -> i32 {
             projectiles = view.projectiles;
             renderer.set_live_players(&players, 1.0 / 60.0);
             renderer.set_live_projectiles(&projectiles, 1.0 / 60.0);
+            renderer.play_effects(&view.effects, 1.0 / 60.0);
+            for event in &view.effects {
+                if let SnapshotEvent::ProjectileImpact { def_id, at, .. } = event {
+                    println!(
+                        "  {:.2} s: {def_id} hits at {:.0},{:.0},{:.0}",
+                        renderer.effect_time, at.x, at.z, at.y
+                    );
+                }
+            }
         }
         println!(
             "at {:.2} s: {} players, {} projectiles",

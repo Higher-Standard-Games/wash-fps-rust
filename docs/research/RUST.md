@@ -2580,6 +2580,22 @@ fit and did not count the parity harness.
 
 Newest first. Each entry names the commits and what proves them.
 
+### Milestone 7, third slice: impacts and rails (November 2, 2026)
+
+- **wash-fps-rust.** The snapshot feed passes on the events with an
+  effect, and `MapRenderer::play_effects` runs the effects' own clock and
+  starts them as `GameEvents.ts` does: `projectile_impact` explodes with
+  the projectile's look (older demos' weapon ids mapped, anything else a
+  rocket) and its flash light, faded by `explosion_flash` and given back
+  when out; `electro_rail` draws the Electrobolt rail in its effect colour
+  with the server's endpoint, normal and impact kind. Held effects
+  (`--explosion` and the like) keep the clock at 0 as before.
+- **Proof.** In the dm2 demo at 2.55 s, plasma bolts burst against the
+  far wall in green with their light, beside one still in flight.
+- **Not yet.** Hitscan tracers and muzzle flashes (`weapon_fire`, which
+  needs `handleRemoteWeaponFire`'s trace), the Voltaic beam and chain,
+  projectile trails, impact sparks, pickups and the HUD.
+
 ### Milestone 7, second slice: watching a live match (November 2, 2026)
 
 - **wash-fps-rust.**
