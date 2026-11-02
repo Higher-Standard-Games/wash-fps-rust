@@ -1,6 +1,7 @@
-//! wash-fps `client/GameEvents.ts`: what the snapshot events show. So far
-//! the effect colours and the shots of other players
-//! (`handleRemoteWeaponFire`, `handleVoltaicBeam`, `handleElectroRail`).
+//! wash-fps `client/GameEvents.ts`: what the snapshot events show and
+//! sound like. So far the effect colours, the shots of other players
+//! (`handleRemoteWeaponFire`, `handleVoltaicBeam`, `handleElectroRail`)
+//! and the combat and reload sounds (`FPSAudio.ts`'s preload with them).
 //!
 //! Not yet: a remote shooter's muzzle (their weapon is not drawn yet, so
 //! streaks start at the eye), the blade's slash animation, and the local
@@ -13,6 +14,14 @@ use shagger::weapon::hitscan_effects::{
 use shagger::weapon::point_light_pool::PointLightPool;
 use shagger::weapon::rail::rail_profiles::{RailEffectSample, RailImpactKind};
 
+use std::collections::HashMap;
+
+use shagger::audio::audio_v2_sfx::AudioV2Sfx;
+use shagger::loader::pk3::pk3_loader::Pk3Loader;
+
+use crate::client::fps_combat_audio::{FpsCombatAudio, fps_combat_sound_paths};
+use crate::client::fps_player_audio::player_voice_for_entity;
+use crate::client::fps_reload_audio::FpsReloadAudio;
 use crate::shared::net::snapshot_events::{Point, SnapshotEvent};
 
 /// `WEAPON_EFFECT_COLORS`.
@@ -199,6 +208,111 @@ pub fn handle_remote_weapon_fire(
                     intensity: None,
                 },
             );
+        }
+    }
+}
+
+/// The sounds of the match: the mixer and the players' audio state.
+pub struct GameAudio {
+    pub sfx: AudioV2Sfx,
+    combat: FpsCombatAudio,
+    reload: FpsReloadAudio,
+}
+
+impl GameAudio {
+    #[must_use]
+    pub fn new(sfx: AudioV2Sfx) -> Self {
+        Self {
+            sfx,
+            combat: FpsCombatAudio::default(),
+            reload: FpsReloadAudio::default(),
+        }
+    }
+
+    /// `preloadFPSAudio`, the combat bank so far, from the packages.
+    /// Returns how many sounds are loaded.
+    pub fn preload(&mut self, pk3: &mut Pk3Loader) -> usize {
+        let paths = fps_combat_sound_paths();
+        self.sfx.preload(paths.iter().map(String::as_str), |p| pk3.get_file(p))
+    }
+
+    /// The sounds of one snapshot's events, heard from the player on
+    /// screen (`view_entity_id`, none for a free camera). `teams` is the
+    /// roster, `position` where an entity stands, `now` in ms.
+    pub fn play_event_sounds(
+        &mut self,
+        events: &[SnapshotEvent],
+        view_entity_id: Option<&str>,
+        teams: &HashMap<String, String>,
+        position: &dyn Fn(&str) -> Option<DVec3>,
+        now: f64,
+    ) {
+        let viewed = |id: &str| Some(id) == view_entity_id;
+        for event in events {
+            match event {
+                SnapshotEvent::WeaponState {
+                    entity_id,
+                    current_weapon,
+                    reloading,
+                    ..
+                } => self.reload.observe(
+                    &mut self.sfx,
+                    entity_id,
+                    current_weapon,
+                    *reloading,
+                    viewed(entity_id),
+                    position(entity_id),
+                ),
+                SnapshotEvent::WeaponFire {
+                    entity_id,
+                    weapon_id,
+                    origin,
+                    ..
+                } => self
+                    .combat
+                    .play_weapon_fire_sound(&mut self.sfx, weapon_id, vec(origin), viewed(entity_id)),
+                SnapshotEvent::ProjectileImpact { def_id, at, .. } => {
+                    self.combat.play_projectile_impact_sound(&mut self.sfx, def_id, vec(at));
+                }
+                SnapshotEvent::Damage {
+                    entity_id,
+                    attacker_id,
+                    damage,
+                    at,
+                    pain_tier,
+                    ..
+                } => {
+                    let voice = player_voice_for_entity(teams, entity_id, view_entity_id);
+                    self.combat.play_player_pain_sound(
+                        &mut self.sfx,
+                        entity_id,
+                        *damage,
+                        *pain_tier,
+                        vec(at),
+                        viewed(entity_id),
+                        voice,
+                        now,
+                    );
+                    // handleOutgoingDamage: hurting yourself is not a hit.
+                    if viewed(attacker_id) && attacker_id != entity_id {
+                        FpsCombatAudio::play_damage_confirmation_sound(&mut self.sfx, *damage);
+                    }
+                }
+                SnapshotEvent::Death {
+                    entity_id,
+                    killer_id,
+                    at,
+                    ..
+                } => {
+                    let victim = viewed(entity_id);
+                    let voice = player_voice_for_entity(teams, entity_id, view_entity_id);
+                    FpsCombatAudio::play_player_death_sound(&mut self.sfx, entity_id, vec(at), victim, voice);
+                    if viewed(killer_id) && !victim {
+                        FpsCombatAudio::play_kill_echo(&mut self.sfx);
+                    }
+                }
+                _ => {}
+            }
         }
     }
 }

@@ -52,3 +52,31 @@ pub fn get_player_model_visual_style(slot: PlayerTeamSlot, model_scale: f32) -> 
         outline_width: outline_size / (model_scale * 16.0).max(1.0),
     }
 }
+
+/// `getPlayerTeamSlot`: a player's colour side seen from `local_team`.
+#[must_use]
+pub fn get_player_team_slot(team_id: Option<&str>, local_team_id: Option<&str>) -> PlayerTeamSlot {
+    let them = team_id.and_then(canonical_team);
+    let me = local_team_id.and_then(canonical_team);
+    match (me, them) {
+        (Some(me), Some(them)) if me != "spectator" && them != "spectator" => {
+            if them == me {
+                PlayerTeamSlot::Ally
+            } else {
+                PlayerTeamSlot::Enemy
+            }
+        }
+        _ => PlayerTeamSlot::Ffa,
+    }
+}
+
+/// `canonicalTeam`: the lobby's and the BSP's team names folded onto the
+/// match's two.
+fn canonical_team(team_id: &str) -> Option<&'static str> {
+    match team_id.trim().to_lowercase().as_str() {
+        "udon" | "bravo" => Some("udon"),
+        "soba" | "alpha" | "beta" => Some("soba"),
+        "spectator" => Some("spectator"),
+        _ => None,
+    }
+}

@@ -27,13 +27,15 @@ pub struct LiveProjectile {
 pub struct DemoView {
     pub players: Vec<(String, InterpolatedEntity)>,
     pub projectiles: Vec<LiveProjectile>,
-    /// The events with an effect to draw (`projectile_impact`,
-    /// `weapon_fire`, `voltaic_beam`, `electro_rail`) that arrived since the
-    /// last frame.
+    /// The events with an effect to draw or a sound to play
+    /// (`projectile_impact`, `weapon_fire`, `voltaic_beam`, `electro_rail`,
+    /// `damage`, `death`, `weapon_state`) that arrived since the last frame.
     pub effects: Vec<SnapshotEvent>,
     /// Each player's weapon in hand, from `weapon_state` events
     /// (`enemyWeapons`).
     pub weapons: HashMap<String, String>,
+    /// Each player's team from the roster.
+    pub teams: HashMap<String, String>,
 }
 
 /// The two buffers and what the snapshots told them.
@@ -70,7 +72,9 @@ impl SnapshotFeed {
                 }
                 SnapshotEvent::ProjectileImpact { .. }
                 | SnapshotEvent::Beam { .. }
-                | SnapshotEvent::WeaponFire { .. } => {
+                | SnapshotEvent::WeaponFire { .. }
+                | SnapshotEvent::Damage { .. }
+                | SnapshotEvent::Death { .. } => {
                     self.effects.push(event.clone());
                 }
                 SnapshotEvent::WeaponState {
@@ -79,6 +83,7 @@ impl SnapshotFeed {
                     ..
                 } => {
                     self.weapons.insert(entity_id.clone(), current_weapon.clone());
+                    self.effects.push(event.clone());
                 }
                 _ => {}
             }
@@ -107,6 +112,7 @@ impl SnapshotFeed {
             projectiles,
             effects: std::mem::take(&mut self.effects),
             weapons: self.weapons.clone(),
+            teams: self.teams.clone(),
         }
     }
 }

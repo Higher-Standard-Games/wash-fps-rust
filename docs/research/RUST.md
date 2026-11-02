@@ -1915,8 +1915,9 @@ the same `r_ktx2` cvar, defaulting to 0 natively until it is measured.
 - **MD3:** items and projectiles (`MD3Loader.ts`, 743 lines, plus
   `TagsLoader.ts`). It is a small fixed-layout format, and is translated by
   hand like the BSP.
-- **Sounds:** OGG Vorbis and WAV only, so `symphonia` with its `ogg`,
-  `vorbis` and `wav` features covers them. The `mp3` feature can be left out.
+- **Sounds:** OGG Vorbis and WAV only. Milestone 8 decodes them with
+  `lewton` (MIT or Apache-2.0) and a small WAV reader instead of
+  `symphonia`, which is MPL-2.0 and outside the license allow list.
 
 ### 20.8 Crates and module layout for assets
 
@@ -2416,7 +2417,7 @@ distance gain (inverse):  g = ref / (ref + rolloff × (max(d, ref) − ref))
 equal-power pan, mono source:
     azimuth a in degrees, from the listener's frame, folded to the front
     (a > 90 → 180 − a,  a < −90 → −180 − a)
-    x = (a + 90) / 90
+    x = (a + 90) / 180          (stereo: (a + 90) / 90 for a ≤ 0, else a / 90)
     left = cos(x·π/2),  right = sin(x·π/2)
 ```
 
@@ -2517,8 +2518,9 @@ own bus. That also gives music the 10 ms parameter smoothing for free.
 The mixer, `shagger::audio`:
 
 ```text
-decode     symphonia (ogg, vorbis, wav features) → f32 PCM, resampled once
-           to the device rate with rubato, cached per path like getBuffer()
+decode     lewton (Vorbis) and an own WAV reader → f32 PCM, resampled once
+           to the device rate (linear for now; rubato or a sinc later),
+           cached per path like getBuffer()
 mixer      runs on cpal's audio thread; no allocation, no locks on that thread
            voices: one-shot | loop | stream, each with gain, bus, optional
            position, slot, and end time
@@ -2579,6 +2581,40 @@ fit and did not count the parity harness.
 ## 23. Progress log
 
 Newest first. Each entry names the commits and what proves them.
+
+### Milestone 8, first slice: the mixer and the combat sounds (November 2, 2026)
+
+- **shagger 50f95dd.** `shagger::audio` as 22.7 plans it: `spatial.rs` (the
+  inverse distance model and equal-power panning from the Web Audio spec,
+  with Babylon's right-handed listener forward), `mixer.rs` (the sfx bus,
+  its four channels and music, 10 ms linear gain ramps, 128-frame quanta,
+  and the voice rules of 22.5), `decode.rs`, `device.rs` (cpal, fed through
+  an rtrb queue, so the audio thread neither locks nor allocates) and
+  `audio_v2_sfx.rs` (`AudioV2Sfx`: `play_2d`, `play_3d`, `play_loop_3d`,
+  volumes, mute and listener, to the sound card or an offline mixer).
+  CI installs `libasound2-dev`; the MSRV job builds again.
+- **Decisions.** `lewton` replaces `symphonia` (MPL-2.0); resampling is
+  linear until the parity harness says it matters. Sounds play only once
+  preloaded, as the combat bank is in SHAG. 22.2's mono pan formula is
+  corrected to the spec's `(a + 90) / 180`.
+- **wash-fps-rust.** `FPSCombatAudio.ts`, `FPSPlayerAudio.ts` (voice sets
+  at the cvars' defaults, `playerVoiceForEntity`) and `FPSReloadAudio.ts`,
+  plus `getPlayerTeamSlot`. `GameAudio` in `client/game_events.rs` plays a
+  snapshot's `weapon_fire`, `projectile_impact`, `damage` (pain, and the
+  hit confirmation for the viewed attacker), `death` (and the kill echo)
+  and `weapon_state` (reload) as `GameEvents.ts` does, heard from the
+  followed player. The window plays a demo's or match's sound on the
+  sound card; `washoi demo ... --screenshot X --audio-out Y.wav` mixes it
+  offline.
+- **Proof.** Mixer tests: half volume where each attenuation class says,
+  left and right for a left-handed camera, the 10 ms ramp, the 48-voice
+  cap cutting the nearest end, slots, `maxInstances`. The dm2 demo's first
+  20 s render to a WAV in 3.7 s with all 50 combat sounds loaded; from a
+  free camera the channels differ (panning), following a Voltaic player
+  their own fire plays 2D.
+- **Not yet.** The browser parity harness of 22.8, music and playlists,
+  the movement, pickup, powerup, liquid, bomb and announcer modules, map
+  ambient speakers, cvars, and the local player's own sounds in `--play`.
 
 ### Milestone 7, fourth slice: other players' shots (November 2, 2026)
 

@@ -5,7 +5,7 @@
 //!
 //! ```text
 //! washoi view <map> [--data DIR] [--spawn N] [--screenshot FILE.png] [--size WxH] [--time T] [--at X,Y,Z,YAW] [--pitch DEG] [--player X,Y,Z,YAW[,CLIP[,FRAME]]]... [--projectile ID,X,Y,Z,YAW[,PITCH]]... [--explosion ID,X,Y,Z,AGE]... [--tracer X,Y,Z,X2,Y2,Z2,R,G,B,AGE]... [--muzzle X,Y,Z,R,G,B,STYLE,SCALE,DURATION,AGE]... [--impact X,Y,Z,NX,NY,NZ,IX,IY,IZ,R,G,B,HEAVY,AGE]... [--rail X,Y,Z,X2,Y2,Z2,R,G,B,KIND,NX,NY,NZ,AGE]... [--lightning MODE,X,Y,Z,X2,Y2,Z2,R,G,B,KIND,AGE]... [--weapon ID [--aim]] [--no-cull] [--no-lights] [--seconds N]
-//! washoi demo <file.shagdemo> [--data DIR] [--screenshot FILE.png] [--size WxH] [--time T] [--at X,Y,Z,YAW] [--pitch DEG] [--follow N] [--seconds N]
+//! washoi demo <file.shagdemo> [--data DIR] [--screenshot FILE.png] [--size WxH] [--time T] [--at X,Y,Z,YAW] [--pitch DEG] [--follow N] [--audio-out FILE.wav] [--seconds N]
 //! washoi watch <ws://game-server> [--name NAME] [--ticket TICKET] [--data DIR] [--screenshot FILE.png] [--time T] [--at X,Y,Z,YAW] [--follow N] [--seconds N]
 //! washoi connect <ws://game-server> [--name NAME] [--ticket TICKET] [--seconds N] [--play]
 //! washoi lobby <ws://lobby> [--key-file FILE] list
@@ -24,7 +24,9 @@
 //! animate and turn as recorded.
 //!
 //! `--follow N` puts the camera behind the Nth player (by id); in the
-//! window F cycles through the players and back to the free camera.
+//! window F cycles through the players and back to the free camera. The
+//! window plays the match's sound on the sound card; with `--screenshot`,
+//! `--audio-out` mixes it offline into a WAV, heard from the camera.
 //!
 //! `watch` spectates a live match the same way: the window opens on the
 //! server's map and draws its players and projectiles as snapshots arrive.
@@ -76,7 +78,7 @@ fn usage() -> ! {
     eprintln!(
         "washoi {}\n\
          usage: washoi view <map> [--data DIR] [--spawn N] [--screenshot FILE.png] [--size WxH] [--time T] [--at X,Y,Z,YAW] [--pitch DEG] [--player X,Y,Z,YAW[,CLIP[,FRAME]]]... [--projectile ID,X,Y,Z,YAW[,PITCH]]... [--explosion ID,X,Y,Z,AGE]... [--weapon ID [--aim]] [--no-cull] [--no-lights] [--seconds N]\n\
-         \x20      washoi demo <file.shagdemo> [--data DIR] [--screenshot FILE.png] [--size WxH] [--time T] [--at X,Y,Z,YAW] [--pitch DEG] [--follow N] [--seconds N]\n\
+         \x20      washoi demo <file.shagdemo> [--data DIR] [--screenshot FILE.png] [--size WxH] [--time T] [--at X,Y,Z,YAW] [--pitch DEG] [--follow N] [--audio-out FILE.wav] [--seconds N]\n\
          \x20      washoi watch <ws://game-server> [--name NAME] [--ticket TICKET] [--data DIR] [--screenshot FILE.png] [--time T] [--at X,Y,Z,YAW] [--follow N] [--seconds N]\n\
          \x20      washoi connect <ws://game-server> [--name NAME] [--ticket TICKET] [--seconds N] [--play]\n\
          \x20      washoi lobby <ws://lobby> [--key-file FILE] list\n\
@@ -108,6 +110,7 @@ struct Options {
     weapon: Option<String>,
     aim: bool,
     follow: Option<usize>,
+    audio_out: Option<PathBuf>,
     players: Vec<view::PlayerView>,
     projectiles: Vec<view::ProjectileView>,
     explosions: Vec<view::ExplosionView>,
@@ -137,6 +140,7 @@ fn parse_options(args: impl Iterator<Item = String>) -> Options {
             "--weapon" => o.weapon = Some(value()),
             "--aim" => o.aim = true,
             "--follow" => o.follow = Some(value().parse().unwrap_or_else(|_| usage())),
+            "--audio-out" => o.audio_out = Some(PathBuf::from(value())),
             "--player" => {
                 let v = value();
                 let parts: Vec<&str> = v.split(',').map(str::trim).collect();
@@ -316,6 +320,7 @@ fn main() {
                 demo,
                 watch,
                 follow: o.follow,
+                audio_out: o.audio_out.clone(),
             })
         }
         _ => usage(),

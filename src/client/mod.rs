@@ -2,6 +2,9 @@
 //! local first-person weapon so far).
 
 pub mod demo_playback;
+pub mod fps_combat_audio;
+pub mod fps_player_audio;
+pub mod fps_reload_audio;
 pub mod game_events;
 pub mod input_history;
 pub mod live_watch;

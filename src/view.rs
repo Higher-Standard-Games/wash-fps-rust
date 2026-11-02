@@ -7,6 +7,7 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
 use shagger::animation::player_model_manager::PlayerModelVisualStyle;
+use shagger::audio::audio_v2_sfx::AudioV2Sfx;
 use shagger::babylon::post_processes::image_processing_post_process::{
     ImageProcessingConfiguration, ImageProcessingPostProcess, Vignette, VignetteBlendMode,
 };
@@ -49,7 +50,7 @@ use shagger::weapon::rail::rail_profiles::{RailEffectSample, RailImpactKind};
 use shagger::weapon::tracer::streak_tracer_renderer::StreakTracerShot;
 use shagger::weapon::weapon_view_manager::ViewModelInput;
 use washoi::client::demo_playback::{DemoPlayback, DemoView, LiveProjectile};
-use washoi::client::game_events::{EffectTargets, play_remote_shots};
+use washoi::client::game_events::{EffectTargets, GameAudio, play_remote_shots};
 use washoi::client::live_watch::LiveWatch;
 use washoi::client::weapon_view::WeaponViewModel;
 use washoi::shared::entities::definitions::projectiles::{PROJECTILES, projectile_def};
@@ -78,6 +79,32 @@ pub const CLEAR: wgpu::Color = wgpu::Color {
     b: 0.18,
     a: 1.0,
 };
+
+/// `--audio-out`'s rate.
+const AUDIO_OUT_RATE: u32 = 48_000;
+
+/// Interleaved stereo f32 as a 16-bit PCM WAV.
+fn write_wav(path: &Path, rate: u32, pcm: &[f32]) -> std::io::Result<()> {
+    let data: Vec<u8> = pcm
+        .iter()
+        .flat_map(|s| ((s.clamp(-1.0, 1.0) * 32767.0) as i16).to_le_bytes())
+        .collect();
+    let mut out = Vec::with_capacity(44 + data.len());
+    out.extend_from_slice(b"RIFF");
+    out.extend_from_slice(&(36 + data.len() as u32).to_le_bytes());
+    out.extend_from_slice(b"WAVEfmt ");
+    out.extend_from_slice(&16u32.to_le_bytes());
+    out.extend_from_slice(&1u16.to_le_bytes());
+    out.extend_from_slice(&2u16.to_le_bytes());
+    out.extend_from_slice(&rate.to_le_bytes());
+    out.extend_from_slice(&(rate * 4).to_le_bytes());
+    out.extend_from_slice(&4u16.to_le_bytes());
+    out.extend_from_slice(&16u16.to_le_bytes());
+    out.extend_from_slice(b"data");
+    out.extend_from_slice(&(data.len() as u32).to_le_bytes());
+    out.extend_from_slice(&data);
+    std::fs::write(path, out)
+}
 
 pub struct ViewOptions {
     pub seconds: Option<f64>,
@@ -111,6 +138,9 @@ pub struct ViewOptions {
     pub watch: Option<(String, String, Option<String>)>,
     /// The player (by place in id order) to put the camera behind.
     pub follow: Option<usize>,
+    /// Where to write the demo's or match's sound (`--audio-out`), mixed
+    /// offline as heard from the camera.
+    pub audio_out: Option<PathBuf>,
 }
 
 /// A chase camera behind a player: 150 units back and 40 up along the
@@ -122,6 +152,30 @@ pub fn chase_camera(camera: &mut Camera, player: &InterpolatedEntity) {
     camera.position = at - forward * 150.0 + Vec3::Y * 40.0;
     camera.yaw = yaw;
     camera.pitch = 0.15;
+}
+
+/// The sounds of a frame's events, heard at `camera` from the followed
+/// player (if any), at `now` seconds.
+pub fn play_view_sounds(
+    audio: &mut GameAudio,
+    camera: &Camera,
+    effects: &[SnapshotEvent],
+    teams: &HashMap<String, String>,
+    players: &[(String, InterpolatedEntity, PlayerModelVisualStyle)],
+    follow: Option<usize>,
+    now: f64,
+) {
+    audio
+        .sfx
+        .set_listener(camera.position.as_dvec3(), camera.forward().as_dvec3(), DVec3::Y);
+    let view_entity = follow.and_then(|i| players.get(i)).map(|(id, _, _)| id.as_str());
+    let position = |id: &str| {
+        players
+            .iter()
+            .find(|(p, _, _)| p == id)
+            .map(|(_, e, _)| DVec3::new(e.x, e.y, e.z))
+    };
+    audio.play_event_sounds(effects, view_entity, teams, &position, now * 1000.0);
 }
 
 /// Where the moving players and projectiles come from.
@@ -1069,7 +1123,22 @@ pub fn run(o: &ViewOptions) -> i32 {
         o.spawn.min(map.spawns.len() - 1)
     );
     let Some(path) = &o.screenshot else {
-        return crate::window::run(map, camera, o.seconds, feed, o.follow);
+        let audio = feed.as_ref().and_then(|_| match AudioV2Sfx::open_device() {
+            Ok(sfx) => {
+                let mut audio = GameAudio::new(sfx);
+                println!(
+                    "audio: {} sounds at {} Hz",
+                    audio.preload(&mut map.pk3),
+                    audio.sfx.sample_rate()
+                );
+                Some(audio)
+            }
+            Err(why) => {
+                println!("no audio: {why}");
+                None
+            }
+        });
+        return crate::window::run(map, camera, o.seconds, feed, o.follow, audio);
     };
     let gpu = match Gpu::headless() {
         Ok(g) => g,
@@ -1091,6 +1160,13 @@ pub fn run(o: &ViewOptions) -> i32 {
         let mut players = Vec::new();
         let mut projectiles = Vec::new();
         let live = matches!(feed, Feed::Live(_));
+        // Offline sound at 48 kHz, 800 frames a step.
+        let mut audio = o.audio_out.as_ref().map(|_| {
+            let mut audio = GameAudio::new(AudioV2Sfx::offline(AUDIO_OUT_RATE));
+            println!("audio: {} sounds", audio.preload(&mut map.pk3));
+            audio
+        });
+        let mut pcm: Vec<f32> = Vec::new();
         for _ in 0..steps.max(1) {
             if live {
                 std::thread::sleep(std::time::Duration::from_micros(16_667));
@@ -1101,6 +1177,24 @@ pub fn run(o: &ViewOptions) -> i32 {
             renderer.set_live_players(&players, 1.0 / 60.0);
             renderer.set_live_projectiles(&projectiles, 1.0 / 60.0);
             renderer.play_effects(&view.effects, &view.weapons, 1.0 / 60.0);
+            if let Some(audio) = &mut audio {
+                let mut ear = camera;
+                if let Some((_, p, _)) = o.follow.and_then(|i| players.get(i)) {
+                    chase_camera(&mut ear, p);
+                }
+                play_view_sounds(
+                    audio,
+                    &ear,
+                    &view.effects,
+                    &view.teams,
+                    &players,
+                    o.follow,
+                    renderer.effect_time,
+                );
+                let start = pcm.len();
+                pcm.resize(start + 2 * AUDIO_OUT_RATE as usize / 60, 0.0);
+                audio.sfx.render(&mut pcm[start..]);
+            }
             for event in &view.effects {
                 match event {
                     SnapshotEvent::ProjectileImpact { def_id, at, .. } => println!(
@@ -1130,6 +1224,17 @@ pub fn run(o: &ViewOptions) -> i32 {
         );
         if let Some(why) = feed.ended() {
             println!("  ({why})");
+        }
+        if let Some(out) = &o.audio_out {
+            let peak = pcm.iter().fold(0.0f32, |m, s| m.max(s.abs()));
+            match write_wav(out, AUDIO_OUT_RATE, &pcm) {
+                Ok(()) => println!(
+                    "wrote {} ({:.2} s of sound, peak {peak:.2})",
+                    out.display(),
+                    pcm.len() as f64 / 2.0 / f64::from(AUDIO_OUT_RATE)
+                ),
+                Err(why) => eprintln!("{}: {why}", out.display()),
+            }
         }
         if let Feed::Live(l) = feed {
             println!("  {} snapshots", l.snapshots);

@@ -172,6 +172,18 @@ pub fn weapon_speed_bonus(id: &str) -> f64 {
     }
 }
 
+/// `WEAPONS[id]?.reloadModel`: `clip` guns reload a magazine, `pool` ones
+/// draw from their ammo, the blade never reloads.
+#[must_use]
+pub fn weapon_reload_model(id: &str) -> Option<&'static str> {
+    match id {
+        "machinegun" | "plasmagun" | "riotgun" | "voltaic" => Some("clip"),
+        "electrobolt" | "glauncher" | "rlauncher" => Some("pool"),
+        "blade" => Some("none"),
+        _ => None,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

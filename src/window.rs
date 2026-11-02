@@ -24,7 +24,10 @@ use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop};
 use winit::keyboard::{KeyCode, PhysicalKey};
 use winit::window::{CursorGrabMode, Window, WindowId};
 
-use crate::view::{CLEAR, Feed, LoadedMap, MapRenderer, build_renderer, chase_camera, styled_players};
+use crate::view::{
+    CLEAR, Feed, LoadedMap, MapRenderer, build_renderer, chase_camera, play_view_sounds, styled_players,
+};
+use washoi::client::game_events::GameAudio;
 
 /// Units per second (Q3's run speed is 320).
 const SPEED: f32 = 320.0;
@@ -61,6 +64,8 @@ struct App {
     feed: Option<Feed>,
     /// The player the camera chases (F cycles), by place in id order.
     follow: Option<usize>,
+    /// The match's sound, when there is a sound card.
+    audio: Option<GameAudio>,
 }
 
 impl App {
@@ -159,6 +164,17 @@ impl App {
             }
             s.renderer.set_live_projectiles(&view.projectiles, f64::from(dt));
             s.renderer.play_effects(&view.effects, &view.weapons, f64::from(dt));
+            if let Some(audio) = &mut self.audio {
+                play_view_sounds(
+                    audio,
+                    &self.camera,
+                    &view.effects,
+                    &view.teams,
+                    &players,
+                    self.follow,
+                    s.renderer.effect_time,
+                );
+            }
             if let Some(why) = feed.ended() {
                 // Hold the last frame; the title says so.
                 s.window.set_title(&format!("Washoi ({why})"));
@@ -304,7 +320,14 @@ impl ApplicationHandler for App {
 }
 
 /// Opens the window and runs until it closes.
-pub fn run(map: LoadedMap, camera: Camera, seconds: Option<f64>, feed: Option<Feed>, follow: Option<usize>) -> i32 {
+pub fn run(
+    map: LoadedMap,
+    camera: Camera,
+    seconds: Option<f64>,
+    feed: Option<Feed>,
+    follow: Option<usize>,
+    audio: Option<GameAudio>,
+) -> i32 {
     let event_loop = match EventLoop::new() {
         Ok(l) => l,
         Err(e) => {
@@ -329,6 +352,7 @@ pub fn run(map: LoadedMap, camera: Camera, seconds: Option<f64>, feed: Option<Fe
         bob_cycle: 0.0,
         feed,
         follow,
+        audio,
     };
     if let Err(e) = event_loop.run_app(&mut app) {
         eprintln!("event loop: {e}");
