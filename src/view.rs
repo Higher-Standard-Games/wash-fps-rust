@@ -49,7 +49,8 @@ use shagger::weapon::rail::rail_profiles::{RailEffectSample, RailImpactKind};
 use shagger::weapon::tracer::streak_tracer_renderer::{StreakTracerRenderer, StreakTracerShot};
 use shagger::weapon::voltaic::voltaic_effect_renderer::VoltaicEffectRenderer;
 use shagger::weapon::weapon_view_manager::ViewModelInput;
-use washoi::client::demo_playback::{DemoPlayback, LiveProjectile};
+use washoi::client::demo_playback::{DemoPlayback, DemoView, LiveProjectile};
+use washoi::client::live_watch::LiveWatch;
 use washoi::client::weapon_view::WeaponViewModel;
 use washoi::shared::entities::definitions::projectiles::{PROJECTILES, projectile_def};
 
@@ -105,6 +106,45 @@ pub struct ViewOptions {
     pub aim: bool,
     /// A demo to play on its map (`washoi demo`); `time` seeks it.
     pub demo: Option<PathBuf>,
+    /// A live match to spectate (`washoi watch`): server, name, ticket.
+    pub watch: Option<(String, String, Option<String>)>,
+    /// The player (by place in id order) to put the camera behind.
+    pub follow: Option<usize>,
+}
+
+/// A chase camera behind a player: 150 units back and 40 up along the
+/// player's yaw, looking slightly down.
+pub fn chase_camera(camera: &mut Camera, player: &InterpolatedEntity) {
+    let yaw = player.yaw as f32;
+    let forward = Vec3::new(yaw.sin(), 0.0, yaw.cos());
+    let at = Vec3::new(player.x as f32, player.y as f32, player.z as f32);
+    camera.position = at - forward * 150.0 + Vec3::Y * 40.0;
+    camera.yaw = yaw;
+    camera.pitch = 0.15;
+}
+
+/// Where the moving players and projectiles come from.
+pub enum Feed {
+    Demo(DemoPlayback),
+    Live(LiveWatch),
+}
+
+impl Feed {
+    /// The next frame, `dt` seconds on (a live match keeps its own clock).
+    pub fn advance(&mut self, dt: f64) -> DemoView {
+        match self {
+            Self::Demo(d) => d.advance(dt),
+            Self::Live(l) => l.advance(),
+        }
+    }
+
+    /// Why the feed has nothing more to show, once it has not.
+    pub fn ended(&self) -> Option<String> {
+        match self {
+            Self::Demo(d) => d.finished().then(|| "demo ended".to_owned()),
+            Self::Live(l) => l.closed.clone(),
+        }
+    }
 }
 
 /// An explosion held at an age (`--explosion`).
@@ -857,8 +897,8 @@ pub fn styled_players(
 }
 
 pub fn run(o: &ViewOptions) -> i32 {
-    let mut demo = match &o.demo {
-        Some(path) => match DemoPlayback::load(path) {
+    let mut feed = if let Some(path) = &o.demo {
+        match DemoPlayback::load(path) {
             Ok(d) => {
                 println!(
                     "demo: {} on {}, {} frames, {:.0} s, {} players",
@@ -868,19 +908,30 @@ pub fn run(o: &ViewOptions) -> i32 {
                     d.duration(),
                     d.header.players.len()
                 );
-                Some(d)
+                Some(Feed::Demo(d))
             }
             Err(why) => {
                 eprintln!("{why}");
                 return 1;
             }
-        },
-        None => None,
+        }
+    } else if let Some((url, name, ticket)) = &o.watch {
+        println!("connecting to {url} as {name}");
+        match LiveWatch::connect(url, name, ticket.clone(), std::time::Duration::from_secs(15)) {
+            Ok(l) => Some(Feed::Live(l)),
+            Err(why) => {
+                eprintln!("{why}");
+                return 1;
+            }
+        }
+    } else {
+        None
     };
-    let map_name = demo
-        .as_ref()
-        .map_or(o.map.as_str(), |d| d.header.map.as_str())
-        .to_owned();
+    let map_name = match &feed {
+        Some(Feed::Demo(d)) => d.header.map.clone(),
+        Some(Feed::Live(l)) => l.map.clone(),
+        None => o.map.clone(),
+    };
     let mut map = match load_map(&o.data, &map_name) {
         Ok(m) => m,
         Err(why) => {
@@ -893,7 +944,7 @@ pub fn run(o: &ViewOptions) -> i32 {
     map.explosions.clone_from(&o.explosions);
     map.effects.clone_from(&o.effects);
     map.weapon.clone_from(&o.weapon);
-    map.remote_players = demo.is_some();
+    map.remote_players = feed.is_some();
     let at = o.at.map(|[x, y, z, angle]| Camera::from_q3([x, y, z], angle));
     let Some(mut camera) = at.or_else(|| map.spawns.get(o.spawn).or(map.spawns.first()).copied()) else {
         eprintln!("{} has no spawn point", map_name);
@@ -907,7 +958,7 @@ pub fn run(o: &ViewOptions) -> i32 {
         o.spawn.min(map.spawns.len() - 1)
     );
     let Some(path) = &o.screenshot else {
-        return crate::window::run(map, camera, o.seconds, demo);
+        return crate::window::run(map, camera, o.seconds, feed, o.follow);
     };
     let gpu = match Gpu::headless() {
         Ok(g) => g,
@@ -923,24 +974,43 @@ pub fn run(o: &ViewOptions) -> i32 {
     // Shader animation as it stands `--time` seconds after the map loads.
     renderer.world.animate(&gpu, o.time);
     renderer.item_time = o.time;
-    if let Some(demo) = &mut demo {
-        // Play the demo up to `--time` at 60 frames a second.
+    if let Some(feed) = &mut feed {
+        // Play up to `--time` at 60 frames a second (live: in real time).
         let steps = (o.time * 60.0).round() as usize;
         let mut players = Vec::new();
         let mut projectiles = Vec::new();
+        let live = matches!(feed, Feed::Live(_));
         for _ in 0..steps.max(1) {
-            let view = demo.advance(1.0 / 60.0);
+            if live {
+                std::thread::sleep(std::time::Duration::from_micros(16_667));
+            }
+            let view = feed.advance(1.0 / 60.0);
             players = styled_players(view.players);
             projectiles = view.projectiles;
             renderer.set_live_players(&players, 1.0 / 60.0);
             renderer.set_live_projectiles(&projectiles, 1.0 / 60.0);
         }
         println!(
-            "demo at {:.2} s: {} players, {} projectiles",
-            demo.time(),
+            "at {:.2} s: {} players, {} projectiles",
+            o.time,
             players.len(),
             projectiles.len()
         );
+        if let Some(why) = feed.ended() {
+            println!("  ({why})");
+        }
+        if let Feed::Live(l) = feed {
+            println!("  {} snapshots", l.snapshots);
+        }
+        if let Some(i) = o.follow {
+            match players.get(i) {
+                Some((id, p, _)) => {
+                    chase_camera(&mut camera, p);
+                    println!("  following {id}");
+                }
+                None => println!("  no player {i} to follow"),
+            }
+        }
         for p in &projectiles {
             let [x, y, z] = p.position;
             println!("  {} ({}) at {x:.0},{z:.0},{y:.0}", p.id, p.def_id);

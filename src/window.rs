@@ -1,7 +1,9 @@
 //! The window for `washoi view` and `washoi demo`: winit and a wgpu surface,
-//! with a free camera. A demo plays its players on the map in real time.
+//! with a free camera. A demo or a watched match plays its players and
+//! projectiles on the map in real time.
 //!
 //! Mouse looks (click to capture it, Escape to let go or quit), W A S D move,
+//! F chases the next player of a demo or match (and back to free),
 //! Space and C go up and down, Shift is faster. `--seconds` closes the window
 //! after that long, for unattended runs.
 
@@ -22,9 +24,7 @@ use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop};
 use winit::keyboard::{KeyCode, PhysicalKey};
 use winit::window::{CursorGrabMode, Window, WindowId};
 
-use washoi::client::demo_playback::DemoPlayback;
-
-use crate::view::{CLEAR, LoadedMap, MapRenderer, build_renderer, styled_players};
+use crate::view::{CLEAR, Feed, LoadedMap, MapRenderer, build_renderer, chase_camera, styled_players};
 
 /// Units per second (Q3's run speed is 320).
 const SPEED: f32 = 320.0;
@@ -57,8 +57,10 @@ struct App {
     aiming: bool,
     /// The view bob cycle (radians), advanced with horizontal speed.
     bob_cycle: f64,
-    /// A demo playing on the map (`washoi demo`).
-    demo: Option<DemoPlayback>,
+    /// A demo or a live match playing on the map.
+    feed: Option<Feed>,
+    /// The player the camera chases (F cycles), by place in id order.
+    follow: Option<usize>,
 }
 
 impl App {
@@ -145,14 +147,20 @@ impl App {
         let view = frame.texture.create_view(&wgpu::TextureViewDescriptor::default());
         s.renderer.world.animate(&s.gpu, f64::from(dt));
         s.renderer.item_time += f64::from(dt);
-        if let Some(demo) = &mut self.demo {
-            let view = demo.advance(f64::from(dt));
+        if let Some(feed) = &mut self.feed {
+            let view = feed.advance(f64::from(dt));
             let players = styled_players(view.players);
             s.renderer.set_live_players(&players, f64::from(dt));
+            if let Some(i) = self.follow {
+                match players.get(i) {
+                    Some((_, p, _)) => chase_camera(&mut self.camera, p),
+                    None => self.follow = None,
+                }
+            }
             s.renderer.set_live_projectiles(&view.projectiles, f64::from(dt));
-            if demo.finished() && self.seconds.is_none() {
+            if let Some(why) = feed.ended() {
                 // Hold the last frame; the title says so.
-                s.window.set_title("Washoi (demo ended)");
+                s.window.set_title(&format!("Washoi ({why})"));
             }
         }
         if let Some(view_model) = &mut s.renderer.view_model {
@@ -232,6 +240,13 @@ impl ApplicationHandler for App {
                             event_loop.exit();
                         }
                     }
+                    ElementState::Pressed if code == KeyCode::KeyF && !event.repeat => {
+                        // Chase the next player, then back to the free camera.
+                        self.follow = match self.follow {
+                            None => Some(0),
+                            Some(i) => Some(i + 1),
+                        };
+                    }
                     ElementState::Pressed => {
                         self.held.insert(code);
                     }
@@ -288,7 +303,7 @@ impl ApplicationHandler for App {
 }
 
 /// Opens the window and runs until it closes.
-pub fn run(map: LoadedMap, camera: Camera, seconds: Option<f64>, demo: Option<DemoPlayback>) -> i32 {
+pub fn run(map: LoadedMap, camera: Camera, seconds: Option<f64>, feed: Option<Feed>, follow: Option<usize>) -> i32 {
     let event_loop = match EventLoop::new() {
         Ok(l) => l,
         Err(e) => {
@@ -311,7 +326,8 @@ pub fn run(map: LoadedMap, camera: Camera, seconds: Option<f64>, demo: Option<De
         velocity: Vec3::ZERO,
         aiming: false,
         bob_cycle: 0.0,
-        demo,
+        feed,
+        follow,
     };
     if let Err(e) = event_loop.run_app(&mut app) {
         eprintln!("event loop: {e}");

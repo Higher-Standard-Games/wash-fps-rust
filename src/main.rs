@@ -5,7 +5,8 @@
 //!
 //! ```text
 //! washoi view <map> [--data DIR] [--spawn N] [--screenshot FILE.png] [--size WxH] [--time T] [--at X,Y,Z,YAW] [--pitch DEG] [--player X,Y,Z,YAW[,CLIP[,FRAME]]]... [--projectile ID,X,Y,Z,YAW[,PITCH]]... [--explosion ID,X,Y,Z,AGE]... [--tracer X,Y,Z,X2,Y2,Z2,R,G,B,AGE]... [--muzzle X,Y,Z,R,G,B,STYLE,SCALE,DURATION,AGE]... [--impact X,Y,Z,NX,NY,NZ,IX,IY,IZ,R,G,B,HEAVY,AGE]... [--rail X,Y,Z,X2,Y2,Z2,R,G,B,KIND,NX,NY,NZ,AGE]... [--lightning MODE,X,Y,Z,X2,Y2,Z2,R,G,B,KIND,AGE]... [--weapon ID [--aim]] [--no-cull] [--no-lights] [--seconds N]
-//! washoi demo <file.shagdemo> [--data DIR] [--screenshot FILE.png] [--size WxH] [--time T] [--at X,Y,Z,YAW] [--pitch DEG] [--seconds N]
+//! washoi demo <file.shagdemo> [--data DIR] [--screenshot FILE.png] [--size WxH] [--time T] [--at X,Y,Z,YAW] [--pitch DEG] [--follow N] [--seconds N]
+//! washoi watch <ws://game-server> [--name NAME] [--ticket TICKET] [--data DIR] [--screenshot FILE.png] [--time T] [--at X,Y,Z,YAW] [--follow N] [--seconds N]
 //! washoi connect <ws://game-server> [--name NAME] [--ticket TICKET] [--seconds N] [--play]
 //! washoi lobby <ws://lobby> [--key-file FILE] list
 //! washoi lobby <ws://lobby> [--key-file FILE] spectate [--seconds N]
@@ -21,6 +22,12 @@
 //! `demo` plays a recorded match on its map in the window (or, with
 //! `--screenshot`, draws it `--time` seconds in): the players move,
 //! animate and turn as recorded.
+//!
+//! `--follow N` puts the camera behind the Nth player (by id); in the
+//! window F cycles through the players and back to the free camera.
+//!
+//! `watch` spectates a live match the same way: the window opens on the
+//! server's map and draws its players and projectiles as snapshots arrive.
 //!
 //! `view` draws a map with the renderer (`view.rs`), from the
 //! packages in `--data` (default `target/washoi-maps/pk3`, which
@@ -69,7 +76,8 @@ fn usage() -> ! {
     eprintln!(
         "washoi {}\n\
          usage: washoi view <map> [--data DIR] [--spawn N] [--screenshot FILE.png] [--size WxH] [--time T] [--at X,Y,Z,YAW] [--pitch DEG] [--player X,Y,Z,YAW[,CLIP[,FRAME]]]... [--projectile ID,X,Y,Z,YAW[,PITCH]]... [--explosion ID,X,Y,Z,AGE]... [--weapon ID [--aim]] [--no-cull] [--no-lights] [--seconds N]\n\
-         \x20      washoi demo <file.shagdemo> [--data DIR] [--screenshot FILE.png] [--size WxH] [--time T] [--at X,Y,Z,YAW] [--pitch DEG] [--seconds N]\n\
+         \x20      washoi demo <file.shagdemo> [--data DIR] [--screenshot FILE.png] [--size WxH] [--time T] [--at X,Y,Z,YAW] [--pitch DEG] [--follow N] [--seconds N]\n\
+         \x20      washoi watch <ws://game-server> [--name NAME] [--ticket TICKET] [--data DIR] [--screenshot FILE.png] [--time T] [--at X,Y,Z,YAW] [--follow N] [--seconds N]\n\
          \x20      washoi connect <ws://game-server> [--name NAME] [--ticket TICKET] [--seconds N] [--play]\n\
          \x20      washoi lobby <ws://lobby> [--key-file FILE] list\n\
          \x20      washoi lobby <ws://lobby> [--key-file FILE] spectate [--seconds N]\n\
@@ -99,6 +107,7 @@ struct Options {
     no_lights: bool,
     weapon: Option<String>,
     aim: bool,
+    follow: Option<usize>,
     players: Vec<view::PlayerView>,
     projectiles: Vec<view::ProjectileView>,
     explosions: Vec<view::ExplosionView>,
@@ -127,6 +136,7 @@ fn parse_options(args: impl Iterator<Item = String>) -> Options {
             "--no-lights" => o.no_lights = true,
             "--weapon" => o.weapon = Some(value()),
             "--aim" => o.aim = true,
+            "--follow" => o.follow = Some(value().parse().unwrap_or_else(|_| usage())),
             "--player" => {
                 let v = value();
                 let parts: Vec<&str> = v.split(',').map(str::trim).collect();
@@ -271,9 +281,16 @@ fn main() {
             &data_dir(&o),
         ),
         "lobby" => lobby(&url, &o),
-        "view" | "demo" => {
+        "view" | "demo" | "watch" => {
             let (width, height) = o.size.unwrap_or((1280, 720));
             let demo = (mode == "demo").then(|| PathBuf::from(&url));
+            let watch = (mode == "watch").then(|| {
+                (
+                    url.clone(),
+                    o.name.clone().unwrap_or_else(|| "RustSpectator".to_owned()),
+                    o.ticket.clone(),
+                )
+            });
             view::run(&view::ViewOptions {
                 seconds: o.seconds,
                 map: url,
@@ -297,6 +314,8 @@ fn main() {
                 weapon: o.weapon.clone(),
                 aim: o.aim,
                 demo,
+                watch,
+                follow: o.follow,
             })
         }
         _ => usage(),

@@ -2580,6 +2580,28 @@ fit and did not count the parity harness.
 
 Newest first. Each entry names the commits and what proves them.
 
+### Milestone 7, second slice: watching a live match (November 2, 2026)
+
+- **wash-fps-rust.**
+  - `client::snapshot_feed` holds what demo playback and a live match share:
+    the players' buffer as `RemotePlayerRenderer.pushSnapshot` feeds it
+    and the projectiles' as `processProjectileEntities` does.
+  - `client::live_watch` connects as a spectator, waits for the welcome
+    (which names the map) and pushes each snapshot as it arrives. Snapshots
+    are stamped with their arrival; the server-time bracketing through clock
+    sync is not wired yet, so the delay follows the arrival jitter, as the
+    browser's does before its clock syncs.
+  - `washoi watch <ws://server>` opens the window on the server's map and
+    draws its players and projectiles live. `--follow N` (and F in the
+    window) puts the camera behind a player.
+- **Proof, live against a local `net:server` on `washoi_dm2`** with three
+  idle bots and a Rust client running circles (`connect --play`): the
+  spectator receives about 60 snapshots a second and draws all four,
+  the runner animating as it runs, chased from behind.
+- **Not yet.** The same as demos (effects, trails, pickups, HUD), the
+  lobby's spectate path into the window, and a first-person view of the
+  followed player.
+
 ### Milestone 7, first slice: demos play in the window (November 2, 2026)
 
 - **wash-fps-rust.**
@@ -2609,7 +2631,7 @@ Newest first. Each entry names the commits and what proves them.
 - **Not yet.** Projectile trails, beams, hitscan, explosions and pickups
   from the demo's events, following a player's view, the HUD, and watching a live
   match in the window (`washoi lobby … spectate` still runs headless).
-- **Next.** Demo events (projectiles and effects) and live spectating.
+- **Next.** Demo events (effects) and live spectating.
 
 ### Milestone 4: prediction and reconciliation (November 2, 2026)
 
