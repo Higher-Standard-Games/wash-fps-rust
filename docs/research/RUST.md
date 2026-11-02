@@ -2582,6 +2582,22 @@ fit and did not count the parity harness.
 
 Newest first. Each entry names the commits and what proves them.
 
+### Milestone 8, second slice: movement, pickup and powerup sounds (November 2, 2026)
+
+- **wash-fps-rust.** `FPSMovementAudio.ts` (steps by stride on the ground's
+  surface flags, traced 48 units down through the map's brushes; ladder
+  rungs; jump grunts; the jump pad cue), `FPSPickupAudio.ts` and
+  `FPSPowerupAudio.ts` (pickups for the player on screen, the quad's
+  pickup, fire layer and its spawn heard by everyone). The feed hands over
+  each arrived snapshot's players as sent, so the movement sounds run per
+  snapshot as `processFPSMovementAudio` does, not per frame; `pickup_notify`
+  and `powerup_spawn` reach the sounds too. 68 sounds now load.
+- **Proof.** The port of `FPSMovementAudio.test.ts`'s cases (a stride steps,
+  a rising edge grunts, gone players are forgotten) and of the pickup label
+  table; the dm2 demo renders 30 s of sound with all banks loaded.
+- **Not yet.** The jump pad cue and the quad fire layer belong to the local
+  player's prediction, which plays no sounds yet.
+
 ### Milestone 8, first slice: the mixer and the combat sounds (November 2, 2026)
 
 - **shagger 50f95dd.** `shagger::audio` as 22.7 plans it: `spatial.rs` (the

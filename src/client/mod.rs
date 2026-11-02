@@ -3,6 +3,8 @@
 
 pub mod demo_playback;
 pub mod fps_combat_audio;
+pub mod fps_movement_audio;
+pub mod fps_pickup_audio;
 pub mod fps_player_audio;
 pub mod fps_reload_audio;
 pub mod game_events;

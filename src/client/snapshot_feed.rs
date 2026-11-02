@@ -29,13 +29,17 @@ pub struct DemoView {
     pub projectiles: Vec<LiveProjectile>,
     /// The events with an effect to draw or a sound to play
     /// (`projectile_impact`, `weapon_fire`, `voltaic_beam`, `electro_rail`,
-    /// `damage`, `death`, `weapon_state`) that arrived since the last frame.
+    /// `damage`, `death`, `weapon_state`, `pickup_notify`, `powerup_spawn`)
+    /// that arrived since the last frame.
     pub effects: Vec<SnapshotEvent>,
     /// Each player's weapon in hand, from `weapon_state` events
     /// (`enemyWeapons`).
     pub weapons: HashMap<String, String>,
     /// Each player's team from the roster.
     pub teams: HashMap<String, String>,
+    /// The players of every snapshot that arrived since the last frame, as
+    /// sent (`processFPSMovementAudio` reads them).
+    pub snapshots: Vec<HashMap<String, EntitySnapshot>>,
 }
 
 /// The two buffers and what the snapshots told them.
@@ -51,6 +55,7 @@ pub struct SnapshotFeed {
     /// Effect events waiting for the next frame.
     effects: Vec<SnapshotEvent>,
     weapons: HashMap<String, String>,
+    snapshots: Vec<HashMap<String, EntitySnapshot>>,
 }
 
 impl SnapshotFeed {
@@ -64,6 +69,7 @@ impl SnapshotFeed {
     pub fn push(&mut self, now: f64, state: &GameState<SnapshotEvent>, local_entity_id: &str) {
         apply_roster(&mut self.teams, state, local_entity_id);
         let entities = extract_entities(state, local_entity_id);
+        self.snapshots.push(entities.clone());
         self.buffer.push(now, state.tick, entities, None);
         for event in &state.events {
             match event {
@@ -74,7 +80,9 @@ impl SnapshotFeed {
                 | SnapshotEvent::Beam { .. }
                 | SnapshotEvent::WeaponFire { .. }
                 | SnapshotEvent::Damage { .. }
-                | SnapshotEvent::Death { .. } => {
+                | SnapshotEvent::Death { .. }
+                | SnapshotEvent::PickupNotify { .. }
+                | SnapshotEvent::PowerupSpawn { .. } => {
                     self.effects.push(event.clone());
                 }
                 SnapshotEvent::WeaponState {
@@ -113,6 +121,7 @@ impl SnapshotFeed {
             effects: std::mem::take(&mut self.effects),
             weapons: self.weapons.clone(),
             teams: self.teams.clone(),
+            snapshots: std::mem::take(&mut self.snapshots),
         }
     }
 }

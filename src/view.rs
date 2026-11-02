@@ -17,7 +17,7 @@ use shagger::loader::pk3::node_pk3::ingest_pk3_dir;
 use shagger::loader::pk3::pk3_loader::Pk3Loader;
 use shagger::loader::shader::q3_shader_registry::Q3ShaderRegistry;
 use shagger::loader::texture::resolve_and_load_texture;
-use shagger::network::client::snapshot_buffer::InterpolatedEntity;
+use shagger::network::client::snapshot_buffer::{EntitySnapshot, InterpolatedEntity};
 use shagger::physics::player_physics_constants::DEFAULT_VIEWHEIGHT;
 use shagger::physics::sweep_backend_adapter::SweepBackendAdapter;
 use shagger::physics::sweep_collision_backend::SweepCollisionBackend;
@@ -156,15 +156,16 @@ pub fn chase_camera(camera: &mut Camera, player: &InterpolatedEntity) {
 
 /// The sounds of a frame's events, heard at `camera` from the followed
 /// player (if any), at `now` seconds.
+#[allow(clippy::too_many_arguments)]
 pub fn play_view_sounds(
     audio: &mut GameAudio,
+    renderer: &mut MapRenderer,
     camera: &Camera,
-    effects: &[SnapshotEvent],
-    teams: &HashMap<String, String>,
+    view: &DemoViewSounds<'_>,
     players: &[(String, InterpolatedEntity, PlayerModelVisualStyle)],
     follow: Option<usize>,
-    now: f64,
 ) {
+    let (effects, teams, now) = (view.effects, view.teams, renderer.effect_time);
     audio
         .sfx
         .set_listener(camera.position.as_dvec3(), camera.forward().as_dvec3(), DVec3::Y);
@@ -176,6 +177,16 @@ pub fn play_view_sounds(
             .map(|(_, e, _)| DVec3::new(e.x, e.y, e.z))
     };
     audio.play_event_sounds(effects, view_entity, teams, &position, now * 1000.0);
+    audio.play_movement_sounds(view.snapshots, view_entity, teams, &mut |at| {
+        renderer.ground_surface_flags(at)
+    });
+}
+
+/// What [`play_view_sounds`] needs of a frame.
+pub struct DemoViewSounds<'a> {
+    pub effects: &'a [SnapshotEvent],
+    pub teams: &'a HashMap<String, String>,
+    pub snapshots: &'a [HashMap<String, EntitySnapshot>],
 }
 
 /// Where the moving players and projectiles come from.
@@ -604,6 +615,29 @@ impl MapRenderer {
     /// events that arrived (`GameEvents.ts`): a projectile's impact explodes
     /// with its flash; other players' shots draw their streaks, pellets,
     /// beams and rails.
+    /// `getGroundSurfaceFlags`: the surface flags of the ground up to 48
+    /// units under `at`, 0 when nothing is there.
+    pub fn ground_surface_flags(&mut self, at: DVec3) -> i32 {
+        use shagger::babylon::maths::math_vector::Vector3;
+        use shagger::physics::collision_backend::TraceOptions;
+        use shagger::physics::content_flags::masks;
+        let Some(world) = &mut self.shot_world else { return 0 };
+        let trace = world.trace(
+            Vector3::new(at.x, at.y, at.z),
+            Vector3::new(at.x, at.y - 48.0, at.z),
+            TraceOptions {
+                radius: Some(1.0),
+                height: Some(0.0),
+                content_mask: Some(masks::PLAYERSOLID),
+            },
+        );
+        if trace.fraction < 1.0 {
+            trace.hit_surface_flags
+        } else {
+            0
+        }
+    }
+
     pub fn play_effects(&mut self, events: &[SnapshotEvent], weapons: &HashMap<String, String>, dt: f64) {
         self.effect_time += dt;
         let now = self.effect_time;
@@ -1184,12 +1218,15 @@ pub fn run(o: &ViewOptions) -> i32 {
                 }
                 play_view_sounds(
                     audio,
+                    &mut renderer,
                     &ear,
-                    &view.effects,
-                    &view.teams,
+                    &DemoViewSounds {
+                        effects: &view.effects,
+                        teams: &view.teams,
+                        snapshots: &view.snapshots,
+                    },
                     &players,
                     o.follow,
-                    renderer.effect_time,
                 );
                 let start = pcm.len();
                 pcm.resize(start + 2 * AUDIO_OUT_RATE as usize / 60, 0.0);

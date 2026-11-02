@@ -25,7 +25,7 @@ use winit::keyboard::{KeyCode, PhysicalKey};
 use winit::window::{CursorGrabMode, Window, WindowId};
 
 use crate::view::{
-    CLEAR, Feed, LoadedMap, MapRenderer, build_renderer, chase_camera, play_view_sounds, styled_players,
+    CLEAR, DemoViewSounds, Feed, LoadedMap, MapRenderer, build_renderer, chase_camera, play_view_sounds, styled_players,
 };
 use washoi::client::game_events::GameAudio;
 
@@ -167,12 +167,15 @@ impl App {
             if let Some(audio) = &mut self.audio {
                 play_view_sounds(
                     audio,
+                    &mut s.renderer,
                     &self.camera,
-                    &view.effects,
-                    &view.teams,
+                    &DemoViewSounds {
+                        effects: &view.effects,
+                        teams: &view.teams,
+                        snapshots: &view.snapshots,
+                    },
                     &players,
                     self.follow,
-                    s.renderer.effect_time,
                 );
             }
             if let Some(why) = feed.ended() {

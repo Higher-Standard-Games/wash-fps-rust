@@ -18,8 +18,13 @@ use std::collections::HashMap;
 
 use shagger::audio::audio_v2_sfx::AudioV2Sfx;
 use shagger::loader::pk3::pk3_loader::Pk3Loader;
+use shagger::network::client::snapshot_buffer::EntitySnapshot;
 
 use crate::client::fps_combat_audio::{FpsCombatAudio, fps_combat_sound_paths};
+use crate::client::fps_movement_audio::{FPS_MOVEMENT_SOUND_PATHS, FpsMovementAudio};
+use crate::client::fps_pickup_audio::{
+    FPS_PICKUP_SOUND_PATHS, is_powerup_label, play_pickup_sound, play_powerup_pickup_sound, play_powerup_spawn_sound,
+};
 use crate::client::fps_player_audio::player_voice_for_entity;
 use crate::client::fps_reload_audio::FpsReloadAudio;
 use crate::shared::net::snapshot_events::{Point, SnapshotEvent};
@@ -217,6 +222,7 @@ pub struct GameAudio {
     pub sfx: AudioV2Sfx,
     combat: FpsCombatAudio,
     reload: FpsReloadAudio,
+    movement: FpsMovementAudio,
 }
 
 impl GameAudio {
@@ -226,14 +232,34 @@ impl GameAudio {
             sfx,
             combat: FpsCombatAudio::default(),
             reload: FpsReloadAudio::default(),
+            movement: FpsMovementAudio::default(),
         }
     }
 
-    /// `preloadFPSAudio`, the combat bank so far, from the packages.
-    /// Returns how many sounds are loaded.
+    /// `preloadFPSAudio`: the combat, movement, pickup and powerup banks,
+    /// from the packages. Returns how many sounds are loaded.
     pub fn preload(&mut self, pk3: &mut Pk3Loader) -> usize {
-        let paths = fps_combat_sound_paths();
-        self.sfx.preload(paths.iter().map(String::as_str), |p| pk3.get_file(p))
+        let combat = fps_combat_sound_paths();
+        let paths = combat
+            .iter()
+            .map(String::as_str)
+            .chain(FPS_MOVEMENT_SOUND_PATHS)
+            .chain(FPS_PICKUP_SOUND_PATHS);
+        self.sfx.preload(paths, |p| pk3.get_file(p))
+    }
+
+    /// `processFPSMovementAudio` for each snapshot that arrived.
+    pub fn play_movement_sounds(
+        &mut self,
+        snapshots: &[HashMap<String, EntitySnapshot>],
+        view_entity_id: Option<&str>,
+        teams: &HashMap<String, String>,
+        ground_flags: &mut dyn FnMut(DVec3) -> i32,
+    ) {
+        for players in snapshots {
+            self.movement
+                .process(&mut self.sfx, players, view_entity_id, teams, ground_flags);
+        }
     }
 
     /// The sounds of one snapshot's events, heard from the player on
@@ -298,6 +324,15 @@ impl GameAudio {
                         FpsCombatAudio::play_damage_confirmation_sound(&mut self.sfx, *damage);
                     }
                 }
+                SnapshotEvent::PickupNotify { entity_id, label } if viewed(entity_id) => {
+                    // Powerups have their own, louder confirmation.
+                    if is_powerup_label(label) {
+                        play_powerup_pickup_sound(&mut self.sfx);
+                    } else {
+                        play_pickup_sound(&mut self.sfx, label);
+                    }
+                }
+                SnapshotEvent::PowerupSpawn { at, .. } => play_powerup_spawn_sound(&mut self.sfx, vec(at)),
                 SnapshotEvent::Death {
                     entity_id,
                     killer_id,
