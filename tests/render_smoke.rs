@@ -80,7 +80,12 @@ fn dm2_fills_the_frame_from_every_spawn() {
     for (i, camera) in spawns.iter().enumerate() {
         renderer.prepare(&gpu, camera.view_projection(w as f32 / h as f32), camera.position);
         let pixels = render_to_rgba(&gpu, w, h, clear, |pass| renderer.draw(pass));
-        let empty = pixels.chunks_exact(4).filter(|p| p == &[255, 0, 255, 255]).count();
+        let empty = pixels
+            .as_chunks::<4>()
+            .0
+            .iter()
+            .filter(|p| **p == [255, 0, 255, 255])
+            .count();
         let share = empty as f64 / f64::from(w * h);
         assert!(share < 0.02, "spawn {i}: {:.1}% of the frame is empty", share * 100.0);
     }

@@ -62,7 +62,7 @@ fn autosprites_turn_as_shag_turns_them() {
             };
             let n = (g.positions.len() / 3) as f64;
             let mut c = [0.0f64; 3];
-            for v in g.positions.chunks_exact(3) {
+            for v in g.positions.as_chunks::<3>().0.iter() {
                 for k in 0..3 {
                     c[k] += v[k];
                 }

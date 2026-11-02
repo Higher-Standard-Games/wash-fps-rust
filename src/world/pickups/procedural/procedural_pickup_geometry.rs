@@ -138,7 +138,9 @@ pub fn extruded_plate(outline: &[[f64; 2]], depth: f64, z: f64) -> VertexData {
         }
     }
     let uvs: Vec<f32> = positions
-        .chunks_exact(3)
+        .as_chunks::<3>()
+        .0
+        .iter()
         .flat_map(|p| [(p[0] / 32.0 + 0.5) as f32, (p[1] / 32.0 + 0.5) as f32])
         .collect();
     let mut data = VertexData {
@@ -455,7 +457,13 @@ mod tests {
     fn the_cross_spans_its_arms() {
         let recipe = get_procedural_pickup_recipe("health_medium").unwrap();
         let cross = build_cross_proto(recipe);
-        let max_x = cross.positions.chunks_exact(3).map(|p| p[0]).fold(f32::MIN, f32::max);
+        let max_x = cross
+            .positions
+            .as_chunks::<3>()
+            .0
+            .iter()
+            .map(|p| p[0])
+            .fold(f32::MIN, f32::max);
         let half = (CROSS_ARM * recipe.scale * PROCEDURAL_GLOBAL_SCALE) as f32;
         assert!((max_x - half).abs() < 1e-4);
         assert_eq!(cross.vertex_count(), 72);

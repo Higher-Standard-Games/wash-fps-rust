@@ -71,14 +71,20 @@ fn png(width: u32, height: u32, rgba: &[u8]) -> Vec<u8> {
 
 /// A prototype as a model primitive: winding turned, bounds measured.
 fn primitive(name: &str, data: &VertexData, material: usize, order: usize) -> ModelPrimitive {
-    let positions: Vec<[f32; 3]> = data.positions.chunks_exact(3).map(|p| [p[0], p[1], p[2]]).collect();
+    let positions: Vec<[f32; 3]> = data
+        .positions
+        .as_chunks::<3>()
+        .0
+        .iter()
+        .map(|p| [p[0], p[1], p[2]])
+        .collect();
     let (min, max) = positions
         .iter()
         .fold((Vec3::splat(f32::MAX), Vec3::splat(f32::MIN)), |(lo, hi), p| {
             (lo.min(Vec3::from(*p)), hi.max(Vec3::from(*p)))
         });
     let uvs = if data.uvs.len() == positions.len() * 2 {
-        data.uvs.chunks_exact(2).map(|t| [t[0], t[1]]).collect()
+        data.uvs.as_chunks::<2>().0.iter().map(|t| [t[0], t[1]]).collect()
     } else {
         vec![[0.0; 2]; positions.len()]
     };
@@ -87,10 +93,22 @@ fn primitive(name: &str, data: &VertexData, material: usize, order: usize) -> Mo
         node: 0,
         node_scale: Vec3::ONE,
         node_matrix: Mat4::IDENTITY,
-        normals: data.normals.chunks_exact(3).map(|n| [n[0], n[1], n[2]]).collect(),
+        normals: data
+            .normals
+            .as_chunks::<3>()
+            .0
+            .iter()
+            .map(|n| [n[0], n[1], n[2]])
+            .collect(),
         positions,
         uvs,
-        indices: data.indices.chunks_exact(3).flat_map(|f| [f[2], f[1], f[0]]).collect(),
+        indices: data
+            .indices
+            .as_chunks::<3>()
+            .0
+            .iter()
+            .flat_map(|f| [f[2], f[1], f[0]])
+            .collect(),
         material: Some(material),
         bounds_center: (min + max) * 0.5,
         creation_order: order,
