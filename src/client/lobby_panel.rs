@@ -18,7 +18,11 @@ use shagger::ui::components::match_lobby_view::{MatchLobbyView, RoomAction};
 use shagger::ui::egui_layer::egui;
 
 use crate::client::hud::washiki;
+use crate::client::leaderboard_view::LeaderboardView;
+use crate::client::profile_view::ProfileView;
 use crate::client::settings::fps_settings_view::FpsSettingsView;
+use shagger::core::cvar::with_cvars;
+use shagger::lobby::settings_sync::SettingsSync;
 
 /// `GameMode`: a mode's card on the Play page.
 #[derive(Debug, Clone, Copy)]
@@ -163,6 +167,14 @@ fn now_seed() -> u64 {
         .map_or(0, |d| d.as_nanos() as u64)
 }
 
+/// The rail's pages.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Tab {
+    Play,
+    Leaderboard,
+    Profile,
+}
+
 /// `LobbyPanel`.
 pub struct LobbyPanel {
     client: LobbyClient,
@@ -190,6 +202,12 @@ pub struct LobbyPanel {
     choice: Option<LobbyChoice>,
     /// The Settings page, while it is open.
     pub settings: Option<FpsSettingsView>,
+    /// The page in the middle (`switchTab`).
+    pub tab: Tab,
+    leaderboard: LeaderboardView,
+    profile: ProfileView,
+    /// The account's settings, kept in step while logged in.
+    settings_sync: Option<SettingsSync>,
     /// The rail's Console key was pressed; the window toggles its console.
     pub console_pressed: bool,
     /// The connection ended; why.
@@ -227,6 +245,10 @@ impl LobbyPanel {
             choice: None,
             settings: None,
             console_pressed: false,
+            tab: Tab::Play,
+            leaderboard: LeaderboardView::default(),
+            profile: ProfileView::default(),
+            settings_sync: None,
             closed: None,
         }
     }
@@ -234,6 +256,9 @@ impl LobbyPanel {
     /// Where to go, once the lobby says so. Disconnects from the lobby.
     pub fn take_choice(&mut self) -> Option<LobbyChoice> {
         let choice = self.choice.take()?;
+        if let Some(sync) = &mut self.settings_sync {
+            with_cvars(|c| sync.flush(&mut self.client, c));
+        }
         self.client.disconnect();
         Some(choice)
     }
@@ -247,6 +272,9 @@ impl LobbyPanel {
     pub fn poll(&mut self) {
         for event in self.client.poll_events() {
             self.on_event(event);
+        }
+        if let Some(sync) = &mut self.settings_sync {
+            with_cvars(|c| sync.tick(&mut self.client, c, std::time::Instant::now()));
         }
     }
 
@@ -272,6 +300,13 @@ impl LobbyPanel {
         if let Some(room) = &mut self.room {
             room.handle(&message, &self.client);
         }
+        if let Some(sync) = &mut self.settings_sync {
+            with_cvars(|c| sync.on_message(&message, &mut self.client, c));
+        }
+        if let LobbyIn::Other { kind, message } = &message {
+            self.leaderboard.on_message(kind, message);
+            self.profile.on_message(kind, message);
+        }
         match message {
             LobbyIn::Welcome(w) => {
                 self.local_lobby_player_id = Some(w.player_id.clone());
@@ -295,6 +330,10 @@ impl LobbyPanel {
                 self.online = w.online_players.len();
                 self.chat_log = w.chat_history.iter().cloned().collect();
                 self.trim_chat();
+                // `startSettingsSync`.
+                if let Some(dir) = crate::config_dir() {
+                    self.settings_sync = with_cvars(|c| SettingsSync::start(&mut self.client, &w, c, &dir));
+                }
             }
             LobbyIn::AuthError(e) => self.notice = format!("Login refused: {}", e.code),
             LobbyIn::MatchesUpdate(matches) => self.live_matches = matches,
@@ -375,6 +414,19 @@ impl LobbyPanel {
             && self.mode_ready(QUICK_PLAY_MODE)
     }
 
+    /// `switchTab`: shows a rail page, asking the lobby for its data.
+    pub fn open_tab(&mut self, tab: Tab) {
+        self.settings = None;
+        if self.tab != tab && self.connected {
+            match tab {
+                Tab::Leaderboard => self.leaderboard.refresh(&mut self.client),
+                Tab::Profile => self.profile.refresh(&mut self.client),
+                Tab::Play => {}
+            }
+        }
+        self.tab = tab;
+    }
+
     /// A private FFA room that adds its bots, votes a map and readies by itself.
     pub fn start_quick_play(&mut self) {
         if self.quick_play_enabled() {
@@ -416,6 +468,17 @@ impl LobbyPanel {
                 settings.ui(ui);
                 return;
             }
+            match self.tab {
+                Tab::Leaderboard => {
+                    self.leaderboard.ui(ui, &mut self.client);
+                    return;
+                }
+                Tab::Profile => {
+                    self.profile.ui(ui, &mut self.client, &self.name);
+                    return;
+                }
+                Tab::Play => {}
+            }
             let left = match &mut self.room {
                 Some(room) => room.ui(ui, &self.client) == Some(RoomAction::Leave),
                 None => {
@@ -453,6 +516,16 @@ impl LobbyPanel {
             .clicked()
         {
             self.start_quick_play();
+        }
+        ui.add_space(12.0);
+        for (tab, name) in [
+            (Tab::Play, "Play"),
+            (Tab::Leaderboard, "Leaderboard"),
+            (Tab::Profile, "Profile"),
+        ] {
+            if ui.selectable_label(self.tab == tab, name).clicked() {
+                self.open_tab(tab);
+            }
         }
         ui.add_space(12.0);
         if let Some(settings) = &mut self.settings {

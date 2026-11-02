@@ -9,7 +9,7 @@
 //! washoi watch <ws://game-server> [--name NAME] [--ticket TICKET] [--data DIR] [--screenshot FILE.png] [--time T] [--at X,Y,Z,YAW] [--follow N] [--seconds N]
 //! washoi play <ws://game-server> [--name NAME] [--ticket TICKET] [--data DIR] [--screenshot FILE.png] [--time T] [--say TEXT] [--seconds N]
 //! washoi connect <ws://game-server> [--name NAME] [--ticket TICKET] [--seconds N] [--play]
-//! washoi menu <ws://lobby> [--key-file FILE] [--cvars FILE] [--screenshot FILE.png [--quick | --settings PAGE | --console "CMD; CMD"] [--seconds N] [--size WxH]]
+//! washoi menu <ws://lobby> [--key-file FILE] [--cvars FILE] [--screenshot FILE.png [--quick | --tab PAGE | --settings PAGE | --console "CMD; CMD"] [--seconds N] [--size WxH]]
 //! washoi lobby <ws://lobby> [--key-file FILE] list
 //! washoi lobby <ws://lobby> [--key-file FILE] spectate [--window] [--seconds N]
 //! washoi lobby <ws://lobby> [--key-file FILE] queue <gametype> [--seconds N] [--play | --window]
@@ -85,7 +85,7 @@ fn usage() -> ! {
          \x20      washoi watch <ws://game-server> [--name NAME] [--ticket TICKET] [--data DIR] [--screenshot FILE.png] [--time T] [--at X,Y,Z,YAW] [--follow N] [--seconds N]\n\
          \x20      washoi play <ws://game-server> [--name NAME] [--ticket TICKET] [--data DIR] [--screenshot FILE.png] [--time T] [--say TEXT] [--seconds N]\n\
          \x20      washoi connect <ws://game-server> [--name NAME] [--ticket TICKET] [--seconds N] [--play]\n\
-         \x20      washoi menu <ws://lobby> [--key-file FILE] [--cvars FILE] [--screenshot FILE.png [--quick | --settings PAGE | --console \"CMD; CMD\"] [--seconds N] [--size WxH]]\n\
+         \x20      washoi menu <ws://lobby> [--key-file FILE] [--cvars FILE] [--screenshot FILE.png [--quick | --tab PAGE | --settings PAGE | --console \"CMD; CMD\"] [--seconds N] [--size WxH]]\n\
          \x20      washoi lobby <ws://lobby> [--key-file FILE] list\n\
          \x20      washoi lobby <ws://lobby> [--key-file FILE] spectate [--window] [--seconds N]\n\
          \x20      washoi lobby <ws://lobby> [--key-file FILE] queue <gametype> [--seconds N] [--play | --window]\n\
@@ -124,6 +124,8 @@ struct Options {
     quick: bool,
     /// The menu's screenshot opens this settings page (`--settings`).
     settings: Option<String>,
+    /// The menu's screenshot opens this rail page (`--tab`).
+    tab: Option<String>,
     /// The menu's screenshot opens the console and runs these (`--console`).
     console: Option<String>,
     /// The cvar file instead of `~/.config/washoi/cvars.json` (`--cvars`).
@@ -164,6 +166,7 @@ fn parse_options(args: impl Iterator<Item = String>) -> Options {
             "--quick" => o.quick = true,
             "--settings" => o.settings = Some(value()),
             "--console" => o.console = Some(value()),
+            "--tab" => o.tab = Some(value()),
             "--cvars" => o.cvars = Some(PathBuf::from(value())),
             "--player" => {
                 let v = value();
@@ -356,6 +359,7 @@ fn menu_mode(url: &str, o: &Options) -> i32 {
             quick: o.quick,
             settings: o.settings.clone(),
             console: o.console.clone(),
+            tab: o.tab.clone(),
             seconds,
             size,
         };

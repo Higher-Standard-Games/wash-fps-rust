@@ -2582,6 +2582,34 @@ fit and did not count the parity harness.
 
 Newest first. Each entry names the commits and what proves them.
 
+### Milestone 10, fourth slice: settings sync, leaderboard and profile (November 2, 2026)
+
+- **shagger `98499f1`, `3ecd2e4`.** `shagger_shared::settings::synced_settings`
+  ports `SyncedSettings.ts` (what follows the account, the blob's parse
+  and its sorted serialization, checked against `JSON.stringify`).
+  `lobby/settings_sync.rs` ports `SettingsSync.ts`: `decideSync` as is,
+  `collectSettings` and `applySettings` on the cvar registry, and the
+  login sync, the five-second check, the two-second upload delay and the
+  flush on leaving as a state machine fed by the lobby's `settings:data`,
+  `settings:saved` and `settings:error`. The sync state, the first backup
+  and the synced storage entries are files beside `cvars.json`.
+  `LobbyClient` gains `request_settings`, `save_settings`,
+  `request_leaderboard` (TrueSkill) and `request_stats`.
+- **wash-fps-rust.** The rail now has Play, Leaderboard and Profile.
+  `client/leaderboard_view.rs` (`LeaderboardView.ts`: mode, public or
+  private pools, 30 days or all time, rank, rating with "Provisional",
+  W-L-D, your own row) and `client/profile_view.rs` (`ProfileView.ts`'s
+  summary: matches, wins, losses, draws, rating and rank). The podium,
+  avatars, match history pages and weapon totals come with the visuals
+  pass. Settings sync starts on `welcome` and flushes when the lobby sends
+  the player to a match.
+- **Proof.** Unit tests for the sync decisions, collect and apply, and the
+  blob's text. On the local lobby: with `cl_fov` 107 set, the menu
+  uploaded `{"v":1,"cvars":{"cl_fov":107},"storage":{}}` after the check;
+  a fresh config directory then logged in to the same account and got
+  `cl_fov` 107 back, with its own settings kept as the backup. The
+  leaderboard page asked for and drew the public duel board.
+
 ### Milestone 10, third slice: the console (November 2, 2026)
 
 - **shagger `e86aa5d`.** `console/command.rs` and

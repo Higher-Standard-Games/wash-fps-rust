@@ -14,7 +14,7 @@ use shagger::rendering::gpu::Gpu;
 use shagger::rendering::offscreen::{OFFSCREEN_FORMAT, render_encoded_to_rgba};
 use shagger::rendering::wgpu;
 use shagger::ui::egui_layer::{EguiLayer, egui};
-use washoi::client::lobby_panel::{LobbyChoice, LobbyPanel, install_style};
+use washoi::client::lobby_panel::{LobbyChoice, LobbyPanel, Tab, install_style};
 use washoi::client::settings::fps_settings_view::FpsSettingsView;
 use washoi::client::settings::settings_model::SETTINGS_PAGES;
 use washoi::console::GameConsole;
@@ -201,6 +201,8 @@ pub struct Shot {
     pub quick: bool,
     /// Open this settings page (`controls`, `gameplay`, `video`, `audio`).
     pub settings: Option<String>,
+    /// Open this rail page (`play`, `leaderboard`, `profile`) once logged in.
+    pub tab: Option<String>,
     /// Open the console and run these commands (`;` between them).
     pub console: Option<String>,
     pub seconds: f64,
@@ -256,6 +258,16 @@ pub fn screenshot(
             println!("menu: quick play");
             panel.start_quick_play();
             pressed = true;
+        }
+        if let Some(tab) = &shot.tab
+            && panel.tab == Tab::Play
+            && !panel.name.is_empty()
+        {
+            panel.open_tab(match tab.as_str() {
+                "leaderboard" => Tab::Leaderboard,
+                "profile" => Tab::Profile,
+                _ => Tab::Play,
+            });
         }
         if let Some(room) = panel.in_room() {
             let now = format!("{} {}: {}", room.gametype_label, room.lobby_id, room.status());
