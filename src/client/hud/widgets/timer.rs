@@ -138,6 +138,6 @@ pub fn gold() -> Gradient {
     )
 }
 
-fn brighten(c: [f32; 4], k: f32) -> [f32; 4] {
+pub fn brighten(c: [f32; 4], k: f32) -> [f32; 4] {
     [(c[0] * k).min(1.0), (c[1] * k).min(1.0), (c[2] * k).min(1.0), c[3]]
 }

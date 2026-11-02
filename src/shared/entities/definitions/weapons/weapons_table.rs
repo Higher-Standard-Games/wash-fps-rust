@@ -184,6 +184,77 @@ pub fn weapon_reload_model(id: &str) -> Option<&'static str> {
     }
 }
 
+/// `WEAPONS[id]?.clipSize`: a clip gun's magazine (0 for the others).
+#[must_use]
+pub fn weapon_clip_size(id: &str) -> Option<f64> {
+    match id {
+        "machinegun" => Some(30.0),
+        "plasmagun" => Some(50.0),
+        "riotgun" => Some(8.0),
+        "voltaic" | "lasergun" => Some(120.0),
+        "blade" | "electrobolt" | "glauncher" | "rlauncher" => Some(0.0),
+        _ => None,
+    }
+}
+
+/// `WEAPONS[id]?.maxAmmo`: the most a weapon carries (a clip gun's reserve).
+#[must_use]
+pub fn weapon_max_ammo(id: &str) -> Option<f64> {
+    match id {
+        "blade" => Some(1.0),
+        "electrobolt" => Some(10.0),
+        "glauncher" | "rlauncher" => Some(20.0),
+        "machinegun" => Some(120.0),
+        "plasmagun" => Some(150.0),
+        "riotgun" => Some(24.0),
+        "voltaic" | "lasergun" => Some(60.0),
+        _ => None,
+    }
+}
+
+/// `CrosshairConfig`'s style.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CrosshairStyle {
+    Cross,
+    Dot,
+    Circle,
+    CrossDot,
+}
+
+/// `CrosshairConfig`: the reticle a weapon draws.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct CrosshairConfig {
+    pub style: CrosshairStyle,
+    pub base_gap: f64,
+    pub line_length: f64,
+    pub line_width: f64,
+}
+
+const fn crosshair(style: CrosshairStyle, base_gap: f64, line_length: f64, line_width: f64) -> CrosshairConfig {
+    CrosshairConfig {
+        style,
+        base_gap,
+        line_length,
+        line_width,
+    }
+}
+
+/// `WEAPONS[id]?.crosshair`.
+#[must_use]
+pub fn weapon_crosshair(id: &str) -> Option<CrosshairConfig> {
+    use CrosshairStyle::{Cross, CrossDot, Dot};
+    match id {
+        "blade" => Some(crosshair(Dot, 0.0, 0.0, 2.0)),
+        "electrobolt" => Some(crosshair(CrossDot, 2.0, 5.0, 1.0)),
+        "glauncher" | "rlauncher" => Some(crosshair(CrossDot, 6.0, 6.0, 2.0)),
+        "machinegun" => Some(crosshair(Cross, 4.0, 6.0, 2.0)),
+        "plasmagun" => Some(crosshair(CrossDot, 4.0, 5.0, 2.0)),
+        "riotgun" => Some(crosshair(Cross, 12.0, 8.0, 2.0)),
+        "voltaic" | "lasergun" => Some(crosshair(Dot, 0.0, 0.0, 3.0)),
+        _ => None,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

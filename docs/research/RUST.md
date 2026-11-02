@@ -2582,6 +2582,29 @@ fit and did not count the parity harness.
 
 Newest first. Each entry names the commits and what proves them.
 
+### Milestone 9, third slice: crosshair, vitals and ammo (November 2, 2026)
+
+- **wash-fps-rust.** `HudState` gains `HUDState.ts`'s combat and weapon
+  half (`processCombatState`, `processWeaponState`, `currentClip`) for the
+  player on screen, fed from `combat_state` and `weapon_state`.
+  `client/ammo_status.rs` ports `AmmoStatus.ts`. The weapons table gains
+  `clipSize`, `maxAmmo` and `crosshair`. New widgets in the bottom bar:
+  `VitalsBlock` (the red HP slab with its number and bar, the four armor
+  plates, the critical flash) and `AmmoCounter` (clip or pool, a clip
+  gun's reserve, the weapon's name, the bar). `client/crosshair.rs` ports
+  `Crosshair.ts`: the weapon's style, the gap opened by speed, red for
+  200 ms on a hit (300 on the head), the red cross when the gun is empty.
+  The bottom bar hides for a spectator flying free.
+- **Slabs with hard stops.** CSS gradients like `red 62%, dark 63%` are
+  cut along the stop line (Sutherland-Hodgman on the clip polygon), so the
+  edge stays sharp instead of blending across the slab.
+- **Proof.** Unit tests (ammo status); screenshots of the dm14 demo behind
+  a player (HP 70, Voltaic 71 with 60 in reserve, the dot red on a hit)
+  and of `washoi play` (HP 100, blade).
+- **Left out.** The flashes on a change, the tilts and the cockpit yaw,
+  aiming down sights and the spread bloom in the crosshair, the weapon
+  slots, the ammo warning, the powerup timer and the air meter.
+
 ### Milestone 9, second slice: playing in the window (November 2, 2026)
 
 - **shagger `130f012`.** `NetworkGameHost::send_request_spawn` and

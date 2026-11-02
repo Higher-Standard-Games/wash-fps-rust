@@ -4,7 +4,10 @@
 
 use std::collections::BTreeMap;
 
+use shagger::shared::json::Value;
 use shagger::shared::net::game_state::PlayerState;
+
+use crate::client::ammo_status::HudWeaponAmmo;
 
 use crate::client::match_state_manager::{MatchPhase, MatchStateManager};
 use crate::client::remote_player_logic::CLIENT_KEY_PREFIX;
@@ -58,9 +61,20 @@ pub struct DeathParties<'a> {
 const KILL_FEED_EXPIRE: f64 = 5.0;
 const KILL_FEED_MAX: usize = 5;
 
-/// `HUDState`'s scoreboard and match half.
-#[derive(Debug, Clone, Default)]
+/// `HUDState`: combat, weapon, scoreboard and match.
+#[derive(Debug, Clone)]
 pub struct HudState {
+    /// The subject's health and armor (`combat_state`).
+    pub health: f64,
+    pub armor: f64,
+    /// The subject's dead flag.
+    pub dead: bool,
+    /// Our own, whoever the camera follows.
+    pub local_dead: bool,
+    /// The subject's weapon in hand, inventory and ammo (`weapon_state`).
+    pub current_weapon: String,
+    pub weapons: Vec<String>,
+    pub ammo: BTreeMap<String, HudWeaponAmmo>,
     pub scoreboard: Vec<ScoreboardEntry>,
     pub local_player_id: String,
     /// The player whose eyes the view is behind, or "" for our own.
@@ -79,7 +93,70 @@ pub struct HudState {
     pub now: f64,
 }
 
+impl Default for HudState {
+    fn default() -> Self {
+        Self {
+            health: 100.0,
+            armor: 0.0,
+            dead: false,
+            local_dead: false,
+            current_weapon: "blade".to_owned(),
+            weapons: vec!["blade".to_owned()],
+            ammo: BTreeMap::new(),
+            scoreboard: Vec::new(),
+            local_player_id: String::new(),
+            spectating: String::new(),
+            watcher: false,
+            playback: false,
+            gametype_name: String::new(),
+            team_based: false,
+            team_scores: BTreeMap::new(),
+            team_names: BTreeMap::new(),
+            kill_feed: Vec::new(),
+            death_seq: 0,
+            now: 0.0,
+        }
+    }
+}
+
 impl HudState {
+    /// `processCombatState`.
+    pub fn process_combat_state(&mut self, health: u16, armor: u16, dead: bool) {
+        self.health = f64::from(health);
+        self.armor = f64::from(armor);
+        self.dead = dead;
+    }
+
+    /// `processWeaponState`.
+    pub fn process_weapon_state(&mut self, current_weapon: &str, weapons: &Value, ammo: &Value) {
+        current_weapon.clone_into(&mut self.current_weapon);
+        self.weapons = weapons
+            .as_array()
+            .unwrap_or_default()
+            .iter()
+            .filter_map(|w| w.as_str().map(str::to_owned))
+            .collect();
+        self.ammo.clear();
+        if let Value::Object(members) = ammo {
+            for (id, value) in members {
+                if let Some(a) = HudWeaponAmmo::from_json(value) {
+                    self.ammo.insert(id.clone(), a);
+                }
+            }
+        }
+    }
+
+    /// `currentClip`: the number for the weapon in hand (its clip, for a
+    /// clip weapon).
+    #[must_use]
+    pub fn current_clip(&self) -> f64 {
+        match self.ammo.get(&self.current_weapon) {
+            Some(HudWeaponAmmo::Clip { clip, .. }) => *clip,
+            Some(HudWeaponAmmo::Pool(n)) => *n,
+            None => 0.0,
+        }
+    }
+
     /// `subjectless`: a spectator flying free.
     #[must_use]
     pub fn subjectless(&self) -> bool {

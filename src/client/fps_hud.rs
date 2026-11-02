@@ -2,16 +2,20 @@
 //! areas. The top-centre row holds the frag wing, the clock and the
 //! gametype tab (flex, `order` 1 to 3, the frag wing pulled 18 px under the
 //! clock and the tab 16 px); the phase message hangs below it; the
-//! scoreboard covers everything when open. Vitals, ammo and the rest of
-//! the bottom bar need a player in play.
+//! scoreboard covers everything when open. The bottom bar holds the
+//! vitals at the left and the ammo at the right, for the player on screen;
+//! the crosshair sits over it all.
 
 use shagger::rendering::gpu::Gpu;
 use shagger::rendering::hud_2d_renderer::Hud2dRenderer;
 use shagger::rendering::wgpu;
 use shagger::ui::hud_2d::Hud2d;
 
+use crate::client::ammo_status::get_ammo_status;
+use crate::client::crosshair::{Crosshair, CrosshairFrame};
 use crate::client::hud::hud_widget::{FpsHudWidget, HudFrame};
 use crate::client::hud::washiki::{Fonts, UI_SCALE};
+use crate::client::hud::widgets::ammo_counter::AmmoCounter;
 use crate::client::hud::widgets::event_feed::EventFeed;
 use crate::client::hud::widgets::frag_counter::FragCounter;
 use crate::client::hud::widgets::frag_message::FragMessage;
@@ -19,6 +23,7 @@ use crate::client::hud::widgets::gametype_badge::GametypeBadge;
 use crate::client::hud::widgets::phase_message::PhaseMessage;
 use crate::client::hud::widgets::scoreboard::Scoreboard;
 use crate::client::hud::widgets::timer::Timer;
+use crate::client::hud::widgets::vitals_block::VitalsBlock;
 use crate::client::hud_state::{DeathParties, HudState};
 use crate::client::match_state_manager::MatchStateManager;
 use crate::shared::net::snapshot_events::SnapshotEvent;
@@ -36,6 +41,11 @@ pub struct FpsHud {
     frag_message: FragMessage,
     event_feed: EventFeed,
     pub scoreboard: Scoreboard,
+    vitals: VitalsBlock,
+    ammo: AmmoCounter,
+    crosshair: Crosshair,
+    /// The reticle this frame, when someone's eyes are on screen.
+    reticle: Option<(String, f64, bool)>,
     /// What the widgets read, kept across frames (the kill feed).
     pub state: HudState,
 }
@@ -53,6 +63,8 @@ pub struct WatchFrame<'a> {
     pub playback: bool,
     /// We are in the match, and `view_entity` is our own.
     pub playing: bool,
+    /// The view entity's horizontal speed, units a second.
+    pub speed: f64,
     pub dt: f64,
 }
 
@@ -72,6 +84,10 @@ impl FpsHud {
             frag_message: FragMessage::default(),
             event_feed: EventFeed::default(),
             scoreboard: Scoreboard::default(),
+            vitals: VitalsBlock::default(),
+            ammo: AmmoCounter::default(),
+            crosshair: Crosshair::default(),
+            reticle: None,
             state: HudState::default(),
         })
     }
@@ -89,7 +105,40 @@ impl FpsHud {
             state.spectating = frame.view_entity.unwrap_or_default().to_owned();
         }
         state.update_from_game_state(frame.roster, frame.match_state);
+        let view = frame.view_entity.unwrap_or_default();
         for event in frame.events {
+            match event {
+                // The HUD describes whoever the camera is behind.
+                SnapshotEvent::CombatState {
+                    entity_id,
+                    health,
+                    armor,
+                    dead,
+                } if entity_id == view => {
+                    state.process_combat_state(*health, *armor, *dead);
+                    if frame.playing {
+                        state.local_dead = *dead;
+                    }
+                }
+                SnapshotEvent::WeaponState {
+                    entity_id,
+                    current_weapon,
+                    weapons,
+                    ammo,
+                    ..
+                } if entity_id == view => {
+                    state.process_weapon_state(current_weapon, weapons, ammo);
+                }
+                SnapshotEvent::Damage {
+                    entity_id,
+                    attacker_id,
+                    hit_location,
+                    ..
+                } if !view.is_empty() && attacker_id == view && entity_id != view => {
+                    self.crosshair.notify_hit(hit_location.is_some_and(|l| l == "head"));
+                }
+                _ => {}
+            }
             if let SnapshotEvent::Death {
                 entity_id,
                 killer_id,
@@ -117,6 +166,11 @@ impl FpsHud {
             }
         }
         state.expire_transients(frame.dt);
+        self.reticle = (!view.is_empty() && !state.dead).then(|| {
+            let weapon = state.current_weapon.clone();
+            let out = get_ammo_status(&weapon, state.ammo.get(&weapon).copied()).out_of_ammo;
+            (weapon, frame.speed, out)
+        });
         let state = std::mem::take(&mut self.state);
         self.update(
             &HudFrame {
@@ -158,13 +212,41 @@ impl FpsHud {
         // `.fps-frag-container`: 31 % down, centred.
         let [_, vh] = self.hud.size();
         self.frag_message.draw(&mut self.hud, &fonts, vw / 2.0, vh * 0.31);
+        // `.fps-hud-bottom-bar`: 16 px up, 28 px in; nobody's to show for
+        // a spectator flying free.
+        let subject = !frame.state.subjectless() && !frame.state.subject().is_empty();
+        if subject {
+            let bottom = vh - 16.0 * s;
+            let [_, vitals_h] = self.vitals.size(&self.hud, &fonts);
+            self.vitals.draw(&mut self.hud, &fonts, 28.0 * s, bottom - vitals_h);
+            let [ammo_w, ammo_h] = self.ammo.size(&self.hud, &fonts);
+            self.ammo
+                .draw(&mut self.hud, &fonts, vw - 28.0 * s - ammo_w, bottom - ammo_h);
+        }
         self.scoreboard.draw(&mut self.hud, &fonts, 0.0, 0.0);
         // `.fps-event-feed` sits over the scoreboard's veil.
         self.event_feed.draw(&mut self.hud, &fonts, 24.0 * s, 64.0 * s);
+        if let Some((weapon, speed, out_of_ammo)) = &self.reticle
+            && !self.scoreboard.held
+        {
+            self.crosshair.draw(
+                &mut self.hud,
+                &CrosshairFrame {
+                    weapon,
+                    speed: *speed,
+                    out_of_ammo: *out_of_ammo,
+                    dt: frame.dt,
+                },
+                vw,
+                vh,
+            );
+        }
     }
 
-    fn widgets_mut(&mut self) -> [&mut dyn FpsHudWidget; 7] {
+    fn widgets_mut(&mut self) -> [&mut dyn FpsHudWidget; 9] {
         [
+            &mut self.vitals,
+            &mut self.ammo,
             &mut self.frag_message,
             &mut self.event_feed,
             &mut self.timer,

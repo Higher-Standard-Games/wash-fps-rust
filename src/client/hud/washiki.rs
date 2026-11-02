@@ -112,14 +112,25 @@ impl Gradient {
     /// The colour at (`x`, `y`) of a `w` by `h` box.
     #[must_use]
     pub fn at(&self, w: f32, h: f32, x: f32, y: f32) -> [f32; 4] {
+        self.color(self.t(w, h, x, y))
+    }
+
+    /// Where (`x`, `y`) falls along the gradient line, 0 to 1 across the box.
+    #[must_use]
+    pub fn t(&self, w: f32, h: f32, x: f32, y: f32) -> f32 {
         let a = self.angle_deg.to_radians();
         let (sin, cos) = a.sin_cos();
         let length = (w * sin).abs() + (h * cos).abs();
-        let t = if length > 0.0 {
+        if length > 0.0 {
             ((x - w / 2.0) * sin - (y - h / 2.0) * cos) / length + 0.5
         } else {
             0.0
-        };
+        }
+    }
+
+    /// The colour at `t` along the gradient line.
+    #[must_use]
+    pub fn color(&self, t: f32) -> [f32; 4] {
         let stops = &self.stops;
         if t <= stops[0].1 {
             return stops[0].0;
@@ -133,6 +144,35 @@ impl Gradient {
         }
         stops[stops.len() - 1].0
     }
+
+    /// The hard stops (two stops at nearly one place, as `62%, 63%` in the
+    /// CSS), as the positions either side of each.
+    fn hard_stops(&self) -> Vec<(f32, f32)> {
+        self.stops
+            .windows(2)
+            .filter(|p| p[1].1 - p[0].1 < 0.02 && p[0].0 != p[1].0)
+            .map(|p| (p[0].1, p[1].1))
+            .collect()
+    }
+}
+
+/// The part of `polygon` where `side(p)` is at least zero
+/// (Sutherland-Hodgman against one half-plane).
+fn clip_half(polygon: &[[f32; 2]], side: impl Fn([f32; 2]) -> f32) -> Vec<[f32; 2]> {
+    let mut out = Vec::new();
+    let n = polygon.len();
+    for i in 0..n {
+        let (a, b) = (polygon[i], polygon[(i + 1) % n]);
+        let (sa, sb) = (side(a), side(b));
+        if sa >= 0.0 {
+            out.push(a);
+        }
+        if (sa >= 0.0) != (sb >= 0.0) {
+            let f = sa / (sa - sb);
+            out.push([a[0] + (b[0] - a[0]) * f, a[1] + (b[1] - a[1]) * f]);
+        }
+    }
+    out
 }
 
 /// A clipped, skewed slab with a hard print shadow.
@@ -168,33 +208,62 @@ impl Slab<'_> {
     /// Fills the slab over the box at (`x`, `y`), `w` by `h` CSS pixels.
     pub fn draw(&self, hud: &mut Hud2d, x: f32, y: f32, w: f32, h: f32) {
         let skew = self.skew_deg.to_radians().tan();
-        let mut outline: Vec<[f32; 2]> = Vec::new();
-        let n = self.clip.len();
-        for i in 0..n {
-            let (a, b) = (self.clip[i], self.clip[(i + 1) % n]);
-            for k in 0..EDGE_STEPS {
-                let f = k as f32 / EDGE_STEPS as f32;
-                outline.push([(a[0] + (b[0] - a[0]) * f) * w, (a[1] + (b[1] - a[1]) * f) * h]);
-            }
-        }
-        let centre = outline
-            .iter()
-            .fold([0.0, 0.0], |c, p| [c[0] + p[0], c[1] + p[1]])
-            .map(|v| v / outline.len() as f32);
-        let mut local = vec![centre];
-        local.extend_from_slice(&outline);
-        local.push(outline[0]);
         let place = |p: &[f32; 2], dx: f32, dy: f32| [x + dx + p[0] + skew * p[1], y + dy + p[1]];
+        let outline = |clip: &[[f32; 2]]| -> Vec<[f32; 2]> {
+            let mut points: Vec<[f32; 2]> = Vec::new();
+            let n = clip.len();
+            for i in 0..n {
+                let (a, b) = (clip[i], clip[(i + 1) % n]);
+                for k in 0..EDGE_STEPS {
+                    let f = k as f32 / EDGE_STEPS as f32;
+                    points.push([(a[0] + (b[0] - a[0]) * f) * w, (a[1] + (b[1] - a[1]) * f) * h]);
+                }
+            }
+            let centre = points
+                .iter()
+                .fold([0.0, 0.0], |c, p| [c[0] + p[0], c[1] + p[1]])
+                .map(|v| v / points.len() as f32);
+            let mut fan = vec![centre];
+            fan.extend_from_slice(&points);
+            fan.push(points[0]);
+            fan
+        };
         if let Some((offset, color)) = self.shadow {
-            let points: Vec<_> = local
+            let points: Vec<_> = outline(self.clip)
                 .iter()
                 .map(|p| place(p, offset[0] * UI_SCALE, offset[1] * UI_SCALE))
                 .collect();
             hud.polygon(&points, &vec![color; points.len()]);
         }
-        let points: Vec<_> = local.iter().map(|p| place(p, 0.0, 0.0)).collect();
-        let colors: Vec<_> = local.iter().map(|p| self.background.at(w, h, p[0], p[1])).collect();
-        hud.polygon(&points, &colors);
+        // Cut at each hard stop, so the edge stays sharp; each piece takes
+        // its colours from its own side of the cut.
+        let g = &self.background;
+        let t_of = |p: [f32; 2]| g.t(w, h, p[0] * w, p[1] * h);
+        let mut pieces = vec![(self.clip.to_vec(), f32::NEG_INFINITY, f32::INFINITY)];
+        for (lo, hi) in g.hard_stops() {
+            let cut = f32::midpoint(lo, hi);
+            let mut next = Vec::new();
+            for (piece, from, to) in pieces {
+                let below = clip_half(&piece, |p| cut - t_of(p));
+                let above = clip_half(&piece, |p| t_of(p) - cut);
+                if below.len() >= 3 {
+                    next.push((below, from, lo));
+                }
+                if above.len() >= 3 {
+                    next.push((above, hi, to));
+                }
+            }
+            pieces = next;
+        }
+        for (piece, from, to) in pieces {
+            let local = outline(&piece);
+            let points: Vec<_> = local.iter().map(|p| place(p, 0.0, 0.0)).collect();
+            let colors: Vec<_> = local
+                .iter()
+                .map(|p| g.color(g.t(w, h, p[0], p[1]).clamp(from, to)))
+                .collect();
+            hud.polygon(&points, &colors);
+        }
     }
 }
 

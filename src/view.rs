@@ -167,6 +167,15 @@ pub fn update_watch_hud(
 ) {
     let local = feed.local_entity();
     let view_entity = local.or_else(|| follow.and_then(|i| players.get(i)).map(|(id, _, _)| id.as_str()));
+    let speed = match feed {
+        Feed::Play(p, _) => {
+            let v = p.velocity();
+            v.x.hypot(v.z)
+        }
+        _ => follow
+            .and_then(|i| players.get(i))
+            .map_or(0.0, |(_, e, _)| e.vx.hypot(e.vz)),
+    };
     hud.update_watching(
         &WatchFrame {
             playing: local.is_some(),
@@ -175,6 +184,7 @@ pub fn update_watch_hud(
             events,
             view_entity,
             playback: matches!(feed, Feed::Demo(_)),
+            speed,
             dt,
         },
         width,

@@ -1,6 +1,8 @@
 //! wash-fps `client`: what the game client draws (remote players and the
 //! local first-person weapon so far).
 
+pub mod ammo_status;
+pub mod crosshair;
 pub mod demo_playback;
 pub mod fps_announcer;
 pub mod fps_bomb_audio;
