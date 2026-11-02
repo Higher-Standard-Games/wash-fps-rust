@@ -9,6 +9,7 @@
 //! washoi watch <ws://game-server> [--name NAME] [--ticket TICKET] [--data DIR] [--screenshot FILE.png] [--time T] [--at X,Y,Z,YAW] [--follow N] [--seconds N]
 //! washoi play <ws://game-server> [--name NAME] [--ticket TICKET] [--data DIR] [--screenshot FILE.png] [--time T] [--say TEXT] [--seconds N]
 //! washoi connect <ws://game-server> [--name NAME] [--ticket TICKET] [--seconds N] [--play]
+//! washoi menu <ws://lobby> [--key-file FILE] [--screenshot FILE.png [--quick] [--seconds N] [--size WxH]]
 //! washoi lobby <ws://lobby> [--key-file FILE] list
 //! washoi lobby <ws://lobby> [--key-file FILE] spectate [--window] [--seconds N]
 //! washoi lobby <ws://lobby> [--key-file FILE] queue <gametype> [--seconds N] [--play | --window]
@@ -54,6 +55,7 @@
 //! lightning targets). `--weapon` holds a first-person weapon (a definition
 //! id such as `plasmagun`), at the hip or, with `--aim`, down its sights.
 
+mod menu;
 mod view;
 mod window;
 
@@ -83,6 +85,7 @@ fn usage() -> ! {
          \x20      washoi watch <ws://game-server> [--name NAME] [--ticket TICKET] [--data DIR] [--screenshot FILE.png] [--time T] [--at X,Y,Z,YAW] [--follow N] [--seconds N]\n\
          \x20      washoi play <ws://game-server> [--name NAME] [--ticket TICKET] [--data DIR] [--screenshot FILE.png] [--time T] [--say TEXT] [--seconds N]\n\
          \x20      washoi connect <ws://game-server> [--name NAME] [--ticket TICKET] [--seconds N] [--play]\n\
+         \x20      washoi menu <ws://lobby> [--key-file FILE] [--screenshot FILE.png [--quick] [--seconds N] [--size WxH]]\n\
          \x20      washoi lobby <ws://lobby> [--key-file FILE] list\n\
          \x20      washoi lobby <ws://lobby> [--key-file FILE] spectate [--window] [--seconds N]\n\
          \x20      washoi lobby <ws://lobby> [--key-file FILE] queue <gametype> [--seconds N] [--play | --window]\n\
@@ -117,6 +120,8 @@ struct Options {
     say: Option<String>,
     /// From the lobby into the window rather than headless (`--window`).
     window: bool,
+    /// The menu's screenshot presses Quick play (`--quick`).
+    quick: bool,
     players: Vec<view::PlayerView>,
     projectiles: Vec<view::ProjectileView>,
     explosions: Vec<view::ExplosionView>,
@@ -150,6 +155,7 @@ fn parse_options(args: impl Iterator<Item = String>) -> Options {
             "--scoreboard" => o.scoreboard = true,
             "--say" => o.say = Some(value()),
             "--window" => o.window = true,
+            "--quick" => o.quick = true,
             "--player" => {
                 let v = value();
                 let parts: Vec<&str> = v.split(',').map(str::trim).collect();
@@ -294,6 +300,7 @@ fn main() {
             &data_dir(&o),
         ),
         "lobby" => lobby(&url, &o),
+        "menu" => menu_mode(&url, &o),
         "view" | "demo" | "watch" | "play" => {
             let demo = (mode == "demo").then(|| PathBuf::from(&url));
             let watch = (mode == "watch" || mode == "play").then(|| {
@@ -312,6 +319,55 @@ fn main() {
 }
 
 /// The window's options from the command line.
+/// Where the menu keeps the account key when `--key-file` does not say: the
+/// browser keeps it in local storage, which outlives a session the same way.
+fn default_key_file() -> Option<PathBuf> {
+    let base = std::env::var_os("XDG_CONFIG_HOME")
+        .map(PathBuf::from)
+        .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".config")))?;
+    let dir = base.join("washoi");
+    std::fs::create_dir_all(&dir).ok()?;
+    Some(dir.join("lobby-key"))
+}
+
+fn menu_mode(url: &str, o: &Options) -> i32 {
+    let key_file = o.key_file.clone().or_else(default_key_file);
+    let go = |c: &washoi::client::lobby_panel::LobbyChoice| {
+        let how = if c.play { "play" } else { "watch" };
+        println!("lobby: {how} at {} on {}", c.server_url, c.map);
+    };
+    if let Some(path) = &o.screenshot {
+        let size = o.size.unwrap_or((1280, 720));
+        let seconds = o.seconds.unwrap_or(5.0);
+        return match menu::screenshot(url, key_file, o.quick, seconds, size, path) {
+            Ok(choice) => {
+                if let Some(c) = &choice {
+                    go(c);
+                }
+                0
+            }
+            Err(e) => {
+                eprintln!("menu: {e}");
+                1
+            }
+        };
+    }
+    loop {
+        match menu::choose(url, key_file.clone()) {
+            Ok(Some(c)) => {
+                go(&c);
+                let watch = Some((c.server_url.clone(), c.name.clone(), c.admission_ticket.clone()));
+                view::run(&view_options(o, c.server_url.clone(), None, watch, c.play));
+            }
+            Ok(None) => return 0,
+            Err(e) => {
+                eprintln!("menu: {e}");
+                return 1;
+            }
+        }
+    }
+}
+
 fn view_options(
     o: &Options,
     map: String,

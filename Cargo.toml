@@ -5,7 +5,7 @@ license = "MIT"
 version = "0.0.1"
 publish = false
 edition = "2024"
-rust-version = "1.88"
+rust-version = "1.95"
 repository = "https://github.com/Higher-Standard-Games/wash-fps-rust"
 
 [dependencies]
@@ -14,7 +14,7 @@ repository = "https://github.com/Higher-Standard-Games/wash-fps-rust"
 #   [patch."https://github.com/Higher-Standard-Games/shagger"]
 #   shagger = { path = "../shagger/crates/shagger" }
 #   shagger_shared = { path = "../shagger/crates/shagger_shared" }
-shagger = { git = "https://github.com/Higher-Standard-Games/shagger", rev = "aa966115937d68083a146c3653e666a528547502" }
+shagger = { git = "https://github.com/Higher-Standard-Games/shagger", rev = "0ace94367acfb3e0fd8d3030f45ec6a26a9e83f0" }
 
 # The window and its events for `washoi view` (RUST.md 12): winit 0.30, the
 # release wgpu 30 and egui 0.37 work with. Without winit's drawn Wayland
@@ -23,6 +23,8 @@ shagger = { git = "https://github.com/Higher-Standard-Games/shagger", rev = "aa9
 winit = { version = "0.30", default-features = false, features = ["rwh_06", "x11", "wayland", "wayland-dlopen"] }
 # PNG screenshots.
 image = { version = "0.25", default-features = false, features = ["png"] }
+# The lobby's room and welcome payloads, as the engine passes them on.
+serde_json = "1"
 
 [lints.rust]
 unsafe_code = "deny"
@@ -33,4 +35,3 @@ all = { level = "warn", priority = -1 }
 [dev-dependencies]
 flate2 = { version = "1", default-features = false, features = ["rust_backend"] }
 sha2 = "0.10"
-serde_json = "1"

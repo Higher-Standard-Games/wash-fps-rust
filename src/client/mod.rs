@@ -18,6 +18,7 @@ pub mod hud_state;
 pub mod input_history;
 pub mod live_play;
 pub mod live_watch;
+pub mod lobby_panel;
 pub mod match_state_manager;
 pub mod player_model_visual_settings;
 pub mod prediction;

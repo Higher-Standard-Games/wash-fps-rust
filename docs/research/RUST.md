@@ -2582,6 +2582,34 @@ fit and did not count the parity harness.
 
 Newest first. Each entry names the commits and what proves them.
 
+### Milestone 10, first slice: the Play page in the window (November 2, 2026)
+
+- **shagger `d05f42c`, `1f287dd`, `0ace943`.** egui 0.37 over the game's
+  own wgpu device (`ui/egui_layer.rs`): winit events in, a frame painted
+  over what is already drawn, and an offscreen mode for screenshots and
+  tests (`render_encoded_to_rgba`). egui 0.37 needs Rust 1.95, so both
+  repositories' MSRV moved from 1.88. `ui/components/match_lobby_view.rs`
+  ports SHAG's `MatchLobbyView.ts` as state plus an egui view: seats,
+  ready, the map vote, adding bots (with the nine-second give-up), what a
+  finished match resets, and quick play's self-driving fill (vote a random
+  map, add bots one at a time, ready last).
+- **wash-fps-rust.** `client/lobby_panel.rs` ports `LobbyPanel.ts`'s Play
+  page: the four modes with their hooks and accents, Quick play (a private
+  FFA filled with four bots), Find match and Private room per mode, the
+  live matches with Spectate, the lobby chat (room chat in a room) and the
+  player card. `install_style` gives egui Washoi's faces (Rajdhani,
+  Orbitron) and colours. `washoi menu <ws://lobby>` opens it in the
+  window; when the lobby hands out a server the match takes the window,
+  and closing the match comes back to the menu. Both run on one winit
+  event loop (`run_app_on_demand`). The account key defaults to
+  `~/.config/washoi/lobby-key`, as the browser keeps it in local storage.
+  The leaderboard, demos, settings and profile pages are the next slices.
+- **Proof.** `washoi menu ws://localhost:9000 --screenshot ... --quick`
+  against the local lobby: quick play makes the room, four hard bots join
+  one by one, the player readies last, and the lobby sends it to
+  `ws://localhost:7777` on washoi_dm2. Unit tests for the fill order and
+  the post-match reset; `tests/egui_offscreen.rs` checks egui's pixels.
+
 ### Milestone 8, sixth slice: our own sounds in play (November 2, 2026)
 
 - **wash-fps-rust.** A player's own footsteps, ladder rungs and jump

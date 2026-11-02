@@ -26,6 +26,7 @@ use winit::dpi::PhysicalSize;
 use winit::event::{DeviceEvent, DeviceId, ElementState, MouseButton, WindowEvent};
 use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop};
 use winit::keyboard::{KeyCode, PhysicalKey};
+use winit::platform::run_on_demand::EventLoopExtRunOnDemand;
 use winit::window::{CursorGrabMode, Window, WindowId};
 
 use crate::view::{
@@ -81,27 +82,12 @@ struct App {
 
 impl App {
     fn open(&mut self, event_loop: &ActiveEventLoop) -> Result<(), String> {
-        let attributes = Window::default_attributes()
-            .with_title("Washoi")
-            .with_inner_size(PhysicalSize::new(1280, 720));
-        let window = Arc::new(event_loop.create_window(attributes).map_err(|e| e.to_string())?);
-        let instance = wgpu::Instance::new(wgpu::InstanceDescriptor::new_with_display_handle_from_env(Box::new(
-            event_loop.owned_display_handle(),
-        )));
-        let surface = instance.create_surface(window.clone()).map_err(|e| e.to_string())?;
-        let gpu = Gpu::new(instance, Some(&surface)).map_err(|e| e.to_string())?;
-        println!("gpu: {}", gpu.describe());
-        let size = window.inner_size();
-        let mut config = surface
-            .get_default_config(&gpu.adapter, size.width.max(1), size.height.max(1))
-            .ok_or("the surface does not fit this adapter")?;
-        // Babylon writes display-space bytes as they are: prefer a non-sRGB target.
-        let formats = surface.get_capabilities(&gpu.adapter).formats;
-        if let Some(&plain) = formats.iter().find(|f| !f.is_srgb()) {
-            config.format = plain;
-        }
-        config.present_mode = wgpu::PresentMode::AutoVsync;
-        surface.configure(&gpu.device, &config);
+        let OpenWindow {
+            window,
+            gpu,
+            surface,
+            config,
+        } = open_window(event_loop)?;
         let map = self.map.as_mut().expect("the map is loaded before the window opens");
         let renderer = build_renderer(&gpu, map, config.format);
         let hdr = HdrTarget::new(&gpu, config.width, config.height);
@@ -481,6 +467,66 @@ impl ApplicationHandler for App {
     }
 }
 
+thread_local! {
+    /// One event loop for the process: winit makes only one, so the menu
+    /// and then the match take turns on it (`run_app_on_demand`).
+    static EVENT_LOOP: std::cell::RefCell<Option<EventLoop<()>>> = const { std::cell::RefCell::new(None) };
+}
+
+/// Runs `app` on the process's event loop until it exits.
+pub fn run_on_event_loop(app: &mut impl ApplicationHandler) -> Result<(), String> {
+    EVENT_LOOP.with(|cell| {
+        let mut slot = cell.borrow_mut();
+        if slot.is_none() {
+            *slot = Some(EventLoop::new().map_err(|e| format!("no window system: {e}"))?);
+        }
+        let event_loop = slot.as_mut().expect("made above");
+        event_loop.set_control_flow(ControlFlow::Poll);
+        event_loop
+            .run_app_on_demand(app)
+            .map_err(|e| format!("event loop: {e}"))
+    })
+}
+
+/// A window with a wgpu surface on it, configured.
+pub struct OpenWindow {
+    pub window: Arc<Window>,
+    pub gpu: Gpu,
+    pub surface: wgpu::Surface<'static>,
+    pub config: wgpu::SurfaceConfiguration,
+}
+
+/// Opens Washoi's window, 1280 × 720, with a non-sRGB surface in vsync.
+pub fn open_window(event_loop: &ActiveEventLoop) -> Result<OpenWindow, String> {
+    let attributes = Window::default_attributes()
+        .with_title("Washoi")
+        .with_inner_size(PhysicalSize::new(1280, 720));
+    let window = Arc::new(event_loop.create_window(attributes).map_err(|e| e.to_string())?);
+    let instance = wgpu::Instance::new(wgpu::InstanceDescriptor::new_with_display_handle_from_env(Box::new(
+        event_loop.owned_display_handle(),
+    )));
+    let surface = instance.create_surface(window.clone()).map_err(|e| e.to_string())?;
+    let gpu = Gpu::new(instance, Some(&surface)).map_err(|e| e.to_string())?;
+    println!("gpu: {}", gpu.describe());
+    let size = window.inner_size();
+    let mut config = surface
+        .get_default_config(&gpu.adapter, size.width.max(1), size.height.max(1))
+        .ok_or("the surface does not fit this adapter")?;
+    // Babylon writes display-space bytes as they are: prefer a non-sRGB target.
+    let formats = surface.get_capabilities(&gpu.adapter).formats;
+    if let Some(&plain) = formats.iter().find(|f| !f.is_srgb()) {
+        config.format = plain;
+    }
+    config.present_mode = wgpu::PresentMode::AutoVsync;
+    surface.configure(&gpu.device, &config);
+    Ok(OpenWindow {
+        window,
+        gpu,
+        surface,
+        config,
+    })
+}
+
 /// Opens the window and runs until it closes.
 pub fn run(
     map: LoadedMap,
@@ -490,14 +536,6 @@ pub fn run(
     follow: Option<usize>,
     audio: Option<GameAudio>,
 ) -> i32 {
-    let event_loop = match EventLoop::new() {
-        Ok(l) => l,
-        Err(e) => {
-            eprintln!("no window system: {e}");
-            return 1;
-        }
-    };
-    event_loop.set_control_flow(ControlFlow::Poll);
     let mut app = App {
         map: Some(map),
         camera,
@@ -518,8 +556,11 @@ pub fn run(
         follow,
         audio,
     };
-    if let Err(e) = event_loop.run_app(&mut app) {
-        eprintln!("event loop: {e}");
+    let ran = run_on_event_loop(&mut app);
+    // Close the window before the next one opens on the same loop.
+    app.surface = None;
+    if let Err(e) = ran {
+        eprintln!("{e}");
         return 1;
     }
     let elapsed = app.started.elapsed().as_secs_f64();
