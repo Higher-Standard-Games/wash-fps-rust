@@ -9,6 +9,7 @@ use std::collections::HashMap;
 use shagger::network::client::snapshot_buffer::{EntitySnapshot, InterpolatedEntity, SnapshotBuffer};
 use shagger::shared::net::game_state::GameState;
 
+use crate::client::match_state_manager::MatchStateManager;
 use crate::client::remote_player_logic::{apply_roster, extract_entities};
 use crate::shared::net::snapshot_events::SnapshotEvent;
 
@@ -52,6 +53,8 @@ pub struct SnapshotFeed {
     def_ids: HashMap<String, String>,
     /// Each player's team from the roster ("ffa" for none).
     pub teams: HashMap<String, String>,
+    /// The match as its `match_state` events tell it.
+    pub match_state: MatchStateManager,
     /// Effect events waiting for the next frame.
     effects: Vec<SnapshotEvent>,
     weapons: HashMap<String, String>,
@@ -84,6 +87,9 @@ impl SnapshotFeed {
                 | SnapshotEvent::PickupNotify { .. }
                 | SnapshotEvent::PowerupSpawn { .. } => {
                     self.effects.push(event.clone());
+                }
+                SnapshotEvent::MatchState(payload) => {
+                    self.match_state.process_event(payload);
                 }
                 SnapshotEvent::WeaponState {
                     entity_id,

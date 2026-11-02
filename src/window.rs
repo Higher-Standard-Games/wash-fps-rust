@@ -173,9 +173,11 @@ impl App {
                         effects: &view.effects,
                         teams: &view.teams,
                         snapshots: &view.snapshots,
+                        match_state: feed.match_state(),
                     },
                     &players,
                     self.follow,
+                    f64::from(dt),
                 );
             }
             if let Some(why) = feed.ended() {

@@ -2582,6 +2582,24 @@ fit and did not count the parity harness.
 
 Newest first. Each entry names the commits and what proves them.
 
+### Milestone 8, third slice: the match state and the announcer (November 2, 2026)
+
+- **wash-fps-rust.** `client/match_state_manager.rs` ports
+  `MatchStateManager.ts` (phase, clock with `cl_invertClock`'s count-up,
+  ready count, scores, teams, rosters kept when the server omits them,
+  winner, overtime, flow, rounds, `isMovementFrozen`); objectives, round
+  results and explosions stay JSON until Search and Destroy. The snapshot
+  feed keeps one, so the HUD can read it next. `client/fps_announcer.rs`
+  ports `FPSAnnouncer.ts` (the held voice and its queue, countdown, fight,
+  lead, overtime, game over, ready-up), with `leadOf`; its random read
+  choice draws from mulberry32 instead of `Math.random`. Spectating, the
+  announcer calls the match flow but never a lead, as `Game.ts` does for a
+  player not in the match. 95 sounds load.
+- **Proof.** Unit tests port the TypeScript cases (a lead change waits for
+  the voice, then speaks; a one-player team wins as its player; an omitted
+  roster keeps the last). The screenshot path prints the match: the dm2
+  demo of November 2 ends at "Active 8:05 (Deathmatch)".
+
 ### Milestone 8, second slice: movement, pickup and powerup sounds (November 2, 2026)
 
 - **wash-fps-rust.** `FPSMovementAudio.ts` (steps by stride on the ground's

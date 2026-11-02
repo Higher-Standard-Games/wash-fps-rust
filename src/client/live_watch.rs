@@ -72,6 +72,12 @@ impl LiveWatch {
     }
 
     /// Takes the snapshots that arrived and samples everything at now.
+    /// The match as the snapshots so far tell it.
+    #[must_use]
+    pub fn match_state(&self) -> &crate::client::match_state_manager::MatchStateManager {
+        &self.feed.match_state
+    }
+
     pub fn advance(&mut self) -> DemoView {
         for event in self.session.poll_events() {
             match event {

@@ -20,6 +20,7 @@ use shagger::audio::audio_v2_sfx::AudioV2Sfx;
 use shagger::loader::pk3::pk3_loader::Pk3Loader;
 use shagger::network::client::snapshot_buffer::EntitySnapshot;
 
+use crate::client::fps_announcer::{FpsAnnouncer, Lead, MatchMoment, fps_announcer_sound_paths};
 use crate::client::fps_combat_audio::{FpsCombatAudio, fps_combat_sound_paths};
 use crate::client::fps_movement_audio::{FPS_MOVEMENT_SOUND_PATHS, FpsMovementAudio};
 use crate::client::fps_pickup_audio::{
@@ -27,6 +28,7 @@ use crate::client::fps_pickup_audio::{
 };
 use crate::client::fps_player_audio::player_voice_for_entity;
 use crate::client::fps_reload_audio::FpsReloadAudio;
+use crate::client::match_state_manager::MatchStateManager;
 use crate::shared::net::snapshot_events::{Point, SnapshotEvent};
 
 /// `WEAPON_EFFECT_COLORS`.
@@ -223,6 +225,7 @@ pub struct GameAudio {
     combat: FpsCombatAudio,
     reload: FpsReloadAudio,
     movement: FpsMovementAudio,
+    announcer: FpsAnnouncer,
 }
 
 impl GameAudio {
@@ -233,6 +236,7 @@ impl GameAudio {
             combat: FpsCombatAudio::default(),
             reload: FpsReloadAudio::default(),
             movement: FpsMovementAudio::default(),
+            announcer: FpsAnnouncer::default(),
         }
     }
 
@@ -240,12 +244,38 @@ impl GameAudio {
     /// from the packages. Returns how many sounds are loaded.
     pub fn preload(&mut self, pk3: &mut Pk3Loader) -> usize {
         let combat = fps_combat_sound_paths();
+        let announcer = fps_announcer_sound_paths();
         let paths = combat
             .iter()
             .map(String::as_str)
             .chain(FPS_MOVEMENT_SOUND_PATHS)
-            .chain(FPS_PICKUP_SOUND_PATHS);
+            .chain(FPS_PICKUP_SOUND_PATHS)
+            .chain(announcer.iter().map(String::as_str));
         self.sfx.preload(paths, |p| pk3.get_file(p))
+    }
+
+    /// The announcer's frame (`Game.ts`'s `announcer.update`): `playing`
+    /// with the local player's `lead` when in the match, `dt` in seconds,
+    /// `now` in ms.
+    pub fn update_announcer(
+        &mut self,
+        match_state: &MatchStateManager,
+        playing: bool,
+        lead: Option<Lead>,
+        dt: f64,
+        now: f64,
+    ) {
+        let moment = MatchMoment {
+            phase: match_state.phase(),
+            time_remaining: match_state.time_remaining(),
+            overtime: match_state.overtime(),
+            rounds_called_by_mode: match_state.bomb().is_some(),
+            playing,
+            ready: match_state.is_ready(),
+            lead,
+            team_based: match_state.team_based(),
+        };
+        self.announcer.update(&mut self.sfx, &moment, dt, now);
     }
 
     /// `processFPSMovementAudio` for each snapshot that arrived.

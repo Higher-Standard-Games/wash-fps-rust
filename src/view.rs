@@ -52,6 +52,7 @@ use shagger::weapon::weapon_view_manager::ViewModelInput;
 use washoi::client::demo_playback::{DemoPlayback, DemoView, LiveProjectile};
 use washoi::client::game_events::{EffectTargets, GameAudio, play_remote_shots};
 use washoi::client::live_watch::LiveWatch;
+use washoi::client::match_state_manager::MatchStateManager;
 use washoi::client::weapon_view::WeaponViewModel;
 use washoi::shared::entities::definitions::projectiles::{PROJECTILES, projectile_def};
 use washoi::shared::net::snapshot_events::SnapshotEvent;
@@ -164,6 +165,7 @@ pub fn play_view_sounds(
     view: &DemoViewSounds<'_>,
     players: &[(String, InterpolatedEntity, PlayerModelVisualStyle)],
     follow: Option<usize>,
+    dt: f64,
 ) {
     let (effects, teams, now) = (view.effects, view.teams, renderer.effect_time);
     audio
@@ -180,6 +182,8 @@ pub fn play_view_sounds(
     audio.play_movement_sounds(view.snapshots, view_entity, teams, &mut |at| {
         renderer.ground_surface_flags(at)
     });
+    // A spectator: the match flow is called, never a lead.
+    audio.update_announcer(view.match_state, false, None, dt, now * 1000.0);
 }
 
 /// What [`play_view_sounds`] needs of a frame.
@@ -187,6 +191,7 @@ pub struct DemoViewSounds<'a> {
     pub effects: &'a [SnapshotEvent],
     pub teams: &'a HashMap<String, String>,
     pub snapshots: &'a [HashMap<String, EntitySnapshot>],
+    pub match_state: &'a MatchStateManager,
 }
 
 /// Where the moving players and projectiles come from.
@@ -201,6 +206,15 @@ impl Feed {
         match self {
             Self::Demo(d) => d.advance(dt),
             Self::Live(l) => l.advance(),
+        }
+    }
+
+    /// The match as the snapshots so far tell it.
+    #[must_use]
+    pub fn match_state(&self) -> &MatchStateManager {
+        match self {
+            Self::Demo(d) => d.match_state(),
+            Self::Live(l) => l.match_state(),
         }
     }
 
@@ -1224,9 +1238,11 @@ pub fn run(o: &ViewOptions) -> i32 {
                         effects: &view.effects,
                         teams: &view.teams,
                         snapshots: &view.snapshots,
+                        match_state: feed.match_state(),
                     },
                     &players,
                     o.follow,
+                    1.0 / 60.0,
                 );
                 let start = pcm.len();
                 pcm.resize(start + 2 * AUDIO_OUT_RATE as usize / 60, 0.0);
@@ -1258,6 +1274,14 @@ pub fn run(o: &ViewOptions) -> i32 {
             players.len(),
             projectiles.len(),
             renderer.hitscan.voltaic.debug_counts().0
+        );
+        let m = feed.match_state();
+        println!(
+            "  match: {} {} ({}), overtime {}",
+            m.get_phase_name(),
+            m.get_time_string(false),
+            m.gametype_name(),
+            m.overtime()
         );
         if let Some(why) = feed.ended() {
             println!("  ({why})");

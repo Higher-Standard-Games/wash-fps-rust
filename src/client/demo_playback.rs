@@ -81,6 +81,12 @@ impl DemoPlayback {
 
     /// Advances the demo clock by `dt` seconds, delivers the frames recorded
     /// by then, and samples every player and projectile in the newest one.
+    /// The match as the snapshots so far tell it.
+    #[must_use]
+    pub fn match_state(&self) -> &crate::client::match_state_manager::MatchStateManager {
+        &self.feed.match_state
+    }
+
     pub fn advance(&mut self, dt: f64) -> DemoView {
         self.clock_ms += dt * 1000.0;
         while self.next < self.frames.len() && self.frame_time(self.next) <= self.clock_ms {
