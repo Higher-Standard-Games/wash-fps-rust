@@ -42,7 +42,7 @@
 mod view;
 mod window;
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
 use shagger::lobby::lobby_client::{LobbyClient, LobbyEvent};
@@ -52,8 +52,12 @@ use shagger::network::client::network_session::{NetworkSession, SessionConfig, S
 use shagger::shared::js::{js_cos, js_sin};
 use shagger::shared::json::Value;
 use shagger::shared::net::command::Command;
+use shagger::shared::server::simulation::types::Vec3;
 use shagger::weapon::muzzle::muzzle_flash_renderer::MuzzleFlashStyle;
 use shagger::weapon::rail::rail_profiles::RailImpactKind;
+use washoi::client::prediction;
+use washoi::client::v2_network_client::{ClientInput, V2NetworkClient};
+use washoi::shared::entities::definitions::weapons::weapons_table::weapon_speed_bonus;
 use washoi::shared::net::snapshot_events::{SnapshotEvent, WashoiEvents};
 
 fn usage() -> ! {
@@ -255,9 +259,10 @@ fn main() {
         "connect" => play_match(
             &url,
             o.name.as_deref().unwrap_or("RustClient"),
-            o.ticket,
+            o.ticket.clone(),
             o.seconds.unwrap_or(10.0),
             o.play,
+            &data_dir(&o),
         ),
         "lobby" => lobby(&url, &o),
         "view" => {
@@ -372,7 +377,7 @@ fn lobby(url: &str, o: &Options) -> i32 {
                             return 0;
                         };
                         client.disconnect();
-                        return play_match(&server, &name, None, o.seconds.unwrap_or(15.0), false);
+                        return play_match(&server, &name, None, o.seconds.unwrap_or(15.0), false, &data_dir(o));
                     }
                     Some("bot") => {
                         let gametype = o.words.get(1).map_or("duel", String::as_str);
@@ -432,7 +437,14 @@ fn lobby(url: &str, o: &Options) -> i32 {
                 // The browser keeps the lobby open during the match; this
                 // client does not need it until the next one.
                 client.disconnect();
-                return play_match(&server_url, &name, admission_ticket, o.seconds.unwrap_or(15.0), o.play);
+                return play_match(
+                    &server_url,
+                    &name,
+                    admission_ticket,
+                    o.seconds.unwrap_or(15.0),
+                    o.play,
+                    &data_dir(o),
+                );
             }
             LobbyEvent::Message(LobbyIn::LobbyError(why)) => println!("lobby: {why}"),
             LobbyEvent::Message(_) => {}
@@ -473,7 +485,14 @@ fn print_standings(match_state: &Value, standings: &[Value]) {
 }
 
 #[allow(clippy::too_many_lines)]
-fn play_match(url: &str, name: &str, ticket: Option<String>, seconds: f64, play: bool) -> i32 {
+/// `--data`, or the packages `tools/fetch_maps.sh` fetched.
+fn data_dir(o: &Options) -> PathBuf {
+    o.data
+        .clone()
+        .unwrap_or_else(|| PathBuf::from("target/washoi-maps/pk3"))
+}
+
+fn play_match(url: &str, name: &str, ticket: Option<String>, seconds: f64, play: bool, data: &Path) -> i32 {
     println!("connecting to {url} as {name}");
     let session = NetworkSession::start(
         SessionConfig {
@@ -498,14 +517,29 @@ fn play_match(url: &str, name: &str, ticket: Option<String>, seconds: f64, play:
     let mut yaw = 0.0f64;
     let mut exit = 0;
     let mut clock = (0.0, 0.0);
+    // Prediction (milestone 4): the commands run through V2NetworkClient
+    // on the map's collision, and each snapshot confirms or corrects it.
+    let mut predictor: Option<V2NetworkClient> = None;
+    let mut alive = false;
+    let now_ms = || start.elapsed().as_secs_f64() * 1000.0;
 
     while start.elapsed().as_secs_f64() < seconds {
         for event in session.poll_events() {
             match event {
-                SessionEvent::Host(HostEvent::ServerInfo(w)) => println!(
-                    "welcome: \"{}\" ({}), map {}, {} Hz, {}/{} players",
-                    w.server_name, w.server_id, w.map, w.tick_rate, w.current_players, w.max_players
-                ),
+                SessionEvent::Host(HostEvent::ServerInfo(w)) => {
+                    println!(
+                        "welcome: \"{}\" ({}), map {}, {} Hz, {}/{} players",
+                        w.server_name, w.server_id, w.map, w.tick_rate, w.current_players, w.max_players
+                    );
+                    if play {
+                        let mut client = V2NetworkClient::new(f64::from(w.tick_rate));
+                        match prediction::install_map(&mut client, data, &w.map) {
+                            Ok(()) => println!("predicting on {}", w.map),
+                            Err(why) => println!("predicting without collision: {why}"),
+                        }
+                        predictor = Some(client);
+                    }
+                }
                 SessionEvent::Host(HostEvent::Joined {
                     player_id,
                     entity_id: e,
@@ -529,16 +563,41 @@ fn play_match(url: &str, name: &str, ticket: Option<String>, seconds: f64, play:
                     snapshots += 1;
                     events += state.events.len();
                     tick = state.tick;
-                    for event in state.events {
+                    for event in &state.events {
                         if let SnapshotEvent::MatchState(v) = event {
                             if let Some(rows) = v.get("standings").and_then(Value::as_array) {
                                 standings = rows.to_vec();
                             }
-                            match_state = Some(v);
+                            match_state = Some(v.clone());
                         }
                     }
                     if let Some(t) = state.entities.get(&entity_id).and_then(|e| e.transform) {
                         position = Some([t.position.x, t.position.y, t.position.z]);
+                    }
+                    if let Some(client) = &mut predictor {
+                        // GameEvents' weapon sync: the held weapon's speed bonus.
+                        for event in &state.events {
+                            if let SnapshotEvent::WeaponState {
+                                entity_id: id,
+                                current_weapon,
+                                ..
+                            } = event
+                                && *id == entity_id
+                            {
+                                client.set_speed_bonus(weapon_speed_bonus(current_weapon));
+                            }
+                        }
+                        match prediction::server_snapshot(&state, &entity_id) {
+                            Some(snapshot) => {
+                                if !alive {
+                                    // Back from the dead (or in for the first time).
+                                    client.reset_for_respawn();
+                                    alive = true;
+                                }
+                                client.buffer_snapshot(snapshot, now_ms());
+                            }
+                            None => alive = false,
+                        }
                     }
                 }
                 SessionEvent::Host(HostEvent::ClockSync { offset, rtt }) => clock = (offset, rtt),
@@ -562,18 +621,36 @@ fn play_match(url: &str, name: &str, ticket: Option<String>, seconds: f64, play:
             }
         }
 
+        if let Some(client) = &mut predictor {
+            client.process_buffered_snapshots(now_ms());
+        }
         // 125 commands a second: forward, turning slowly.
         while joined && Instant::now() >= next_command {
             next_command += Duration::from_millis(8);
             yaw += 0.004;
-            session.send(SessionRequest::Command(Command {
+            let command = Command {
                 direction: [js_sin(yaw), 0.0, js_cos(yaw)],
                 pitch: 0.0,
                 yaw,
                 buttons: 1,
                 tick,
                 weapon_slot: 0,
-            }));
+            };
+            if let Some(client) = &mut predictor {
+                // Predict what the server simulates: the f32 wire values (19.6).
+                let sent = command.as_sent();
+                client.process_input(
+                    ClientInput {
+                        direction: Vec3::new(sent.direction[0], sent.direction[1], sent.direction[2]),
+                        pitch: sent.pitch,
+                        yaw: sent.yaw,
+                        buttons: u32::from(sent.buttons),
+                        client_tick: sent.tick,
+                    },
+                    now_ms(),
+                );
+            }
+            session.send(SessionRequest::Command(command));
         }
 
         if last_report.elapsed() >= Duration::from_secs(2) {
@@ -586,6 +663,22 @@ fn play_match(url: &str, name: &str, ticket: Option<String>, seconds: f64, play:
             );
             if let Some(p) = position {
                 println!("  me at ({:.1}, {:.1}, {:.1})", p[0], p[1], p[2]);
+            }
+            if let Some(client) = &predictor {
+                let info = client.debug_info(now_ms());
+                let p = client.position();
+                println!(
+                    "  predicted ({:.1}, {:.1}, {:.1}): {} confirmed, {} corrected (last error {:.2}), {} suppressed, {} resyncs, {} pending",
+                    p.x,
+                    p.y,
+                    p.z,
+                    info.confirmed_count,
+                    info.reconcile_count,
+                    info.last_error,
+                    info.suppressed_snapshots,
+                    info.resync_count,
+                    info.pending_inputs
+                );
             }
             if let Some(m) = &match_state {
                 print_standings(m, &standings);

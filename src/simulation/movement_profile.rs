@@ -111,6 +111,27 @@ struct JumppadVolume {
     dest: Vec3,
 }
 
+/// `MovementProfileState`: what a profile carries from one step to the next
+/// besides position and velocity; see [`MovementProfile::save_state`].
+#[derive(Debug, Clone, PartialEq)]
+pub struct MovementProfileState {
+    pub is_grounded: bool,
+    pub was_grounded_last_frame: bool,
+    pub jump_consumed: bool,
+    pub water_level: WaterLevel,
+    pub water_jump_until_ms: f64,
+    pub prone_in_water: bool,
+    pub in_ladder_volume: bool,
+    pub climbing: bool,
+    pub ladder_detach_until_ms: f64,
+    pub sim_now_ms: f64,
+    pub actual_horiz_speed: f64,
+    pub smoothed_y: f64,
+    pub wall_jump: WallJump,
+    pub slide: Slide,
+    pub ledge_grab: LedgeGrab,
+}
+
 /// `MovementProfile`.
 #[derive(Debug, Clone, PartialEq)]
 pub struct MovementProfile {
@@ -257,6 +278,50 @@ impl MovementProfile {
     }
 
     /// `setGrounded`.
+    /// `saveState`: everything this profile carries from one step to the
+    /// next. Tuning, map volumes and the speed bonus are inputs, not state.
+    /// A reconciliation replay starts from the state the acknowledged
+    /// command left.
+    #[must_use]
+    pub fn save_state(&self) -> MovementProfileState {
+        MovementProfileState {
+            is_grounded: self.is_grounded,
+            was_grounded_last_frame: self.was_grounded_last_frame,
+            jump_consumed: self.jump_consumed,
+            water_level: self.water_level,
+            water_jump_until_ms: self.water_jump_until_ms,
+            prone_in_water: self.prone_in_water,
+            in_ladder_volume: self.in_ladder_volume,
+            climbing: self.climbing,
+            ladder_detach_until_ms: self.ladder_detach_until_ms,
+            sim_now_ms: self.sim_now_ms,
+            actual_horiz_speed: self.actual_horiz_speed,
+            smoothed_y: self.smoothed_y,
+            wall_jump: self.wall_jump.clone(),
+            slide: self.slide,
+            ledge_grab: self.ledge_grab,
+        }
+    }
+
+    /// `loadState`: resume from a state taken by [`Self::save_state`].
+    pub fn load_state(&mut self, state: &MovementProfileState) {
+        self.is_grounded = state.is_grounded;
+        self.was_grounded_last_frame = state.was_grounded_last_frame;
+        self.jump_consumed = state.jump_consumed;
+        self.water_level = state.water_level;
+        self.water_jump_until_ms = state.water_jump_until_ms;
+        self.prone_in_water = state.prone_in_water;
+        self.in_ladder_volume = state.in_ladder_volume;
+        self.climbing = state.climbing;
+        self.ladder_detach_until_ms = state.ladder_detach_until_ms;
+        self.sim_now_ms = state.sim_now_ms;
+        self.actual_horiz_speed = state.actual_horiz_speed;
+        self.smoothed_y = state.smoothed_y;
+        self.wall_jump = state.wall_jump.clone();
+        self.slide = state.slide;
+        self.ledge_grab = state.ledge_grab;
+    }
+
     pub fn set_grounded(&mut self, grounded: bool) {
         self.is_grounded = grounded;
     }

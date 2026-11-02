@@ -159,6 +159,19 @@ pub fn weapon_model(id: &str) -> Option<&'static WeaponModel> {
     ALL.into_iter().find(|w| w.id == id)
 }
 
+/// `WEAPONS[id]?.speedBonus ?? 0`: the weapon's run speed bonus, which the
+/// server applies per entity and prediction must match (blade +10, riot gun
+/// +5, electrobolt and rocket launcher -25).
+#[must_use]
+pub fn weapon_speed_bonus(id: &str) -> f64 {
+    match id {
+        "blade" => 10.0,
+        "riotgun" => 5.0,
+        "electrobolt" | "rlauncher" => -25.0,
+        _ => 0.0,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

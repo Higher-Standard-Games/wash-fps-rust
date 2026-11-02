@@ -2580,6 +2580,42 @@ fit and did not count the parity harness.
 
 Newest first. Each entry names the commits and what proves them.
 
+### Milestone 4: prediction and reconciliation (November 2, 2026)
+
+- **shagger `331ec69`.** `network::client::snapshot_buffer` ports
+  `SnapshotBuffer.ts` whole (stale-tick rejection, the jitter-adaptive
+  delay, server-time bracketing shifted by the measured transit, teleport
+  snap, shortest-path yaw, extrapolation capped at 60 ms, frame sampling);
+  the caller passes the clock and the two cvars.
+  `shared::bsp::spawn_point_table` ports the spawn points and facings.
+- **wash-fps-rust.**
+  - `simulation::movement_profile` gains `saveState` / `loadState`.
+  - `client::input_history` ports `InputHistory.ts`;
+    `client::v2_network_client` ports `V2NetworkClient.ts`: sanitize, lifts,
+    knockback drag and movement per command; confirm a snapshot against the
+    prediction stored for the command it acknowledges, else adopt authority,
+    resume the acknowledged movement state and replay; the ledge-grab and
+    wall-jump suppression with its time, divergence and knockback releases;
+    the two-second replay budget and resync; the decaying visual offset; the
+    spawn facing. `NetGraph` is left out; its numbers are in `DebugInfo`.
+  - `client::prediction` installs the map (collision, lifts, triggers,
+    spawn facings, from the packages in `--data`) and builds each
+    `ServerSnapshot` as `GameEvents.ts` does (`lift_state`,
+    `knockback_state`). The weapon sync sets the speed bonus
+    (`weapon_speed_bonus`).
+  - `washoi connect … --play` predicts its commands with the f32 values the
+    wire carries (19.6) and reports confirmed and corrected snapshots.
+    `WASHOI_PREDICT_DEBUG=1` prints each miss.
+- **Proof, live against a local `net:server` on `washoi_dm2`.** Running and
+  turning for 14 s: 735 snapshots confirm the prediction, 2 are corrected
+  (the first snapshot and the one before the weapon sync arrived), no
+  resyncs. Before the speed bonus the server ran 10 u/s faster with the
+  blade and nearly every snapshot was corrected, so the check bites.
+- **Not yet.** Combat (knockback, death and respawn) against bots, a real
+  network's latency, and the production servers, whose game ports the build
+  environment cannot reach.
+- **Next.** Milestone 7: watch a live match or a demo in the window.
+
 ### Milestone 6, twentieth slice: pipeline precompile (November 2, 2026)
 
 - **shagger `ff6abf8`.** `ModelRenderer::precompile` builds every pipeline
