@@ -182,8 +182,12 @@ pub fn play_view_sounds(
     audio.play_movement_sounds(view.snapshots, view_entity, teams, &mut |at| {
         renderer.ground_surface_flags(at)
     });
-    // A spectator: the match flow is called, never a lead.
-    audio.update_announcer(view.match_state, false, None, dt, now * 1000.0);
+    // A spectator: the match flow is called, never a lead; the bomb's
+    // lines are read for the side of the player followed.
+    let attacking = view
+        .match_state
+        .is_attacking(view_entity.and_then(|id| teams.get(id)).map(String::as_str));
+    audio.update_announcer(view.match_state, false, None, attacking, dt, now * 1000.0);
     audio.update_music(view.match_state, dt);
 }
 

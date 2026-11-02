@@ -23,6 +23,7 @@ use shagger::network::client::snapshot_buffer::EntitySnapshot;
 use std::path::Path;
 
 use crate::client::fps_announcer::{FpsAnnouncer, Lead, MatchMoment, fps_announcer_sound_paths};
+use crate::client::fps_bomb_audio::{FPS_BOMB_SOUND_PATHS, FpsBombAudio};
 use crate::client::fps_combat_audio::{FpsCombatAudio, fps_combat_sound_paths};
 use crate::client::fps_movement_audio::{FPS_MOVEMENT_SOUND_PATHS, FpsMovementAudio};
 use crate::client::fps_pickup_audio::{
@@ -228,6 +229,9 @@ pub struct GameAudio {
     reload: FpsReloadAudio,
     movement: FpsMovementAudio,
     announcer: FpsAnnouncer,
+    bomb: FpsBombAudio,
+    /// The match phase the announcer last saw (`_lastAnnouncedPhase`).
+    last_announced_phase: Option<MatchPhase>,
     /// The playlists (`AudioManager`'s music half) and the packages that
     /// hold their tracks.
     pub music: MusicPlayer,
@@ -251,6 +255,8 @@ impl GameAudio {
             reload: FpsReloadAudio::default(),
             movement: FpsMovementAudio::default(),
             announcer: FpsAnnouncer::default(),
+            bomb: FpsBombAudio::default(),
+            last_announced_phase: None,
             music: MusicPlayer::new(),
             playlists: HashMap::new(),
             music_packages: Pk3Loader::new(),
@@ -338,32 +344,56 @@ impl GameAudio {
             .map(String::as_str)
             .chain(FPS_MOVEMENT_SOUND_PATHS)
             .chain(FPS_PICKUP_SOUND_PATHS)
+            .chain(FPS_BOMB_SOUND_PATHS)
             .chain(announcer.iter().map(String::as_str));
         self.sfx.preload(paths, |p| pk3.get_file(p))
     }
 
-    /// The announcer's frame (`Game.ts`'s `announcer.update`): `playing`
-    /// with the local player's `lead` when in the match, `dt` in seconds,
-    /// `now` in ms.
+    /// The announcer's frame (`Game.ts`'s `announcer.update`, and the
+    /// bomb's sounds in Search and Destroy): `playing` with the local
+    /// player's `lead` when in the match, `attacking` for the side whose
+    /// lines to read, `dt` in seconds, `now` in ms.
+    #[allow(clippy::too_many_arguments)]
     pub fn update_announcer(
         &mut self,
         match_state: &MatchStateManager,
         playing: bool,
         lead: Option<Lead>,
+        attacking: bool,
         dt: f64,
         now: f64,
     ) {
+        let bomb_mode = match_state.bomb().is_some();
         let moment = MatchMoment {
             phase: match_state.phase(),
             time_remaining: match_state.time_remaining(),
             overtime: match_state.overtime(),
-            rounds_called_by_mode: match_state.bomb().is_some(),
+            rounds_called_by_mode: bomb_mode,
             playing,
             ready: match_state.is_ready(),
             lead,
             team_based: match_state.team_based(),
         };
         self.announcer.update(&mut self.sfx, &moment, dt, now);
+        let phase = match_state.phase();
+        if bomb_mode {
+            let (sfx, announcer, bomb) = (&mut self.sfx, &mut self.announcer, match_state.bomb());
+            self.bomb.update(sfx, announcer, bomb, dt, attacking, now);
+            if Some(phase) != self.last_announced_phase {
+                self.bomb
+                    .on_match_phase(sfx, announcer, phase, self.last_announced_phase, attacking, now);
+            }
+            self.bomb.update_round(
+                sfx,
+                announcer,
+                phase,
+                match_state.time_remaining(),
+                bomb,
+                attacking,
+                now,
+            );
+        }
+        self.last_announced_phase = Some(phase);
     }
 
     /// `processFPSMovementAudio` for each snapshot that arrived.
