@@ -463,6 +463,9 @@ pub struct LoadedMap {
     pub weapon: Option<String>,
     /// Load the player model for players that move (a demo or a match).
     pub remote_players: bool,
+    /// Load every weapon's view model, for a player in the match to hold
+    /// whichever the server says.
+    pub hands: bool,
     /// The map's brushes, for the shots of a demo or match to stop on.
     pub shot_world: Option<SweepCollisionBackend>,
 }
@@ -520,6 +523,7 @@ pub fn load_map(data: &Path, map: &str) -> Result<LoadedMap, String> {
         effects: Vec::new(),
         weapon: None,
         remote_players: false,
+        hands: false,
         shot_world: Some(SweepCollisionBackend::new(
             load_collision(&bytes).map_err(|e| format!("{path}: {e}"))?,
         )),
@@ -586,6 +590,8 @@ pub struct MapRenderer {
     pub image_processing: ImageProcessingConfiguration,
     /// The first-person weapon, drawn after the scene with depth cleared.
     pub view_model: Option<WeaponViewModel>,
+    /// The other weapons a player in the match may switch to, by id.
+    pub holster: HashMap<String, WeaponViewModel>,
 }
 
 /// SHAG's image processing: PostProcessingManager's default settings
@@ -606,7 +612,34 @@ pub fn shag_image_processing() -> ImageProcessingConfiguration {
     }
 }
 
+/// The weapons a player can hold (`WeaponsTable`'s ids).
+const HELD_WEAPONS: [&str; 8] = [
+    "blade",
+    "machinegun",
+    "riotgun",
+    "glauncher",
+    "rlauncher",
+    "plasmagun",
+    "voltaic",
+    "electrobolt",
+];
+
 impl MapRenderer {
+    /// Puts `id` in hand from the holster (the view model's weapon switch),
+    /// or nothing when dead. The weapon in hand keeps its sway when it
+    /// stays.
+    pub fn hold(&mut self, id: Option<&str>) {
+        let id = id.map(|id| if id == "lasergun" { "voltaic" } else { id });
+        let current = self.view_model.as_ref().map(|v| v.view.weapon.clone());
+        if current.as_deref() == id {
+            return;
+        }
+        if let Some(old) = self.view_model.take() {
+            self.holster.insert(old.view.weapon.clone(), old);
+        }
+        self.view_model = id.and_then(|id| self.holster.remove(id));
+    }
+
     /// Writes this frame's camera and culls for it.
     /// Poses and places the players a demo or a match shows this frame,
     /// advancing their clips by `dt`; players missing from `players` are
@@ -1020,11 +1053,23 @@ pub fn build_renderer(gpu: &Gpu, map: &mut LoadedMap, output_format: wgpu::Textu
             .inspect_err(|why| eprintln!("view model: {why}"))
             .ok()
     });
+    let mut holster = HashMap::new();
+    if map.hands {
+        for id in HELD_WEAPONS {
+            match WeaponViewModel::load(gpu, &mut map.pk3, id, format) {
+                Ok(model) => {
+                    holster.insert(id.to_owned(), model);
+                }
+                Err(why) => eprintln!("view model: {why}"),
+            }
+        }
+        println!("view models: {} weapons to hold", holster.len());
+    }
     // Pipeline precompile at load (21.10): every pipeline the loaded models
     // can take, so the first frame that shows one does not stall.
     let started = std::time::Instant::now();
     let mut compiled = models.precompile(gpu);
-    if let Some(view_model) = &mut view_model {
+    for view_model in view_model.iter_mut().chain(holster.values_mut()) {
         compiled += view_model.precompile(gpu);
     }
     println!("pipelines: {compiled} model pipelines in {:.0?}", started.elapsed());
@@ -1176,6 +1221,7 @@ pub fn build_renderer(gpu: &Gpu, map: &mut LoadedMap, output_format: wgpu::Textu
         post: ImageProcessingPostProcess::new(gpu, output_format),
         image_processing: shag_image_processing(),
         view_model,
+        holster,
     }
 }
 
@@ -1251,6 +1297,7 @@ pub fn run(o: &ViewOptions) -> i32 {
     map.effects.clone_from(&o.effects);
     map.weapon.clone_from(&o.weapon);
     map.remote_players = feed.is_some();
+    map.hands = o.join;
     let at = o.at.map(|[x, y, z, angle]| Camera::from_q3([x, y, z], angle));
     let Some(mut camera) = at.or_else(|| map.spawns.get(o.spawn).or(map.spawns.first()).copied()) else {
         eprintln!("{} has no spawn point", map_name);
@@ -1345,6 +1392,7 @@ pub fn run(o: &ViewOptions) -> i32 {
                 if let Some(eye) = p.eye() {
                     camera.position = Vec3::new(eye.x as f32, eye.y as f32, eye.z as f32);
                 }
+                renderer.hold(p.weapon_in_hand());
             }
             players = styled_players(view.players);
             projectiles = view.projectiles;

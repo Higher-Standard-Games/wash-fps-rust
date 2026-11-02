@@ -2604,6 +2604,10 @@ Newest first. Each entry names the commits and what proves them.
 - **Left out.** The flashes on a change, the tilts and the cockpit yaw,
   aiming down sights and the spread bloom in the crosshair, the weapon
   slots, the ammo warning, the powerup timer and the air meter.
+- **Then, the weapon in hand.** `washoi play` loads all eight view
+  models at start (`MapRenderer::hold` swaps them from a holster, as
+  `WeaponViewManager` switches) and holds whatever `weapon_state` says,
+  nothing while dead; the bob follows the predicted speed and ground.
 
 ### Milestone 9, second slice: playing in the window (November 2, 2026)
 

@@ -253,6 +253,13 @@ impl LivePlay {
         self.spawn_facing.take()
     }
 
+    /// The weapon to draw in hand: none while dead or before the server
+    /// says which.
+    #[must_use]
+    pub fn weapon_in_hand(&self) -> Option<&str> {
+        (self.alive && !self.weapon.is_empty()).then_some(self.weapon.as_str())
+    }
+
     #[must_use]
     pub fn velocity(&self) -> Vec3 {
         self.predictor.velocity()

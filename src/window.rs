@@ -68,6 +68,8 @@ struct App {
     firing: bool,
     /// The view bob cycle (radians), advanced with horizontal speed.
     bob_cycle: f64,
+    /// On the ground, for the view bob (always, flying free).
+    grounded: bool,
     /// A demo or a live match playing on the map.
     feed: Option<Feed>,
     /// The player the camera chases (F cycles), by place in id order.
@@ -223,7 +225,9 @@ impl App {
                 }
                 let v = p.velocity();
                 self.velocity = Vec3::new(v.x as f32, v.y as f32, v.z as f32);
+                self.grounded = p.grounded();
                 self.follow = None;
+                s.renderer.hold(p.weapon_in_hand());
             }
             let players = styled_players(view.players);
             s.renderer.set_live_players(&players, f64::from(dt));
@@ -277,7 +281,7 @@ impl App {
             self.bob_cycle += horizontal * f64::from(dt) / 160.0 * std::f64::consts::PI;
             view_model.view.update(&ViewModelInput {
                 delta_time: f64::from(dt),
-                grounded: true,
+                grounded: self.grounded,
                 horizontal_speed: horizontal,
                 velocity_y: f64::from(self.velocity.y),
                 landing_velocity: 0.0,
@@ -453,6 +457,7 @@ pub fn run(
         aiming: false,
         firing: false,
         bob_cycle: 0.0,
+        grounded: true,
         feed,
         follow,
         audio,
