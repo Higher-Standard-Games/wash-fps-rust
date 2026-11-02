@@ -54,6 +54,7 @@ use shagger::weapon::weapon_view_manager::ViewModelInput;
 use washoi::client::demo_playback::{DemoPlayback, DemoView, LiveProjectile};
 use washoi::client::fps_hud::{FpsHud, WatchFrame};
 use washoi::client::game_events::{EffectTargets, GameAudio, play_remote_shots};
+use washoi::client::live_play::{LivePlay, PlayInput};
 use washoi::client::live_watch::LiveWatch;
 use washoi::client::match_state_manager::MatchStateManager;
 use washoi::client::weapon_view::WeaponViewModel;
@@ -147,6 +148,8 @@ pub struct ViewOptions {
     pub audio_out: Option<PathBuf>,
     /// Hold the scoreboard open (`--scoreboard`, Tab in the window).
     pub scoreboard: bool,
+    /// Join the match in `watch` as a player (`washoi play`).
+    pub join: bool,
 }
 
 /// The HUD's frame of a demo or a match being watched, behind the
@@ -162,9 +165,11 @@ pub fn update_watch_hud(
     width: f32,
     height: f32,
 ) {
-    let view_entity = follow.and_then(|i| players.get(i)).map(|(id, _, _)| id.as_str());
+    let local = feed.local_entity();
+    let view_entity = local.or_else(|| follow.and_then(|i| players.get(i)).map(|(id, _, _)| id.as_str()));
     hud.update_watching(
         &WatchFrame {
+            playing: local.is_some(),
             roster: feed.roster(),
             match_state: feed.match_state(),
             events,
@@ -204,7 +209,9 @@ pub fn play_view_sounds(
     audio
         .sfx
         .set_listener(camera.position.as_dvec3(), camera.forward().as_dvec3(), DVec3::Y);
-    let view_entity = follow.and_then(|i| players.get(i)).map(|(id, _, _)| id.as_str());
+    let view_entity = view
+        .local
+        .or_else(|| follow.and_then(|i| players.get(i)).map(|(id, _, _)| id.as_str()));
     let position = |id: &str| {
         players
             .iter()
@@ -230,12 +237,16 @@ pub struct DemoViewSounds<'a> {
     pub teams: &'a HashMap<String, String>,
     pub snapshots: &'a [HashMap<String, EntitySnapshot>],
     pub match_state: &'a MatchStateManager,
+    /// Our own entity when playing.
+    pub local: Option<&'a str>,
 }
 
 /// Where the moving players and projectiles come from.
 pub enum Feed {
     Demo(DemoPlayback),
     Live(LiveWatch),
+    /// Playing: the connection, and this frame's keys and mouse.
+    Play(Box<LivePlay>, PlayInput),
 }
 
 impl Feed {
@@ -244,6 +255,7 @@ impl Feed {
         match self {
             Self::Demo(d) => d.advance(dt),
             Self::Live(l) => l.advance(),
+            Self::Play(p, input) => p.advance(input, dt),
         }
     }
 
@@ -253,6 +265,7 @@ impl Feed {
         match self {
             Self::Demo(d) => d.match_state(),
             Self::Live(l) => l.match_state(),
+            Self::Play(p, _) => p.match_state(),
         }
     }
 
@@ -262,6 +275,7 @@ impl Feed {
         match self {
             Self::Demo(d) => d.roster(),
             Self::Live(l) => l.roster(),
+            Self::Play(p, _) => p.roster(),
         }
     }
 
@@ -270,6 +284,16 @@ impl Feed {
         match self {
             Self::Demo(d) => d.finished().then(|| "demo ended".to_owned()),
             Self::Live(l) => l.closed.clone(),
+            Self::Play(p, _) => p.closed.clone(),
+        }
+    }
+
+    /// Our own entity when playing.
+    #[must_use]
+    pub fn local_entity(&self) -> Option<&str> {
+        match self {
+            Self::Play(p, _) if !p.entity_id.is_empty() => Some(&p.entity_id),
+            _ => None,
         }
     }
 }
@@ -1175,6 +1199,17 @@ pub fn run(o: &ViewOptions) -> i32 {
                 return 1;
             }
         }
+    } else if let Some((url, name, ticket)) = &o.watch
+        && o.join
+    {
+        println!("connecting to {url} as {name}, to play");
+        match LivePlay::connect(url, name, ticket.clone(), &o.data, std::time::Duration::from_secs(15)) {
+            Ok(p) => Some(Feed::Play(Box::new(p), PlayInput::default())),
+            Err(why) => {
+                eprintln!("{why}");
+                return 1;
+            }
+        }
     } else if let Some((url, name, ticket)) = &o.watch {
         println!("connecting to {url} as {name}");
         match LiveWatch::connect(url, name, ticket.clone(), std::time::Duration::from_secs(15)) {
@@ -1190,6 +1225,7 @@ pub fn run(o: &ViewOptions) -> i32 {
     let map_name = match &feed {
         Some(Feed::Demo(d)) => d.header.map.clone(),
         Some(Feed::Live(l)) => l.map.clone(),
+        Some(Feed::Play(p, _)) => p.map.clone(),
         None => o.map.clone(),
     };
     let mut map = match load_map(&o.data, &map_name) {
@@ -1256,7 +1292,7 @@ pub fn run(o: &ViewOptions) -> i32 {
         let steps = (o.time * 60.0).round() as usize;
         let mut players = Vec::new();
         let mut projectiles = Vec::new();
-        let live = matches!(feed, Feed::Live(_));
+        let live = matches!(feed, Feed::Live(_) | Feed::Play(..));
         // Offline sound at 48 kHz, 800 frames a step.
         let mut audio = o.audio_out.as_ref().map(|_| {
             let mut audio = GameAudio::new(AudioV2Sfx::offline(AUDIO_OUT_RATE));
@@ -1280,7 +1316,26 @@ pub fn run(o: &ViewOptions) -> i32 {
             if live {
                 std::thread::sleep(std::time::Duration::from_micros(16_667));
             }
+            if let Feed::Play(_, input) = feed {
+                // Headless play: run forward and fire, looking where the camera looks.
+                *input = PlayInput {
+                    forward: true,
+                    fire: true,
+                    yaw: f64::from(camera.yaw),
+                    pitch: f64::from(camera.pitch),
+                    ..PlayInput::default()
+                };
+            }
             let view = feed.advance(1.0 / 60.0);
+            if let Feed::Play(p, _) = feed {
+                if let Some(yaw) = p.take_spawn_facing() {
+                    camera.yaw = yaw as f32;
+                    camera.pitch = 0.0;
+                }
+                if let Some(eye) = p.eye() {
+                    camera.position = Vec3::new(eye.x as f32, eye.y as f32, eye.z as f32);
+                }
+            }
             players = styled_players(view.players);
             projectiles = view.projectiles;
             renderer.set_live_players(&players, 1.0 / 60.0);
@@ -1313,6 +1368,7 @@ pub fn run(o: &ViewOptions) -> i32 {
                         teams: &view.teams,
                         snapshots: &view.snapshots,
                         match_state: feed.match_state(),
+                        local: feed.local_entity(),
                     },
                     &players,
                     o.follow,
@@ -1357,6 +1413,18 @@ pub fn run(o: &ViewOptions) -> i32 {
             m.gametype_name(),
             m.overtime()
         );
+        if let Feed::Play(p, _) = feed {
+            let at = p.eye().unwrap_or_default();
+            println!(
+                "  you: {} {}, {}, eye at {:.0},{:.0},{:.0}",
+                p.entity_id,
+                if p.alive { "alive" } else { "dead" },
+                p.weapon,
+                at.x,
+                at.z,
+                at.y
+            );
+        }
         if let Some(why) = feed.ended() {
             println!("  ({why})");
         }

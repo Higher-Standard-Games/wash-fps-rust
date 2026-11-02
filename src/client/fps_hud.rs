@@ -51,6 +51,8 @@ pub struct WatchFrame<'a> {
     pub view_entity: Option<&'a str>,
     /// A recording rather than a live match.
     pub playback: bool,
+    /// We are in the match, and `view_entity` is our own.
+    pub playing: bool,
     pub dt: f64,
 }
 
@@ -78,9 +80,14 @@ impl FpsHud {
     /// then [`Self::update`]).
     pub fn update_watching(&mut self, frame: &WatchFrame<'_>, width: f32, height: f32) {
         let state = &mut self.state;
-        state.watcher = true;
+        state.watcher = !frame.playing;
         state.playback = frame.playback;
-        state.spectating = frame.view_entity.unwrap_or_default().to_owned();
+        if frame.playing {
+            state.spectating.clear();
+            state.local_player_id = frame.view_entity.unwrap_or_default().to_owned();
+        } else {
+            state.spectating = frame.view_entity.unwrap_or_default().to_owned();
+        }
         state.update_from_game_state(frame.roster, frame.match_state);
         for event in frame.events {
             if let SnapshotEvent::Death {
@@ -103,7 +110,7 @@ impl FpsHud {
                     &DeathParties {
                         killer_name: &killer_name,
                         victim_name: &victim_name,
-                        local_entity_id: None,
+                        local_entity_id: frame.playing.then_some(frame.view_entity).flatten(),
                         view_entity_id: frame.view_entity,
                     },
                 );

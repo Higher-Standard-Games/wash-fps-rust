@@ -19,6 +19,7 @@ use shagger::rendering::offscreen::{begin_main_pass, begin_overlay_pass, begin_u
 use shagger::rendering::wgpu;
 use shagger::weapon::weapon_view_manager::ViewModelInput;
 use washoi::client::fps_hud::FpsHud;
+use washoi::client::live_play::PlayInput;
 use winit::application::ApplicationHandler;
 use winit::dpi::PhysicalSize;
 use winit::event::{DeviceEvent, DeviceId, ElementState, MouseButton, WindowEvent};
@@ -63,6 +64,8 @@ struct App {
     velocity: Vec3,
     /// The right mouse button, aiming the view model down its sights.
     aiming: bool,
+    /// The left mouse button held while the mouse is captured.
+    firing: bool,
     /// The view bob cycle (radians), advanced with horizontal speed.
     bob_cycle: f64,
     /// A demo or a live match playing on the map.
@@ -133,7 +136,48 @@ impl App {
         self.captured = grab;
     }
 
+    /// This frame's keys and mouse as a player's input (`FPSActions`'
+    /// default binds: WASD, Space, C, Shift, the mouse buttons, R, E, 1-9).
+    fn play_input(&self) -> PlayInput {
+        let key = |k| self.held.contains(&k);
+        const SLOTS: [KeyCode; 9] = [
+            KeyCode::Digit1,
+            KeyCode::Digit2,
+            KeyCode::Digit3,
+            KeyCode::Digit4,
+            KeyCode::Digit5,
+            KeyCode::Digit6,
+            KeyCode::Digit7,
+            KeyCode::Digit8,
+            KeyCode::Digit9,
+        ];
+        PlayInput {
+            forward: key(KeyCode::KeyW),
+            backward: key(KeyCode::KeyS),
+            left: key(KeyCode::KeyA),
+            right: key(KeyCode::KeyD),
+            jump: key(KeyCode::Space),
+            crouch: key(KeyCode::KeyC) || key(KeyCode::ControlLeft),
+            sprint: key(KeyCode::ShiftLeft),
+            fire: self.firing,
+            alt_fire: self.aiming,
+            reload: key(KeyCode::KeyR),
+            use_key: key(KeyCode::KeyE),
+            yaw: f64::from(self.camera.yaw),
+            pitch: f64::from(self.camera.pitch),
+            weapon_slot: SLOTS.iter().position(|&k| key(k)).map_or(0, |i| i as u8 + 1),
+        }
+    }
+
     fn step(&mut self, dt: f32) {
+        if matches!(self.feed, Some(Feed::Play(..))) {
+            let input = self.play_input();
+            if let Some(Feed::Play(_, held)) = &mut self.feed {
+                *held = input;
+            }
+            self.velocity = Vec3::ZERO;
+            return;
+        }
         let key = |k| self.held.contains(&k);
         let axis = |plus, minus| f32::from(u8::from(key(plus))) - f32::from(u8::from(key(minus)));
         let speed = if key(KeyCode::ShiftLeft) { SPEED * 3.0 } else { SPEED };
@@ -167,6 +211,20 @@ impl App {
         s.renderer.item_time += f64::from(dt);
         if let Some(feed) = &mut self.feed {
             let view = feed.advance(f64::from(dt));
+            if let Feed::Play(p, _) = feed {
+                // First person: the eye where prediction puts it.
+                if let Some(yaw) = p.take_spawn_facing() {
+                    // `faceSpawn`: the spawn's facing, level.
+                    self.camera.yaw = yaw as f32;
+                    self.camera.pitch = 0.0;
+                }
+                if let Some(eye) = p.eye() {
+                    self.camera.position = Vec3::new(eye.x as f32, eye.y as f32, eye.z as f32);
+                }
+                let v = p.velocity();
+                self.velocity = Vec3::new(v.x as f32, v.y as f32, v.z as f32);
+                self.follow = None;
+            }
             let players = styled_players(view.players);
             s.renderer.set_live_players(&players, f64::from(dt));
             if let Some(i) = self.follow {
@@ -187,6 +245,7 @@ impl App {
                         teams: &view.teams,
                         snapshots: &view.snapshots,
                         match_state: feed.match_state(),
+                        local: feed.local_entity(),
                     },
                     &players,
                     self.follow,
@@ -309,10 +368,16 @@ impl ApplicationHandler for App {
                 }
             }
             WindowEvent::MouseInput {
-                state: ElementState::Pressed,
+                state,
                 button: MouseButton::Left,
                 ..
-            } => self.set_captured(true),
+            } => {
+                if !self.captured && state == ElementState::Pressed {
+                    self.set_captured(true);
+                } else {
+                    self.firing = state == ElementState::Pressed;
+                }
+            }
             WindowEvent::MouseInput {
                 state,
                 button: MouseButton::Right,
@@ -320,6 +385,7 @@ impl ApplicationHandler for App {
             } => self.aiming = state == ElementState::Pressed,
             WindowEvent::Focused(false) => {
                 self.held.clear();
+                self.firing = false;
                 self.set_captured(false);
             }
             WindowEvent::RedrawRequested => {
@@ -385,6 +451,7 @@ pub fn run(
         error: None,
         velocity: Vec3::ZERO,
         aiming: false,
+        firing: false,
         bob_cycle: 0.0,
         feed,
         follow,

@@ -2582,6 +2582,34 @@ fit and did not count the parity harness.
 
 Newest first. Each entry names the commits and what proves them.
 
+### Milestone 9, second slice: playing in the window (November 2, 2026)
+
+- **shagger `130f012`.** `NetworkGameHost::send_request_spawn` and
+  `SessionRequest::RequestSpawn` (`Game.sendRequestSpawn`).
+- **wash-fps-rust.** `client/live_play.rs` is the player's side of a live
+  match: it joins, installs the map's prediction (collision, triggers,
+  spawn facings), and on every frame drains the session, buffers our own
+  snapshots for `V2NetworkClient` (reset on respawn, weapon speed bonus
+  from `weapon_state`), and sends commands at 125 Hz with the newest
+  snapshot tick, predicting from the f32 values the wire carries.
+  `command_for` builds `sendInput`'s buttons and world direction. While
+  dead or frozen the input is stripped; fire or jump asks to respawn after
+  `GameEvents`' three seconds. The server's placement at a spawn turns the
+  view to the spawn's facing (`faceSpawn`).
+- **`washoi play <ws://server>`** opens the window first person: WASD,
+  Space, C or Ctrl, Shift, the mouse to look, left and right buttons to
+  fire, R, E and 1 to 9 for weapons. The eye is the predicted position
+  plus the view height and the crouch offset; other players, sounds and
+  the HUD come from the same feed as watching, with our entity as the
+  view's. With `--screenshot` it runs forward and fires for `--time`
+  seconds and prints where it ended up.
+- **Proof, live against a local `net:server` on `washoi_dm2`** with three
+  bots: the client joins, spawns facing the spawn point's way, runs about
+  380 units in 1.5 seconds and draws the first-person frame with the HUD.
+- **Not yet.** The view-model weapon, crosshair, health, armor and ammo;
+  our own sounds (footsteps, jumps, weapon fire before the server echoes
+  it).
+
 ### Milestone 9, first slice: the HUD's 2D layer and the top of the HUD (November 2, 2026)
 
 - **shagger `e16cdc8`, `86d97bf`.** `ui/` holds the 2D layer section 11
