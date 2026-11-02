@@ -2580,6 +2580,25 @@ fit and did not count the parity harness.
 
 Newest first. Each entry names the commits and what proves them.
 
+### Milestone 6, eighteenth slice: glow maps (November 2, 2026)
+
+- **shagger.** `world_renderer` loads a surface's glow image as
+  `loadTextures` does (`loadOptionalTexture` with no suffixes; the shader
+  registry already resolves `_glow` images and glow stages):
+  - on a lit StandardMaterial it adds as the emissive in display space, and
+    on the generated PBR material as linear emissive (`GAMMAEMISSIVE`);
+  - on a fullbright surface it replaces the base image as the emissive,
+    since lighting is disabled there;
+  - with an animated glow stage (`glowStage`) it draws instead as
+    `registerGlowAnimation`'s shine: a second pass, unlit, `ALPHA_ONEONE`,
+    no depth write, polygon offset, stepped by that stage's `tcMod`,
+    `rgbGen` and `animMap`.
+- **Parity** (`washoi_dm2`; glow images on the lamp panels, light strips,
+  teleporter and jump pad): the teleporter alcove at 1.6 levels, the mega
+  health floor at 1.6, the jump pad view at 2.2. What is left there is
+  the browser's teleporter sparkle and its hidden health pickup.
+- **Next.** The remaining 21.10 items.
+
 ### Milestone 6, seventeenth slice: companion surfaces and world lights (November 2, 2026)
 
 - **shagger.**
