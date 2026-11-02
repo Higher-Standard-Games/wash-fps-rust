@@ -272,6 +272,16 @@ pub enum Feed {
 }
 
 impl Feed {
+    /// The game server, for a live match.
+    #[must_use]
+    pub fn server_url(&self) -> Option<String> {
+        match self {
+            Self::Demo(_) => None,
+            Self::Live(l) => Some(l.url.clone()),
+            Self::Play(p, _) => Some(p.url.clone()),
+        }
+    }
+
     /// The next frame, `dt` seconds on (a live match keeps its own clock).
     pub fn advance(&mut self, dt: f64) -> DemoView {
         match self {

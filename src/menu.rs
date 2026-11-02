@@ -17,9 +17,11 @@ use shagger::ui::egui_layer::{EguiLayer, egui};
 use washoi::client::lobby_panel::{LobbyChoice, LobbyPanel, install_style};
 use washoi::client::settings::fps_settings_view::FpsSettingsView;
 use washoi::client::settings::settings_model::SETTINGS_PAGES;
+use washoi::console::GameConsole;
 use winit::application::ApplicationHandler;
-use winit::event::WindowEvent;
+use winit::event::{ElementState, WindowEvent};
 use winit::event_loop::ActiveEventLoop;
+use winit::keyboard::{KeyCode, PhysicalKey};
 use winit::window::{Window, WindowId};
 
 use crate::window::{OpenWindow, open_window, run_on_event_loop};
@@ -42,6 +44,7 @@ struct MenuWindow {
 
 struct MenuApp {
     panel: LobbyPanel,
+    console: GameConsole,
     open: Option<MenuWindow>,
     choice: Option<LobbyChoice>,
     error: Option<String>,
@@ -63,8 +66,14 @@ impl MenuApp {
             }
         };
         let view = frame.texture.create_view(&wgpu::TextureViewDescriptor::default());
-        let panel = &mut self.panel;
-        let ui = m.layer.run(&m.window, |ui| panel.ui(ui));
+        let (panel, console) = (&mut self.panel, &mut self.console);
+        let ui = m.layer.run(&m.window, |ui| {
+            panel.ui(ui);
+            if std::mem::take(&mut panel.console_pressed) {
+                console.console.toggle();
+            }
+            console.ui(ui.ctx());
+        });
         let mut encoder = m
             .gpu
             .device
@@ -128,6 +137,14 @@ impl ApplicationHandler for MenuApp {
     }
 
     fn window_event(&mut self, event_loop: &ActiveEventLoop, _id: WindowId, event: WindowEvent) {
+        if let WindowEvent::KeyboardInput { event: key, .. } = &event
+            && key.physical_key == PhysicalKey::Code(KeyCode::Backquote)
+        {
+            if key.state == ElementState::Pressed && !key.repeat {
+                self.console.console.toggle();
+            }
+            return;
+        }
         if let Some(m) = &mut self.open
             && m.layer.on_window_event(&m.window, &event)
         {
@@ -144,7 +161,7 @@ impl ApplicationHandler for MenuApp {
             }
             WindowEvent::RedrawRequested => {
                 self.redraw();
-                if self.choice.is_some() {
+                if self.choice.is_some() || self.console.ctx.quit {
                     event_loop.exit();
                 }
             }
@@ -163,6 +180,7 @@ impl ApplicationHandler for MenuApp {
 /// `None` when the window closes first.
 pub fn choose(url: &str, key_file: Option<std::path::PathBuf>) -> Result<Option<LobbyChoice>, String> {
     let mut app = MenuApp {
+        console: GameConsole::new(washoi::config_dir()),
         panel: LobbyPanel::connect(url, key_file),
         open: None,
         choice: None,
@@ -183,6 +201,8 @@ pub struct Shot {
     pub quick: bool,
     /// Open this settings page (`controls`, `gameplay`, `video`, `audio`).
     pub settings: Option<String>,
+    /// Open the console and run these commands (`;` between them).
+    pub console: Option<String>,
     pub seconds: f64,
     pub size: (u32, u32),
 }
@@ -207,6 +227,16 @@ pub fn screenshot(
             .map(|p| p.0)
             .ok_or_else(|| format!("no settings page {page}"))?;
         panel.settings = Some(FpsSettingsView { page: id });
+    }
+    let mut console = GameConsole::new(None);
+    if let Some(lines) = &shot.console {
+        console.console.open = true;
+        for line in lines.split(';') {
+            console.run(line.trim());
+        }
+        for (_, text) in &console.console.lines {
+            println!("console: {text}");
+        }
     }
     let input = || egui::RawInput {
         screen_rect: Some(egui::Rect::from_min_size(
@@ -234,7 +264,10 @@ pub fn screenshot(
                 status = now;
             }
         }
-        let frame = layer.run_input(input(), |ui| panel.ui(ui));
+        let frame = layer.run_input(input(), |ui| {
+            panel.ui(ui);
+            console.ui(ui.ctx());
+        });
         pixels = render_encoded_to_rgba(&gpu, width, height, BACKGROUND, |encoder, view| {
             layer.paint(&gpu, encoder, view, [width, height], frame);
         });

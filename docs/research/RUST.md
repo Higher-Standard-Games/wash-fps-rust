@@ -2582,6 +2582,34 @@ fit and did not count the parity harness.
 
 Newest first. Each entry names the commits and what proves them.
 
+### Milestone 10, third slice: the console (November 2, 2026)
+
+- **shagger `e86aa5d`.** `console/command.rs` and
+  `console/command_registry.rs` port `Command.ts` and
+  `CommandRegistry.ts`: names and aliases, developer-only commands, cvars
+  answering as commands (`cl_fov` shows it, `cl_fov 100` sets it),
+  `executeChecked`'s failures, quoted arguments and completion. Commands
+  are generic over the game's context and run with the registry at hand,
+  so `exec` and `help` work as in the browser. The engine's cvar and
+  system commands are ported one per file under `console/commands/`
+  (`set`, `toggle`, `reset`, `resetall`, `cvarlist`, `cvarexport`, `echo`,
+  `exec` reading `.cfg` from the config directory, `help` with its
+  categories, `clear`, `quit`, `version`); the browser's auto-discovery is
+  `register_engine_commands`. `debug/debug_console.rs` ports
+  `DebugConsole.ts`' behaviour in egui: history on the arrows saved
+  between runs, Tab to the common prefix, cycling and the double-Tab list,
+  `con_size`, and the coloured log.
+- **wash-fps-rust.** `console/` holds Washoi's commands (`say_team`,
+  `disconnect` so far) and `GameConsole`. The backquote opens the console
+  over the match (it takes the keys and the mouse while open) and over the
+  menu, which also has a Console key on its rail. `quit` and `disconnect`
+  close the match window and go back to the menu. The history lives in
+  `~/.config/washoi/console-history.json`.
+- **Proof.** Unit tests for cvars as commands, completion, `help`, `exec`
+  with a `.cfg`, history and Tab completion. `washoi menu ... --screenshot
+  --console "help; cl_fov 104; cvarlist cg_; ..."` draws the console with
+  the results.
+
 ### Milestone 10, second slice: cvars and the settings pages (November 2, 2026)
 
 - **shagger `ef54fce`.** `core/cvar.rs` ports `Cvar.ts`: typed values with

@@ -36,7 +36,10 @@ use crate::view::{
     CLEAR, DemoViewSounds, Feed, LoadedMap, MapRenderer, build_renderer, chase_camera, play_view_sounds,
     styled_players, update_watch_hud,
 };
+use shagger::ui::egui_layer::EguiLayer;
 use washoi::client::game_events::GameAudio;
+use washoi::client::lobby_panel::install_style;
+use washoi::console::{ConsoleRequest, GameConsole};
 
 /// Units per second (Q3's run speed is 320).
 const SPEED: f32 = 320.0;
@@ -53,6 +56,8 @@ struct Surface {
     renderer: MapRenderer,
     /// The HUD over a demo or a match.
     hud: Option<FpsHud>,
+    /// The console's drawing.
+    egui: EguiLayer,
 }
 
 struct App {
@@ -82,6 +87,10 @@ struct App {
     follow: Option<usize>,
     /// The match's sound, when there is a sound card.
     audio: Option<GameAudio>,
+    /// The drop-down console (the backquote key) and its commands.
+    console: GameConsole,
+    /// A command asked to leave (`quit`, `disconnect`).
+    leave: bool,
 }
 
 impl App {
@@ -102,6 +111,8 @@ impl App {
                 None
             }
         });
+        let egui = EguiLayer::new(&gpu, &window, config.format);
+        install_style(&egui.ctx);
         self.surface = Some(Surface {
             window,
             gpu,
@@ -110,8 +121,35 @@ impl App {
             hdr,
             renderer,
             hud,
+            egui,
         });
         Ok(())
+    }
+
+    /// The backquote opens and closes the console (`DebugConsole`'s
+    /// keyboard handler); while it is open, the keys and the mouse are its.
+    fn console_event(&mut self, event: &WindowEvent) -> bool {
+        if let WindowEvent::KeyboardInput { event: key, .. } = event
+            && key.physical_key == PhysicalKey::Code(KeyCode::Backquote)
+        {
+            if key.state == ElementState::Pressed && !key.repeat {
+                self.console.console.toggle();
+                if self.console.console.open {
+                    self.set_captured(false);
+                    self.held.clear();
+                    self.firing = false;
+                }
+            }
+            return true;
+        }
+        let Some(s) = &mut self.surface else { return false };
+        let used = s.egui.on_window_event(&s.window, event);
+        self.console.console.open
+            && (used
+                || matches!(
+                    event,
+                    WindowEvent::KeyboardInput { .. } | WindowEvent::MouseInput { .. } | WindowEvent::MouseWheel { .. }
+                ))
     }
 
     fn set_captured(&mut self, captured: bool) {
@@ -360,10 +398,32 @@ impl App {
             let mut pass = begin_ui_pass(&mut encoder, &view);
             hud.draw(&mut pass);
         }
+        let console = &mut self.console;
+        let ui = s.egui.run(&s.window, |ui| console.ui(ui.ctx()));
+        s.egui
+            .paint(&s.gpu, &mut encoder, &view, [s.config.width, s.config.height], ui);
         s.gpu.queue.submit([encoder.finish()]);
         s.window.pre_present_notify();
         s.gpu.queue.present(frame);
         self.frames += 1;
+        self.serve_console();
+    }
+
+    /// What the console's commands asked for this frame.
+    fn serve_console(&mut self) {
+        for request in std::mem::take(&mut self.console.ctx.requests) {
+            match request {
+                ConsoleRequest::Say { text, team } => {
+                    if let Some(Feed::Play(p, _)) = &self.feed {
+                        p.say(&text, team);
+                    }
+                }
+                ConsoleRequest::Disconnect => self.leave = true,
+            }
+        }
+        if self.console.ctx.quit {
+            self.leave = true;
+        }
     }
 }
 
@@ -379,6 +439,9 @@ impl ApplicationHandler for App {
     }
 
     fn window_event(&mut self, event_loop: &ActiveEventLoop, _id: WindowId, event: WindowEvent) {
+        if self.console_event(&event) {
+            return;
+        }
         match event {
             WindowEvent::CloseRequested => event_loop.exit(),
             WindowEvent::Resized(size) => {
@@ -471,6 +534,10 @@ impl ApplicationHandler for App {
     }
 
     fn about_to_wait(&mut self, event_loop: &ActiveEventLoop) {
+        if self.leave {
+            event_loop.exit();
+            return;
+        }
         if let Some(limit) = self.seconds
             && self.started.elapsed() >= Duration::from_secs_f64(limit)
         {
@@ -568,9 +635,15 @@ pub fn run(
         firing: false,
         bob_cycle: 0.0,
         grounded: true,
+        console: {
+            let mut console = GameConsole::new(washoi::config_dir());
+            console.ctx.server = feed.as_ref().and_then(Feed::server_url);
+            console
+        },
         feed,
         follow,
         audio,
+        leave: false,
     };
     let ran = run_on_event_loop(&mut app);
     // Close the window before the next one opens on the same loop.

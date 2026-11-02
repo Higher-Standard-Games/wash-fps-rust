@@ -21,6 +21,8 @@ pub struct LiveWatch {
     started: Instant,
     /// The map the server runs.
     pub map: String,
+    /// The game server's address.
+    pub url: String,
     /// The spectator's own entity, left out of the bodies drawn.
     entity_id: String,
     /// Why the connection ended, once it has.
@@ -53,6 +55,7 @@ impl LiveWatch {
                         feed: SnapshotFeed::new(),
                         started: Instant::now(),
                         map: w.map.clone(),
+                        url: url.to_owned(),
                         entity_id: String::new(),
                         closed: None,
                         snapshots: 0,

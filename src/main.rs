@@ -9,7 +9,7 @@
 //! washoi watch <ws://game-server> [--name NAME] [--ticket TICKET] [--data DIR] [--screenshot FILE.png] [--time T] [--at X,Y,Z,YAW] [--follow N] [--seconds N]
 //! washoi play <ws://game-server> [--name NAME] [--ticket TICKET] [--data DIR] [--screenshot FILE.png] [--time T] [--say TEXT] [--seconds N]
 //! washoi connect <ws://game-server> [--name NAME] [--ticket TICKET] [--seconds N] [--play]
-//! washoi menu <ws://lobby> [--key-file FILE] [--cvars FILE] [--screenshot FILE.png [--quick | --settings PAGE] [--seconds N] [--size WxH]]
+//! washoi menu <ws://lobby> [--key-file FILE] [--cvars FILE] [--screenshot FILE.png [--quick | --settings PAGE | --console "CMD; CMD"] [--seconds N] [--size WxH]]
 //! washoi lobby <ws://lobby> [--key-file FILE] list
 //! washoi lobby <ws://lobby> [--key-file FILE] spectate [--window] [--seconds N]
 //! washoi lobby <ws://lobby> [--key-file FILE] queue <gametype> [--seconds N] [--play | --window]
@@ -85,7 +85,7 @@ fn usage() -> ! {
          \x20      washoi watch <ws://game-server> [--name NAME] [--ticket TICKET] [--data DIR] [--screenshot FILE.png] [--time T] [--at X,Y,Z,YAW] [--follow N] [--seconds N]\n\
          \x20      washoi play <ws://game-server> [--name NAME] [--ticket TICKET] [--data DIR] [--screenshot FILE.png] [--time T] [--say TEXT] [--seconds N]\n\
          \x20      washoi connect <ws://game-server> [--name NAME] [--ticket TICKET] [--seconds N] [--play]\n\
-         \x20      washoi menu <ws://lobby> [--key-file FILE] [--cvars FILE] [--screenshot FILE.png [--quick | --settings PAGE] [--seconds N] [--size WxH]]\n\
+         \x20      washoi menu <ws://lobby> [--key-file FILE] [--cvars FILE] [--screenshot FILE.png [--quick | --settings PAGE | --console \"CMD; CMD\"] [--seconds N] [--size WxH]]\n\
          \x20      washoi lobby <ws://lobby> [--key-file FILE] list\n\
          \x20      washoi lobby <ws://lobby> [--key-file FILE] spectate [--window] [--seconds N]\n\
          \x20      washoi lobby <ws://lobby> [--key-file FILE] queue <gametype> [--seconds N] [--play | --window]\n\
@@ -124,6 +124,8 @@ struct Options {
     quick: bool,
     /// The menu's screenshot opens this settings page (`--settings`).
     settings: Option<String>,
+    /// The menu's screenshot opens the console and runs these (`--console`).
+    console: Option<String>,
     /// The cvar file instead of `~/.config/washoi/cvars.json` (`--cvars`).
     cvars: Option<PathBuf>,
     players: Vec<view::PlayerView>,
@@ -161,6 +163,7 @@ fn parse_options(args: impl Iterator<Item = String>) -> Options {
             "--window" => o.window = true,
             "--quick" => o.quick = true,
             "--settings" => o.settings = Some(value()),
+            "--console" => o.console = Some(value()),
             "--cvars" => o.cvars = Some(PathBuf::from(value())),
             "--player" => {
                 let v = value();
@@ -338,14 +341,7 @@ fn default_key_file() -> Option<PathBuf> {
     Some(dir.join("lobby-key"))
 }
 
-/// `~/.config/washoi` (or `$XDG_CONFIG_HOME/washoi`): the account key and
-/// the cvars, which the browser keeps in local storage.
-fn config_dir() -> Option<PathBuf> {
-    let base = std::env::var_os("XDG_CONFIG_HOME")
-        .map(PathBuf::from)
-        .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".config")))?;
-    Some(base.join("washoi"))
-}
+use washoi::config_dir;
 
 fn menu_mode(url: &str, o: &Options) -> i32 {
     let key_file = o.key_file.clone().or_else(default_key_file);
@@ -359,6 +355,7 @@ fn menu_mode(url: &str, o: &Options) -> i32 {
         let shot = menu::Shot {
             quick: o.quick,
             settings: o.settings.clone(),
+            console: o.console.clone(),
             seconds,
             size,
         };

@@ -190,6 +190,8 @@ pub struct LobbyPanel {
     choice: Option<LobbyChoice>,
     /// The Settings page, while it is open.
     pub settings: Option<FpsSettingsView>,
+    /// The rail's Console key was pressed; the window toggles its console.
+    pub console_pressed: bool,
     /// The connection ended; why.
     pub closed: Option<String>,
 }
@@ -224,6 +226,7 @@ impl LobbyPanel {
             notice: String::new(),
             choice: None,
             settings: None,
+            console_pressed: false,
             closed: None,
         }
     }
@@ -467,6 +470,9 @@ impl LobbyPanel {
                 }
                 if open && ui.button("Back to play").clicked() {
                     self.settings = None;
+                }
+                if ui.button("Console").clicked() {
+                    self.console_pressed = true;
                 }
             });
             let meta = if !self.connected {

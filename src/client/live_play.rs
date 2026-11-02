@@ -131,6 +131,8 @@ pub struct LivePlay {
     predictor: V2NetworkClient,
     started: Instant,
     pub map: String,
+    /// The game server's address.
+    pub url: String,
     /// Our player and entity ids, once joined.
     pub player_id: String,
     pub entity_id: String,
@@ -190,6 +192,7 @@ impl LivePlay {
                         predictor,
                         started: Instant::now(),
                         map: w.map.clone(),
+                        url: url.to_owned(),
                         player_id: String::new(),
                         entity_id: String::new(),
                         joined: false,
