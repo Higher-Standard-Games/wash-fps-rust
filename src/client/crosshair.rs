@@ -1,10 +1,12 @@
 //! The crosshair (wash-fps `client/Crosshair.ts`): the weapon's reticle at
 //! the centre, its gap opened by speed, red on a hit, a red cross when the
-//! gun is empty. The cvars' defaults (`cg_crosshairSize` 32, colour
-//! `00FF00`, alpha 0.9, spread on, hit colour `FF0000`).
+//! gun is empty. The cvars (`cg_crosshair`, `cg_crosshairSize`,
+//! `cg_crosshairColor`, `cg_crosshairAlpha`, `cg_crosshairSpread`,
+//! `cg_crosshairDmgColor`) are registered by [`register_crosshair_cvars`].
 //!
 //! Not yet: aiming down sights and the spread bloom of sustained fire.
 
+use shagger::core::cvar::{CvarOptions, CvarType, Cvars, with_cvars};
 use shagger::ui::hud_2d::Hud2d;
 
 use crate::shared::entities::definitions::weapons::weapons_table::{CrosshairConfig, CrosshairStyle, weapon_crosshair};
@@ -16,11 +18,84 @@ const DEFAULT_CROSSHAIR: CrosshairConfig = CrosshairConfig {
     line_width: 2.0,
 };
 
-const SIZE: f64 = 32.0;
-const ALPHA: f32 = 0.9;
 const HIT_FLASH_DURATION: f64 = 0.2;
 const HEAD_HIT_FLASH_DURATION: f64 = 0.3;
 const OUTLINE: [f32; 4] = [0.0, 0.0, 0.0, 0.85];
+
+/// `Cvar.register("cg_crosshair*", ...)`.
+pub fn register_crosshair_cvars(cvars: &mut Cvars) {
+    let int = |d: &str, min: f64, max: f64| CvarOptions::describe(d).range(min, max).kind(CvarType::Int);
+    let string = |d: &str| CvarOptions::describe(d).kind(CvarType::String);
+    cvars.register("cg_crosshair", 1, int("Enable crosshair (0 = off, 1 = on)", 0.0, 1.0));
+    cvars.register(
+        "cg_crosshairSize",
+        32,
+        int("Crosshair size in pixels (half-extent)", 8.0, 64.0),
+    );
+    cvars.register(
+        "cg_crosshairColor",
+        "00FF00",
+        string("Crosshair color (hex RGB without #)"),
+    );
+    cvars.register(
+        "cg_crosshairAlpha",
+        0.9,
+        CvarOptions::describe("Crosshair opacity")
+            .range(0.1, 1.0)
+            .kind(CvarType::Float),
+    );
+    cvars.register(
+        "cg_crosshairSpread",
+        1,
+        int("Enable dynamic crosshair spread (ADS + movement)", 0.0, 1.0),
+    );
+    cvars.register(
+        "cg_crosshairDmgColor",
+        "FF0000",
+        string("Crosshair color on hit confirmation (hex RGB without #)"),
+    );
+}
+
+/// `parseInt(hex.substring(i, i + 2), 16)` for each channel, as a colour.
+fn hex_color(hex: &str, alpha: f32) -> [f32; 4] {
+    let channel = |i: usize| {
+        hex.get(i..(i + 2).min(hex.len()))
+            .and_then(|h| u8::from_str_radix(h, 16).ok())
+            .map_or(0.0, |v| f32::from(v) / 255.0)
+    };
+    [channel(0), channel(2), channel(4), alpha]
+}
+
+/// The cvars one frame reads.
+struct Settings {
+    enabled: bool,
+    size: f64,
+    color: String,
+    alpha: f32,
+    spread: bool,
+    hit_color: String,
+}
+
+fn settings() -> Settings {
+    with_cvars(|c| {
+        let or = |name: &str, d: f64| if c.exists(name) { c.get_number(name) } else { d };
+        let text = |name: &str, d: &str| {
+            if c.exists(name) {
+                c.get_string(name)
+            } else {
+                d.to_owned()
+            }
+        };
+        Settings {
+            enabled: or("cg_crosshair", 1.0) > 0.0,
+            size: or("cg_crosshairSize", 32.0),
+            color: text("cg_crosshairColor", "00FF00"),
+            alpha: or("cg_crosshairAlpha", 0.9) as f32,
+            spread: or("cg_crosshairSpread", 1.0) > 0.0,
+            hit_color: text("cg_crosshairDmgColor", "FF0000"),
+        }
+    })
+}
 
 /// `Crosshair`.
 #[derive(Debug, Default)]
@@ -52,21 +127,25 @@ impl Crosshair {
     /// `update`, drawn into `hud` at the centre of a `w` by `h` frame.
     pub fn draw(&mut self, hud: &mut Hud2d, frame: &CrosshairFrame<'_>, w: f32, h: f32) {
         self.flash = (self.flash - frame.dt).max(0.0);
+        let set = settings();
+        if !set.enabled {
+            return;
+        }
         let config = weapon_crosshair(frame.weapon).unwrap_or(DEFAULT_CROSSHAIR);
-        let color = if self.flash > 0.0 {
-            [1.0, 0.0, 0.0, ALPHA]
-        } else {
-            [0.0, 1.0, 0.0, ALPHA]
-        };
-        let movement = (frame.speed / 400.0).min(1.0) * 8.0;
-        let gap = (config.base_gap + movement).round() as f32;
-        let scale = SIZE / 24.0;
+        let hex = if self.flash > 0.0 { &set.hit_color } else { &set.color };
+        let color = hex_color(hex, set.alpha);
+        let mut gap = config.base_gap;
+        if set.spread {
+            gap += (frame.speed / 400.0).min(1.0) * 8.0;
+        }
+        let gap = gap.round() as f32;
+        let scale = set.size / 24.0;
         let len = (config.line_length * scale).round() as f32;
         let lw = (config.line_width * scale).round().max(1.0) as f32;
         // The canvas is 2 * size, centred; its centre is a whole pixel.
         let (cx, cy) = ((w / 2.0).round(), (h / 2.0).round());
         if frame.out_of_ammo {
-            big_x(hud, cx, cy);
+            big_x(hud, cx, cy, set.size as f32, set.alpha);
             return;
         }
         match config.style {
@@ -135,8 +214,7 @@ fn line(hud: &mut Hud2d, a: [f32; 2], b: [f32; 2], width: f32, color: [f32; 4]) 
 }
 
 /// `drawBigX`: out of ammo.
-fn big_x(hud: &mut Hud2d, cx: f32, cy: f32) {
-    let size = SIZE as f32;
+fn big_x(hud: &mut Hud2d, cx: f32, cy: f32, size: f32, alpha: f32) {
     let reach = size * 0.7;
     let gap = (size * 0.18).max(3.0);
     let w = (size / 8.0).round().max(3.0);
@@ -149,7 +227,7 @@ fn big_x(hud: &mut Hud2d, cx: f32, cy: f32) {
     for (a, b) in strokes {
         line(hud, a, b, w + 4.0, OUTLINE);
     }
-    let red = [1.0, 40.0 / 255.0, 40.0 / 255.0, ALPHA.max(0.9)];
+    let red = [1.0, 40.0 / 255.0, 40.0 / 255.0, alpha.max(0.9)];
     for (a, b) in strokes {
         line(hud, a, b, w, red);
     }

@@ -18,6 +18,7 @@ use shagger::ui::components::match_lobby_view::{MatchLobbyView, RoomAction};
 use shagger::ui::egui_layer::egui;
 
 use crate::client::hud::washiki;
+use crate::client::settings::fps_settings_view::FpsSettingsView;
 
 /// `GameMode`: a mode's card on the Play page.
 #[derive(Debug, Clone, Copy)]
@@ -187,6 +188,8 @@ pub struct LobbyPanel {
     room_from_queue: bool,
     notice: String,
     choice: Option<LobbyChoice>,
+    /// The Settings page, while it is open.
+    pub settings: Option<FpsSettingsView>,
     /// The connection ended; why.
     pub closed: Option<String>,
 }
@@ -220,6 +223,7 @@ impl LobbyPanel {
             room_from_queue: false,
             notice: String::new(),
             choice: None,
+            settings: None,
             closed: None,
         }
     }
@@ -405,6 +409,10 @@ impl LobbyPanel {
             if !self.notice.is_empty() {
                 ui.colored_label(hsl(0.0, 80.0, 60.0), &self.notice);
             }
+            if let Some(settings) = &mut self.settings {
+                settings.ui(ui);
+                return;
+            }
             let left = match &mut self.room {
                 Some(room) => room.ui(ui, &self.client) == Some(RoomAction::Leave),
                 None => {
@@ -444,8 +452,23 @@ impl LobbyPanel {
             self.start_quick_play();
         }
         ui.add_space(12.0);
-        ui.label(format!("{} online", self.online));
+        if let Some(settings) = &mut self.settings {
+            ui.label(egui::RichText::new("Settings").strong());
+            settings.page_nav(ui);
+        } else {
+            ui.label(format!("{} online", self.online));
+        }
         ui.with_layout(egui::Layout::bottom_up(egui::Align::Min), |ui| {
+            ui.add_space(8.0);
+            ui.horizontal(|ui| {
+                let open = self.settings.is_some();
+                if ui.selectable_label(open, "Settings").clicked() {
+                    self.settings = if open { None } else { Some(FpsSettingsView::default()) };
+                }
+                if open && ui.button("Back to play").clicked() {
+                    self.settings = None;
+                }
+            });
             let meta = if !self.connected {
                 self.closed.as_deref().map_or("Offline", |_| "Disconnected")
             } else if self.room.is_some() {

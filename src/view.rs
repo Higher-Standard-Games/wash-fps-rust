@@ -1316,6 +1316,8 @@ pub fn run(o: &ViewOptions) -> i32 {
         return 1;
     };
     camera.pitch = o.pitch.to_radians();
+    // `cl_fov` (90 at 16:9 unless set), as the browser's camera starts.
+    camera.fov_y = shagger::core::cvar::with_cvars(|c| shagger::camera::fov_settings::current_base_fov(c)) as f32;
     println!(
         "{}: {} spawn points, viewing from spawn {}",
         map_name,

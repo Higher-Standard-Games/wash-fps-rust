@@ -24,6 +24,7 @@ pub mod player_model_visual_settings;
 pub mod prediction;
 pub mod remote_player_logic;
 pub mod remote_player_renderer;
+pub mod settings;
 pub mod snapshot_feed;
 pub mod v2_network_client;
 pub mod weapon_view;

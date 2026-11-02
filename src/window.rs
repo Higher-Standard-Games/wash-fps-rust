@@ -16,6 +16,9 @@ use shagger::rendering::gpu::Gpu;
 use shagger::rendering::hdr_target::HdrTarget;
 use shagger::rendering::offscreen::{begin_main_pass, begin_overlay_pass, begin_ui_pass};
 
+use shagger::camera::fov_settings::current_base_fov;
+use shagger::core::cvar::with_cvars;
+use shagger::movement::movement_vars::movement_var;
 use shagger::rendering::wgpu;
 use shagger::weapon::weapon_view_manager::ViewModelInput;
 use washoi::client::fps_hud::FpsHud;
@@ -37,8 +40,9 @@ use washoi::client::game_events::GameAudio;
 
 /// Units per second (Q3's run speed is 320).
 const SPEED: f32 = 320.0;
-/// Radians per pixel of mouse motion.
-const SENSITIVITY: f32 = 0.0022;
+/// Radians per count of mouse motion at `m_sensitivity` 1
+/// (`CameraInputHandler`'s `mouseSensitivity`).
+const BASE_SENSITIVITY: f64 = 0.002;
 
 struct Surface {
     window: Arc<Window>,
@@ -229,6 +233,8 @@ impl App {
         let dt = now.duration_since(self.last).as_secs_f32().min(0.1);
         self.last = now;
         self.step(dt);
+        // `cl_fov`, as `currentBaseFov` gives every camera.
+        self.camera.fov_y = with_cvars(|c| current_base_fov(c)) as f32;
         let Some(s) = &mut self.surface else { return };
         let frame = match s.surface.get_current_texture() {
             wgpu::CurrentSurfaceTexture::Success(frame) | wgpu::CurrentSurfaceTexture::Suboptimal(frame) => frame,
@@ -448,9 +454,19 @@ impl ApplicationHandler for App {
         if let DeviceEvent::MouseMotion { delta } = event
             && self.captured
         {
-            self.camera.yaw += delta.0 as f32 * SENSITIVITY;
+            // `m_sensitivity`, and `cl_ads_sensitivity`'s share while aiming
+            // (the browser eases it in with the aim; this takes it whole).
+            let sensitivity = with_cvars(|c| {
+                let ads = if self.aiming {
+                    movement_var(c, "cl_ads_sensitivity")
+                } else {
+                    1.0
+                };
+                BASE_SENSITIVITY * movement_var(c, "m_sensitivity") * ads
+            }) as f32;
+            self.camera.yaw += delta.0 as f32 * sensitivity;
             let limit = std::f32::consts::FRAC_PI_2 - 0.01;
-            self.camera.pitch = (self.camera.pitch + delta.1 as f32 * SENSITIVITY).clamp(-limit, limit);
+            self.camera.pitch = (self.camera.pitch + delta.1 as f32 * sensitivity).clamp(-limit, limit);
         }
     }
 

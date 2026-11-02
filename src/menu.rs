@@ -15,6 +15,8 @@ use shagger::rendering::offscreen::{OFFSCREEN_FORMAT, render_encoded_to_rgba};
 use shagger::rendering::wgpu;
 use shagger::ui::egui_layer::{EguiLayer, egui};
 use washoi::client::lobby_panel::{LobbyChoice, LobbyPanel, install_style};
+use washoi::client::settings::fps_settings_view::FpsSettingsView;
+use washoi::client::settings::settings_model::SETTINGS_PAGES;
 use winit::application::ApplicationHandler;
 use winit::event::WindowEvent;
 use winit::event_loop::ActiveEventLoop;
@@ -175,19 +177,37 @@ pub fn choose(url: &str, key_file: Option<std::path::PathBuf>) -> Result<Option<
     Ok(app.choice)
 }
 
+/// What an offscreen run of the menu does.
+pub struct Shot {
+    /// Press Quick play once it can.
+    pub quick: bool,
+    /// Open this settings page (`controls`, `gameplay`, `video`, `audio`).
+    pub settings: Option<String>,
+    pub seconds: f64,
+    pub size: (u32, u32),
+}
+
 /// The page offscreen for `seconds`, its last frame saved to `path`.
 pub fn screenshot(
     url: &str,
     key_file: Option<std::path::PathBuf>,
-    quick: bool,
-    seconds: f64,
-    (width, height): (u32, u32),
+    shot: &Shot,
     path: &Path,
 ) -> Result<Option<LobbyChoice>, String> {
+    let (width, height) = shot.size;
+    let (quick, seconds) = (shot.quick, shot.seconds);
     let gpu = Gpu::headless().map_err(|e| e.to_string())?;
     let mut layer = EguiLayer::offscreen(&gpu, OFFSCREEN_FORMAT);
     install_style(&layer.ctx);
     let mut panel = LobbyPanel::connect(url, key_file);
+    if let Some(page) = &shot.settings {
+        let id = SETTINGS_PAGES
+            .iter()
+            .find(|(_, title, _)| title.eq_ignore_ascii_case(page))
+            .map(|p| p.0)
+            .ok_or_else(|| format!("no settings page {page}"))?;
+        panel.settings = Some(FpsSettingsView { page: id });
+    }
     let input = || egui::RawInput {
         screen_rect: Some(egui::Rect::from_min_size(
             egui::Pos2::ZERO,

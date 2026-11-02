@@ -9,7 +9,7 @@
 //! washoi watch <ws://game-server> [--name NAME] [--ticket TICKET] [--data DIR] [--screenshot FILE.png] [--time T] [--at X,Y,Z,YAW] [--follow N] [--seconds N]
 //! washoi play <ws://game-server> [--name NAME] [--ticket TICKET] [--data DIR] [--screenshot FILE.png] [--time T] [--say TEXT] [--seconds N]
 //! washoi connect <ws://game-server> [--name NAME] [--ticket TICKET] [--seconds N] [--play]
-//! washoi menu <ws://lobby> [--key-file FILE] [--screenshot FILE.png [--quick] [--seconds N] [--size WxH]]
+//! washoi menu <ws://lobby> [--key-file FILE] [--cvars FILE] [--screenshot FILE.png [--quick | --settings PAGE] [--seconds N] [--size WxH]]
 //! washoi lobby <ws://lobby> [--key-file FILE] list
 //! washoi lobby <ws://lobby> [--key-file FILE] spectate [--window] [--seconds N]
 //! washoi lobby <ws://lobby> [--key-file FILE] queue <gametype> [--seconds N] [--play | --window]
@@ -85,7 +85,7 @@ fn usage() -> ! {
          \x20      washoi watch <ws://game-server> [--name NAME] [--ticket TICKET] [--data DIR] [--screenshot FILE.png] [--time T] [--at X,Y,Z,YAW] [--follow N] [--seconds N]\n\
          \x20      washoi play <ws://game-server> [--name NAME] [--ticket TICKET] [--data DIR] [--screenshot FILE.png] [--time T] [--say TEXT] [--seconds N]\n\
          \x20      washoi connect <ws://game-server> [--name NAME] [--ticket TICKET] [--seconds N] [--play]\n\
-         \x20      washoi menu <ws://lobby> [--key-file FILE] [--screenshot FILE.png [--quick] [--seconds N] [--size WxH]]\n\
+         \x20      washoi menu <ws://lobby> [--key-file FILE] [--cvars FILE] [--screenshot FILE.png [--quick | --settings PAGE] [--seconds N] [--size WxH]]\n\
          \x20      washoi lobby <ws://lobby> [--key-file FILE] list\n\
          \x20      washoi lobby <ws://lobby> [--key-file FILE] spectate [--window] [--seconds N]\n\
          \x20      washoi lobby <ws://lobby> [--key-file FILE] queue <gametype> [--seconds N] [--play | --window]\n\
@@ -122,6 +122,10 @@ struct Options {
     window: bool,
     /// The menu's screenshot presses Quick play (`--quick`).
     quick: bool,
+    /// The menu's screenshot opens this settings page (`--settings`).
+    settings: Option<String>,
+    /// The cvar file instead of `~/.config/washoi/cvars.json` (`--cvars`).
+    cvars: Option<PathBuf>,
     players: Vec<view::PlayerView>,
     projectiles: Vec<view::ProjectileView>,
     explosions: Vec<view::ExplosionView>,
@@ -156,6 +160,8 @@ fn parse_options(args: impl Iterator<Item = String>) -> Options {
             "--say" => o.say = Some(value()),
             "--window" => o.window = true,
             "--quick" => o.quick = true,
+            "--settings" => o.settings = Some(value()),
+            "--cvars" => o.cvars = Some(PathBuf::from(value())),
             "--player" => {
                 let v = value();
                 let parts: Vec<&str> = v.split(',').map(str::trim).collect();
@@ -290,6 +296,11 @@ fn main() {
     let mode = args.next().unwrap_or_else(|| usage());
     let url = args.next().unwrap_or_else(|| usage());
     let o = parse_options(args);
+    // The cvars, saved as the browser saves `engine_cvars`. Release builds
+    // are the shipped game, which keeps `developer` at 0.
+    let storage = o.cvars.clone().or_else(|| config_dir().map(|d| d.join("cvars.json")));
+    shagger::core::cvar::init_cvars(storage, !cfg!(debug_assertions));
+    shagger::core::cvar::with_cvars(washoi::client::settings::settings_model::register_client_cvars);
     let code = match mode.as_str() {
         "connect" => play_match(
             &url,
@@ -322,12 +333,18 @@ fn main() {
 /// Where the menu keeps the account key when `--key-file` does not say: the
 /// browser keeps it in local storage, which outlives a session the same way.
 fn default_key_file() -> Option<PathBuf> {
+    let dir = config_dir()?;
+    std::fs::create_dir_all(&dir).ok()?;
+    Some(dir.join("lobby-key"))
+}
+
+/// `~/.config/washoi` (or `$XDG_CONFIG_HOME/washoi`): the account key and
+/// the cvars, which the browser keeps in local storage.
+fn config_dir() -> Option<PathBuf> {
     let base = std::env::var_os("XDG_CONFIG_HOME")
         .map(PathBuf::from)
         .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".config")))?;
-    let dir = base.join("washoi");
-    std::fs::create_dir_all(&dir).ok()?;
-    Some(dir.join("lobby-key"))
+    Some(base.join("washoi"))
 }
 
 fn menu_mode(url: &str, o: &Options) -> i32 {
@@ -339,7 +356,13 @@ fn menu_mode(url: &str, o: &Options) -> i32 {
     if let Some(path) = &o.screenshot {
         let size = o.size.unwrap_or((1280, 720));
         let seconds = o.seconds.unwrap_or(5.0);
-        return match menu::screenshot(url, key_file, o.quick, seconds, size, path) {
+        let shot = menu::Shot {
+            quick: o.quick,
+            settings: o.settings.clone(),
+            seconds,
+            size,
+        };
+        return match menu::screenshot(url, key_file, &shot, path) {
             Ok(choice) => {
                 if let Some(c) = &choice {
                     go(c);

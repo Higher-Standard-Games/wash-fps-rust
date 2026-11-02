@@ -2582,6 +2582,39 @@ fit and did not count the parity harness.
 
 Newest first. Each entry names the commits and what proves them.
 
+### Milestone 10, second slice: cvars and the settings pages (November 2, 2026)
+
+- **shagger `ef54fce`.** `core/cvar.rs` ports `Cvar.ts`: typed values with
+  bounds (`Math.round` for ints, `parseFloat` for text), a numeric cvar
+  refusing text, read-only and the production lock on `developer`,
+  `formatInfo`, `exportConfig` / `execConfig` (the same line grammar), and
+  `replacePersistedValues` for settings sync. The registry saves the same
+  JSON object as `localStorage["engine_cvars"]` to a file, writing whole
+  numbers as `JSON.stringify` does, and values saved before their owner
+  registers wait as preloads. One registry per thread stands in for the
+  static class (`init_cvars`, `with_cvars`); `onChange` becomes the
+  registry's serial, which readers compare. `movement/movement_vars.rs`
+  carries `MovementVars.ts`' 78 variables (generated from the TypeScript
+  table) as float cvars; `camera/fov_settings.rs` ports `FovSettings.ts`;
+  `audio/audio_cvars.rs` is `AudioManager`'s cvar half (`s_volume`,
+  `s_musicenabled`, `s_sfxvolume`, `s_sfxenabled`, `cg_volume_*`).
+- **wash-fps-rust.** `client/settings/settings_model.rs` (the pages and
+  `PAGE_CVARS`, a page reset, and the client's registrations, each naming
+  its TypeScript owner) and `fps_settings_view.rs` (Controls, Gameplay,
+  Audio with the browser's ranges, steps and words; the key board, team
+  colours and video effects are still to come). Settings opens from the
+  menu's rail. The game reads them: mouse look is 0.002 rad per count
+  times `m_sensitivity`, times `cl_ads_sensitivity` while aiming; the
+  camera's vertical FOV comes from `cl_fov` (90 at 16:9 is 1.0248 rad;
+  the window used Babylon's 0.8 until now); the crosshair takes its six
+  cvars; the mix and the music take the audio cvars when they change. The
+  file is `~/.config/washoi/cvars.json` (`--cvars` for another).
+- **Proof.** Unit tests for bounds, rounding, refusing text, the config
+  text round trip, persistence with late registration, the developer lock,
+  the movement table and 90° at 16:9. A cvars file with `cl_fov` 110 and
+  `s_volume` 0.3 shows in the menu's pages
+  (`--screenshot ... --settings audio`).
+
 ### Milestone 10, first slice: the Play page in the window (November 2, 2026)
 
 - **shagger `d05f42c`, `1f287dd`, `0ace943`.** egui 0.37 over the game's

@@ -16,8 +16,10 @@ use shagger::weapon::rail::rail_profiles::{RailEffectSample, RailImpactKind};
 
 use std::collections::HashMap;
 
+use shagger::audio::audio_cvars::apply_audio_cvars;
 use shagger::audio::audio_v2_sfx::AudioV2Sfx;
 use shagger::audio::music::{MusicPlayer, Playlist};
+use shagger::core::cvar::with_cvars;
 use shagger::loader::pk3::pk3_loader::Pk3Loader;
 use shagger::network::client::snapshot_buffer::EntitySnapshot;
 use std::path::Path;
@@ -237,6 +239,8 @@ pub struct GameAudio {
     pub music: MusicPlayer,
     playlists: HashMap<String, Playlist>,
     music_packages: Pk3Loader,
+    /// The cvar registry's serial when the audio cvars were last applied.
+    cvar_serial: Option<u64>,
     music_phase: Option<MatchPhase>,
 }
 
@@ -260,6 +264,7 @@ impl GameAudio {
             music: MusicPlayer::new(),
             playlists: HashMap::new(),
             music_packages: Pk3Loader::new(),
+            cvar_serial: None,
             music_phase: None,
         }
     }
@@ -331,6 +336,12 @@ impl GameAudio {
         }
         self.music_phase = Some(phase);
         let packages = &mut self.music_packages;
+        // The audio cvars' onChange: applied when the registry changed.
+        let serial = with_cvars(|c| c.serial());
+        if self.cvar_serial != Some(serial) {
+            self.cvar_serial = Some(serial);
+            with_cvars(|c| apply_audio_cvars(c, &mut self.sfx, &mut self.music, &mut |p| packages.get_file(p)));
+        }
         self.music.update(&mut self.sfx, &mut |p| packages.get_file(p), dt);
     }
 
