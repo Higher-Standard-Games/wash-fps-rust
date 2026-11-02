@@ -2580,6 +2580,38 @@ fit and did not count the parity harness.
 
 Newest first. Each entry names the commits and what proves them.
 
+### Milestone 6, nineteenth slice: the weapon in hand (November 2, 2026)
+
+- **shagger `34e1f90`.**
+  - `weapon::weapon_bob` and `weapon::weapon_recoil` port `WeaponBob` and
+    `WeaponRecoil` whole (the `cg_gun_bob_*` defaults, the ADS recoil
+    multiplier).
+  - `weapon::weapon_view_manager` ports the placement half of
+    `WeaponViewManager`: the hip offset at `cg_handedness`, the ADS lerp
+    (`ads.time` or `cl_ads_time`, linear when `adsRequireReady`), the GLB
+    root (scale (1, 1, -1), rotation (0, -π/2, 0), the blade's own), the
+    weapon camera (`cg_weaponfov` 60°, clip 0.1 to 1000), `weaponLight`
+    and `bladeLight`, the material modes (`_glow` as added light, `_emit`
+    as an unlit two-sided StandardMaterial, `_glass` at alpha 0.35) and
+    the outline width.
+  - `model.wgsl` adds Babylon PBR's GGX specular (Schlick fresnel from
+    `mix(0.04, albedo, metallic)`, Trowbridge-Reitz, height-correlated
+    Smith) for hemispheric, directional and point lights.
+  - `rendering::offscreen` draws an overlay pass that clears depth, as
+    rendering group 1 does.
+- **wash-fps-rust.** The weapons table carries each model's view placement.
+  `client::weapon_view` loads the gun and draws it over the world in the
+  window (right mouse aims) and in `washoi view --weapon ID [--aim]`.
+  `tools/parity` takes `WEAPON=`.
+- **Parity** (`washoi_dm2`): the plasma gun stands, turns and is lit as in
+  the browser; the view is 9.8, 6.3 and 5.5 levels off, mostly the
+  browser's hidden health pickup. The specular also brings the player views
+  from 4 to 8 levels down to about 2.
+- **Not yet.** Muzzle flash and fire animations, the switch animation, the
+  metallic-roughness and normal maps on models (the sight glass is darker),
+  and the blade's environment reflection (it draws black).
+- **Next.** Pipeline precompile at load, then prediction (milestone 4).
+
 ### Milestone 6, eighteenth slice: glow maps (November 2, 2026)
 
 - **shagger.** `world_renderer` loads a surface's glow image as

@@ -17,17 +17,19 @@
 # holds bullet streaks, muzzle flashes, impact sparks, rails and Voltaic
 # beams in both, with washoi view's --tracer, --muzzle, --impact, --rail and
 # --lightning arguments. LIGHTS=1 keeps the projectiles' and explosions'
-# dynamic lights in both (they are off otherwise).
+# dynamic lights in both (they are off otherwise). WEAPON=<id> holds that
+# first-person weapon at the hip in both.
 set -e
 HERE=$(cd "$(dirname "$0")" && pwd)
 ROOT=$(cd "$HERE/../.." && pwd)
 map=$1; demo=$2; prefix=$(realpath -m "$3"); views=$4
 if [ -z "$SKIP_BROWSER" ]; then
-  NODE_PATH=$(npm root -g) node "$HERE/views.cjs" "$demo" "${prefix}_b" "$views" 1280x720 '^(bsp|skybox)' "$PLAYERS" "$ITEMS" "$PROJECTILES" "$EXPLOSIONS" "$EFFECTS" >/dev/null
+  NODE_PATH=$(npm root -g) node "$HERE/views.cjs" "$demo" "${prefix}_b" "$views" 1280x720 '^(bsp|skybox)' "$PLAYERS" "$ITEMS" "$PROJECTILES" "$EXPLOSIONS" "$EFFECTS" "$WEAPON" >/dev/null
 fi
 player_args=()
 [ -z "$LIGHTS" ] && player_args+=(--no-lights)
 [ -n "$ITEMS" ] && player_args+=(--time "$ITEMS")
+[ -n "$WEAPON" ] && player_args+=(--weapon "$WEAPON")
 if [ -n "$PROJECTILES" ]; then
   IFS=';' read -ra prlist <<< "$PROJECTILES"
   for p in "${prlist[@]}"; do player_args+=(--projectile "$p"); done

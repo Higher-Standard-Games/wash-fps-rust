@@ -3,15 +3,40 @@
 //! `glauncher.ts`, `machinegun.ts`, `plasmagun.ts`, `riotgun.ts`,
 //! `rlauncher.ts`, `voltaic.ts`).
 //!
-//! Only what drawing a weapon in the world needs so far: the model, its
-//! scale and its barrel sub-models. Stats, ADS and view-model placement come
-//! with the systems that use them.
+//! Only what drawing a weapon needs so far: the model, its scale, its
+//! barrel sub-models and its view-model placement (`viewModel`, `ads.time`,
+//! `adsRequireReady`). Stats come with the systems that use them.
 
 /// A barrel sub-model (`BarrelDef`): its model and its offset from the mount.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct BarrelModel {
     pub model_path: &'static str,
     pub offset: Option<[f32; 3]>,
+}
+
+/// A GLB view model's placement (`viewModel`) and its aim (`ads.time`,
+/// `adsRequireReady`).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct ViewModelPlacement {
+    pub hip_offset: [f64; 3],
+    pub hip_rotation: [f64; 3],
+    pub ads_offset: [f64; 3],
+    pub scale: f64,
+    pub ads_time: f64,
+    pub ads_require_ready: bool,
+}
+
+/// Most guns' placement: low and to the hand, the sights a little higher
+/// and closer when aimed.
+const fn gun_view(ads_y: f64, ads_time: f64, ads_require_ready: bool) -> ViewModelPlacement {
+    ViewModelPlacement {
+        hip_offset: [0.0, -25.0, -1.0],
+        hip_rotation: [0.0, 0.0, 0.0],
+        ads_offset: [0.0, ads_y, -5.0],
+        scale: 2.0,
+        ads_time,
+        ads_require_ready,
+    }
 }
 
 /// The model half of a `WeaponDef`.
@@ -21,6 +46,7 @@ pub struct WeaponModel {
     pub model_path: &'static str,
     pub scale: f32,
     pub barrels: &'static [BarrelModel],
+    pub view: ViewModelPlacement,
 }
 
 pub const BLADE: WeaponModel = WeaponModel {
@@ -28,6 +54,18 @@ pub const BLADE: WeaponModel = WeaponModel {
     model_path: "/data/models/weapons/blade/arc_blade.glb",
     scale: 1.0,
     barrels: &[],
+    view: ViewModelPlacement {
+        hip_offset: [10.0, -28.0, 10.0],
+        hip_rotation: [
+            std::f64::consts::FRAC_PI_2,
+            std::f64::consts::FRAC_PI_2,
+            std::f64::consts::FRAC_PI_6 + std::f64::consts::PI,
+        ],
+        ads_offset: [10.0, -28.0, 10.0],
+        scale: 30.0,
+        ads_time: 0.08,
+        ads_require_ready: false,
+    },
 };
 
 pub const ELECTROBOLT: WeaponModel = WeaponModel {
@@ -35,6 +73,7 @@ pub const ELECTROBOLT: WeaponModel = WeaponModel {
     model_path: "/data/models/weapons/electrobolt/electrobolt.glb",
     scale: 2.0,
     barrels: &[],
+    view: gun_view(-21.0, 0.375, true),
 };
 
 pub const GRENADE_LAUNCHER: WeaponModel = WeaponModel {
@@ -45,6 +84,7 @@ pub const GRENADE_LAUNCHER: WeaponModel = WeaponModel {
         model_path: "/data/models/weapons/glauncher/glauncher_barrel.glb",
         offset: None,
     }],
+    view: gun_view(-20.0, 0.16, true),
 };
 
 pub const MACHINEGUN: WeaponModel = WeaponModel {
@@ -55,6 +95,7 @@ pub const MACHINEGUN: WeaponModel = WeaponModel {
         model_path: "/data/models/weapons/machinegun/machinegun_barrel.glb",
         offset: None,
     }],
+    view: gun_view(-20.0, 0.08, false),
 };
 
 /// Dual counter-rotating chambers, side by side.
@@ -72,6 +113,7 @@ pub const PLASMAGUN: WeaponModel = WeaponModel {
             offset: Some([0.0, 0.0, 0.0]),
         },
     ],
+    view: gun_view(-22.0, 0.08, false),
 };
 
 pub const RIOTGUN: WeaponModel = WeaponModel {
@@ -79,6 +121,7 @@ pub const RIOTGUN: WeaponModel = WeaponModel {
     model_path: "/data/models/weapons/riotgun/riotgun.glb",
     scale: 2.0,
     barrels: &[],
+    view: gun_view(-21.0, 0.08, false),
 };
 
 pub const ROCKET_LAUNCHER: WeaponModel = WeaponModel {
@@ -86,6 +129,7 @@ pub const ROCKET_LAUNCHER: WeaponModel = WeaponModel {
     model_path: "/data/models/weapons/rlauncher/rlauncher.glb",
     scale: 2.0,
     barrels: &[],
+    view: gun_view(-20.0, 0.16, true),
 };
 
 pub const VOLTAIC: WeaponModel = WeaponModel {
@@ -93,6 +137,7 @@ pub const VOLTAIC: WeaponModel = WeaponModel {
     model_path: "/data/models/weapons/voltaic/voltaic.glb",
     scale: 2.0,
     barrels: &[],
+    view: gun_view(-21.0, 0.08, false),
 };
 
 /// `WEAPONS[id]`, with `lasergun` the compatibility id of the voltaic.

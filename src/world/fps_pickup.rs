@@ -30,7 +30,7 @@ use crate::shared::entities::definitions::weapons::weapons_table::weapon_model;
 
 /// A model path as the definitions give it (`/data/models/...`), as a
 /// package path (`readIndexedModelAsset`).
-fn package_path(path: &str) -> String {
+pub fn package_path(path: &str) -> String {
     path.replace('\\', "/")
         .trim_start_matches('/')
         .trim_start_matches("data/")

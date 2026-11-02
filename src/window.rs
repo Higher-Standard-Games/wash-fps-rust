@@ -11,8 +11,9 @@ use shagger::rendering::camera::Camera;
 use shagger::rendering::glam::Vec3;
 use shagger::rendering::gpu::Gpu;
 use shagger::rendering::hdr_target::HdrTarget;
-use shagger::rendering::offscreen::begin_main_pass;
+use shagger::rendering::offscreen::{begin_main_pass, begin_overlay_pass};
 use shagger::rendering::wgpu;
+use shagger::weapon::weapon_view_manager::ViewModelInput;
 use winit::application::ApplicationHandler;
 use winit::dpi::PhysicalSize;
 use winit::event::{DeviceEvent, DeviceId, ElementState, MouseButton, WindowEvent};
@@ -47,6 +48,12 @@ struct App {
     seconds: Option<f64>,
     frames: u64,
     error: Option<String>,
+    /// The free camera's velocity, which sways the view model.
+    velocity: Vec3,
+    /// The right mouse button, aiming the view model down its sights.
+    aiming: bool,
+    /// The view bob cycle (radians), advanced with horizontal speed.
+    bob_cycle: f64,
 }
 
 impl App {
@@ -108,7 +115,9 @@ impl App {
         let movement = self.camera.forward() * axis(KeyCode::KeyW, KeyCode::KeyS)
             + self.camera.right() * axis(KeyCode::KeyD, KeyCode::KeyA)
             + Vec3::Y * axis(KeyCode::Space, KeyCode::KeyC);
-        self.camera.position += movement.normalize_or_zero() * speed * dt;
+        let velocity = movement.normalize_or_zero() * speed;
+        self.camera.position += velocity * dt;
+        self.velocity = velocity;
     }
 
     fn redraw(&mut self) {
@@ -131,6 +140,21 @@ impl App {
         let view = frame.texture.create_view(&wgpu::TextureViewDescriptor::default());
         s.renderer.world.animate(&s.gpu, f64::from(dt));
         s.renderer.item_time += f64::from(dt);
+        if let Some(view_model) = &mut s.renderer.view_model {
+            let horizontal = f64::from(self.velocity.x.hypot(self.velocity.z));
+            // The view bob's walk cycle: a stride per 160 units, as a run reads.
+            self.bob_cycle += horizontal * f64::from(dt) / 160.0 * std::f64::consts::PI;
+            view_model.view.update(&ViewModelInput {
+                delta_time: f64::from(dt),
+                grounded: true,
+                horizontal_speed: horizontal,
+                velocity_y: f64::from(self.velocity.y),
+                landing_velocity: 0.0,
+                bob_cycle: self.bob_cycle,
+                aiming: self.aiming,
+                reloading: false,
+            });
+        }
         s.renderer
             .prepare(&s.gpu, &self.camera, [s.config.width as f32, s.config.height as f32]);
         let mut encoder = s
@@ -140,6 +164,10 @@ impl App {
         {
             let mut pass = begin_main_pass(&mut encoder, &s.hdr.color, &s.hdr.depth, CLEAR);
             s.renderer.draw(&mut pass);
+        }
+        {
+            let mut pass = begin_overlay_pass(&mut encoder, &s.hdr.color, &s.hdr.depth);
+            s.renderer.draw_overlay(&mut pass);
         }
         s.hdr.resolve(
             &s.gpu,
@@ -202,6 +230,11 @@ impl ApplicationHandler for App {
                 button: MouseButton::Left,
                 ..
             } => self.set_captured(true),
+            WindowEvent::MouseInput {
+                state,
+                button: MouseButton::Right,
+                ..
+            } => self.aiming = state == ElementState::Pressed,
             WindowEvent::Focused(false) => {
                 self.held.clear();
                 self.set_captured(false);
@@ -260,6 +293,9 @@ pub fn run(map: LoadedMap, camera: Camera, seconds: Option<f64>) -> i32 {
         seconds,
         frames: 0,
         error: None,
+        velocity: Vec3::ZERO,
+        aiming: false,
+        bob_cycle: 0.0,
     };
     if let Err(e) = event_loop.run_app(&mut app) {
         eprintln!("event loop: {e}");

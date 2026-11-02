@@ -25,7 +25,7 @@ use shagger::rendering::glam::{DVec3, Mat4, Vec3};
 use shagger::rendering::gpu::Gpu;
 use shagger::rendering::hdr_target::HDR_FORMAT;
 use shagger::rendering::model_renderer::{ModelDraw, ModelRenderer};
-use shagger::rendering::offscreen::{OFFSCREEN_FORMAT, render_hdr_to_rgba};
+use shagger::rendering::offscreen::{OFFSCREEN_FORMAT, render_hdr_with_overlay_to_rgba};
 use shagger::rendering::sky_renderer::{SkyRenderer, apply_skybox};
 use shagger::rendering::wgpu;
 use shagger::rendering::world_culling::WorldCulling;
@@ -45,6 +45,8 @@ use shagger::weapon::rail::rail_effect_renderer::RailEffectRenderer;
 use shagger::weapon::rail::rail_profiles::{RailEffectSample, RailImpactKind};
 use shagger::weapon::tracer::streak_tracer_renderer::{StreakTracerRenderer, StreakTracerShot};
 use shagger::weapon::voltaic::voltaic_effect_renderer::VoltaicEffectRenderer;
+use shagger::weapon::weapon_view_manager::ViewModelInput;
+use washoi::client::weapon_view::WeaponViewModel;
 use washoi::shared::entities::definitions::projectiles::projectile_def;
 
 use washoi::client::player_model_visual_settings::{PlayerTeamSlot, get_player_model_visual_style};
@@ -93,6 +95,10 @@ pub struct ViewOptions {
     pub projectiles: Vec<ProjectileView>,
     pub explosions: Vec<ExplosionView>,
     pub effects: Vec<EffectView>,
+    /// The first-person weapon to hold (`--weapon`), and whether it is
+    /// aimed down its sights (`--aim`).
+    pub weapon: Option<String>,
+    pub aim: bool,
 }
 
 /// An explosion held at an age (`--explosion`).
@@ -246,6 +252,8 @@ pub struct LoadedMap {
     pub explosions: Vec<ExplosionView>,
     /// Streaks, flashes and impacts to hold on the map.
     pub effects: Vec<EffectView>,
+    /// The first-person weapon, if any.
+    pub weapon: Option<String>,
 }
 
 /// Reads every package in `data` and the map's BSP from them.
@@ -299,6 +307,7 @@ pub fn load_map(data: &Path, map: &str) -> Result<LoadedMap, String> {
         projectiles: Vec::new(),
         explosions: Vec::new(),
         effects: Vec::new(),
+        weapon: None,
     })
 }
 
@@ -341,6 +350,8 @@ pub struct MapRenderer {
     /// Image processing from the HDR target into the output.
     pub post: ImageProcessingPostProcess,
     pub image_processing: ImageProcessingConfiguration,
+    /// The first-person weapon, drawn after the scene with depth cleared.
+    pub view_model: Option<WeaponViewModel>,
 }
 
 /// SHAG's image processing: PostProcessingManager's default settings
@@ -411,6 +422,17 @@ impl MapRenderer {
         self.lightning.prepare(gpu, &frame);
         if let Some(sky) = &self.sky {
             sky.prepare(gpu, camera, aspect);
+        }
+        if let Some(view_model) = &mut self.view_model {
+            view_model.prepare(gpu, camera, aspect);
+        }
+    }
+
+    /// Records the first-person weapon, in a pass after [`Self::draw`]'s
+    /// with the depth cleared.
+    pub fn draw_overlay(&self, pass: &mut wgpu::RenderPass<'_>) {
+        if let Some(view_model) = &self.view_model {
+            view_model.draw(pass);
         }
     }
 
@@ -551,6 +573,12 @@ pub fn build_renderer(gpu: &Gpu, map: &mut LoadedMap, output_format: wgpu::Textu
             Err(why) => eprintln!("projectile model: {why}"),
         }
     }
+    let view_model = map.weapon.as_deref().and_then(|id| {
+        WeaponViewModel::load(gpu, &mut map.pk3, id, format)
+            .inspect(|_| println!("view model: {id}"))
+            .inspect_err(|why| eprintln!("view model: {why}"))
+            .ok()
+    });
     let mut explosions = ExplosionBatchRenderer::new(gpu, format);
     for view in &map.explosions {
         let Some(look) = explosion_for(&view.id) else {
@@ -693,6 +721,7 @@ pub fn build_renderer(gpu: &Gpu, map: &mut LoadedMap, output_format: wgpu::Textu
         dynamic_lights: true,
         post: ImageProcessingPostProcess::new(gpu, output_format),
         image_processing: shag_image_processing(),
+        view_model,
     }
 }
 
@@ -708,6 +737,7 @@ pub fn run(o: &ViewOptions) -> i32 {
     map.projectiles.clone_from(&o.projectiles);
     map.explosions.clone_from(&o.explosions);
     map.effects.clone_from(&o.effects);
+    map.weapon.clone_from(&o.weapon);
     let at = o.at.map(|[x, y, z, angle]| Camera::from_q3([x, y, z], angle));
     let Some(mut camera) = at.or_else(|| map.spawns.get(o.spawn).or(map.spawns.first()).copied()) else {
         eprintln!("{} has no spawn point", o.map);
@@ -737,6 +767,17 @@ pub fn run(o: &ViewOptions) -> i32 {
     // Shader animation as it stands `--time` seconds after the map loads.
     renderer.world.animate(&gpu, o.time);
     renderer.item_time = o.time;
+    if let Some(view_model) = &mut renderer.view_model {
+        // Settle the aim (and the bob, standing still) over two seconds.
+        for _ in 0..120 {
+            view_model.view.update(&ViewModelInput {
+                delta_time: 1.0 / 60.0,
+                grounded: true,
+                aiming: o.aim,
+                ..ViewModelInput::default()
+            });
+        }
+    }
     renderer.prepare(&gpu, &camera, [o.width as f32, o.height as f32]);
     match renderer.culling.pvs_stats() {
         Some(pvs) => println!(
@@ -752,7 +793,7 @@ pub fn run(o: &ViewOptions) -> i32 {
             renderer.culling.frustum_culled
         ),
     }
-    let pixels = render_hdr_to_rgba(
+    let pixels = render_hdr_with_overlay_to_rgba(
         &gpu,
         o.width,
         o.height,
@@ -760,6 +801,7 @@ pub fn run(o: &ViewOptions) -> i32 {
         &renderer.post,
         &renderer.image_processing,
         |pass| renderer.draw(pass),
+        |pass| renderer.draw_overlay(pass),
     );
     match image::save_buffer(path, &pixels, o.width, o.height, image::ExtendedColorType::Rgba8) {
         Ok(()) => {

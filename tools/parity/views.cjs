@@ -11,10 +11,11 @@ const { open, boot, waitForMap, sleep } = require('./lib.cjs');
 // Quake yaw and pitch, without their light, their shader stages that many
 // item seconds in, as washoi view --projectile draws them. A trail is the one
 // a straight second of flight at 60 frames a second leaves, rebuilt each frame
-// for the camera.
+// for the camera. A weapon id (the last argument) holds that first-person
+// weapon at the hip, as washoi view --weapon draws it.
 (async () => {
   setTimeout(() => process.exit(3), 1_500_000).unref();
-  const [demo, prefix, list, size = '1280x720', keepRe = '^(bsp|skybox)', players = '', itemTime = '', projectiles = '', explosions = '', effects = ''] = process.argv.slice(2);
+  const [demo, prefix, list, size = '1280x720', keepRe = '^(bsp|skybox)', players = '', itemTime = '', projectiles = '', explosions = '', effects = '', weapon = ''] = process.argv.slice(2);
   const [w, h] = size.split('x').map(Number);
   const b = await open({ width: w, height: h });
   try {
@@ -24,7 +25,7 @@ const { open, boot, waitForMap, sleep } = require('./lib.cjs');
     await waitForMap(b);
     await sleep(2000);
     const lights = process.env.LIGHTS ? '1' : '';
-    await b.ev(async ([keepRe, players, itemTime, projectiles, explosions, effects, lights]) => {
+    await b.ev(async ([keepRe, players, itemTime, projectiles, explosions, effects, lights, weapon]) => {
       const { DemoService } = await import('/src/games/fps/client/DemoService.ts');
       DemoService.getInstance().activeDemoViewer?.pause();
       const scene = window.scene;
@@ -205,6 +206,19 @@ const { open, boot, waitForMap, sleep } = require('./lib.cjs');
           manager.resetRootMotion(inst);
         }
       }
+      // The first-person weapon: a view of its own on this camera, at the hip.
+      const held = new Set();
+      if (weapon) {
+        const { WeaponViewManager } = await import('/src/engine/weapon/WeaponViewManager.ts');
+        // The demo viewer keeps a view of its own: its weapon lights would
+        // take this weapon's two light slots too.
+        const before = new Set(scene.lights);
+        const view = new WeaponViewManager();
+        view.init(scene, camera);
+        for (const l of before) if (/^(weaponLight|bladeLight|muzzleFlash)$/.test(l.name)) l.dispose();
+        await view.loadWeapon(weapon);
+        for (const m of view.currentWeapon?.meshes ?? []) held.add(m);
+      }
       const { FPSPickup } = await import('/src/games/fps/world/FPSPickup.ts');
       const weapons = new Set();
       for (const p of FPSPickup.allPickups) {
@@ -237,10 +251,11 @@ const { open, boot, waitForMap, sleep } = require('./lib.cjs');
         // camera moved (Pickup.applyModelInView).
         for (const p of FPSPickup.allPickups) if (p.options.type === 'weapon' && p.mesh && !p.mesh.isEnabled()) p.mesh.setEnabled(true);
         for (const m of weapons) if (m.getTotalVertices() > 0) m.isVisible = true;
+        for (const m of held) m.isVisible = true;
       };
       scene.onBeforeCameraRenderObservable.add(place);
       for (const el of document.body.querySelectorAll('body > *')) if (!el.querySelector('canvas') && el.tagName !== 'CANVAS') el.style.visibility = 'hidden';
-    }, [keepRe, players, itemTime, projectiles, explosions, effects, lights]);
+    }, [keepRe, players, itemTime, projectiles, explosions, effects, lights, weapon]);
     for (const [i, at] of list.split(';').entries()) {
       await b.ev((v) => { window.__probeView = v; }, at.split(',').map(Number));
       await sleep(5000);
