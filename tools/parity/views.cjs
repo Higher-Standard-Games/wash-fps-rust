@@ -28,7 +28,7 @@ const { open, boot, waitForMap, sleep } = require('./lib.cjs');
       DemoService.getInstance().activeDemoViewer?.pause();
       const scene = window.scene;
       const camera = scene.activeCameras?.[0] ?? scene.activeCamera;
-      const keep = new RegExp(`${keepRe}|^probe_player${itemTime ? '|^pp_' : ''}${projectiles ? '|^proj_\\d+_' : ''}${explosions ? '|^explosion_' : ''}${effects ? '|^(tracer_streak|muzzle_flash|impact_spark)$' : ''}`);
+      const keep = new RegExp(`${keepRe}|^probe_player${itemTime ? '|^pp_' : ''}${projectiles ? '|^proj_\\d+_' : ''}${explosions ? '|^explosion_' : ''}${effects ? '|^(tracer_streak|muzzle_flash|impact_spark|rail_beam|rail_impact|voltaic_.*)$' : ''}`);
       const frozen = [];
       if (projectiles) {
         const { Vector3 } = await import('/node_modules/@babylonjs/core/Maths/math.vector.js');
@@ -123,7 +123,7 @@ const { open, boot, waitForMap, sleep } = require('./lib.cjs');
         effect.renderer.clock = effect.clock;
       }
       if (effects) {
-        // Streaks, flashes and sparks through SHAG's own renderers, each
+        // Streaks, flashes, sparks, rails and lightning through SHAG's own renderers, each
         // spawned on a clock set back by its age, then held at 0. The
         // impact scatter restarts from its seed, the flash and spark seeds
         // from 1, and flashes stay where they were fired.
@@ -134,7 +134,17 @@ const { open, boot, waitForMap, sleep } = require('./lib.cjs');
         const tracer = fx.streakRenderer;
         const muzzle = fx.muzzleFlashRenderer;
         const sparks = fx.impactSparkRenderer;
-        for (const r of [tracer, muzzle, sparks]) r.clear();
+        const rail = fx.railRenderer;
+        for (const r of [tracer, muzzle, sparks, rail]) r.clear();
+        rail.activationCounter = 0;
+        const volt = fx.voltaicRenderer;
+        volt.clear();
+        volt.setRemoteStartResolver(null);
+        // The demo's own view model would release a held hero beam.
+        volt.stopHero = () => {};
+        volt.heroActivation = 0;
+        volt.remoteBatch.activationCounter = 0;
+        volt.chainBatch.activationCounter = 0;
         muzzle.anchorResolver = null;
         muzzle.seedCounter = 0;
         sparks.seedCounter = 0;
@@ -156,9 +166,21 @@ const { open, boot, waitForMap, sleep } = require('./lib.cjs');
           } else if (kind === 'impact') {
             sparks.clock = at;
             sparks.burst({ position: q(n, 0), normal: q(n, 3), incoming: q(n, 6), color: c(n, 9), heavy: n[12] !== 0 });
+          } else if (kind === 'lightning') {
+            volt.clock = at;
+            const mode = parts[0];
+            const m = n.slice(1);
+            const sample = { start: q(m, 0), end: q(m, 3), color: c(m, 6), impactKind: parts[10] };
+            if (mode === 'hero') volt.updateHero(sample);
+            else if (mode === 'remote') volt.updateRemote(`remote${volt.getDebugCounts().remote}`, sample, sample.end.subtract(sample.start));
+            else volt.fireChainArc({ ...sample, intensity: 1.12 }, 0.14);
+          } else if (kind === 'rail') {
+            rail.clock = at;
+            const normal = n[10] || n[11] || n[12] ? q(n, 10) : undefined;
+            rail.fireRail({ start: q(n, 0), end: q(n, 3), color: c(n, 6), impactKind: parts[9], impactNormal: normal });
           }
         }
-        for (const r of [tracer, muzzle, sparks]) r.clock = () => 0;
+        for (const r of [tracer, muzzle, sparks, rail, volt]) r.clock = () => 0;
       }
       if (players) {
         const { PlayerModelManager } = await import('/src/engine/animation/PlayerModelManager.ts');

@@ -39,7 +39,10 @@ use shagger::weapon::muzzle::muzzle_flash_renderer::{MuzzleFlashRenderer, Muzzle
 use shagger::weapon::projectile_manager::{
     MAX_TRAIL_POINTS, ProjectileModel, ProjectileTrail, load_projectile_model, projectile_matrix,
 };
+use shagger::weapon::rail::rail_effect_renderer::RailEffectRenderer;
+use shagger::weapon::rail::rail_profiles::{RailEffectSample, RailImpactKind};
 use shagger::weapon::tracer::streak_tracer_renderer::{StreakTracerRenderer, StreakTracerShot};
+use shagger::weapon::voltaic::voltaic_effect_renderer::VoltaicEffectRenderer;
 use washoi::shared::entities::definitions::projectiles::projectile_def;
 
 use washoi::client::player_model_visual_settings::{PlayerTeamSlot, get_player_model_visual_style};
@@ -99,8 +102,8 @@ pub struct ExplosionView {
     pub age: f64,
 }
 
-/// A bullet streak, muzzle flash or impact held at an age (`--tracer`,
-/// `--muzzle`, `--impact`), in Quake axes.
+/// A bullet streak, muzzle flash, impact or rail held at an age (`--tracer`,
+/// `--muzzle`, `--impact`, `--rail`), in Quake axes.
 #[derive(Debug, Clone, PartialEq)]
 pub enum EffectView {
     Tracer {
@@ -125,6 +128,42 @@ pub enum EffectView {
         heavy: bool,
         age: f64,
     },
+    Lightning {
+        mode: LightningMode,
+        start: [f64; 3],
+        end: [f64; 3],
+        color: [f32; 3],
+        kind: RailImpactKind,
+        age: f64,
+    },
+    Rail {
+        start: [f64; 3],
+        end: [f64; 3],
+        color: [f32; 3],
+        kind: RailImpactKind,
+        normal: Option<[f64; 3]>,
+        age: f64,
+    },
+}
+
+/// Which Voltaic beam `--lightning` holds.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LightningMode {
+    Hero,
+    Remote,
+    Chain,
+}
+
+impl LightningMode {
+    #[must_use]
+    pub fn parse(name: &str) -> Option<Self> {
+        match name {
+            "hero" => Some(Self::Hero),
+            "remote" => Some(Self::Remote),
+            "chain" => Some(Self::Chain),
+            _ => None,
+        }
+    }
 }
 
 /// A Quake point or direction in Babylon axes.
@@ -283,6 +322,8 @@ pub struct MapRenderer {
     pub tracers: StreakTracerRenderer,
     pub muzzle_flashes: MuzzleFlashRenderer,
     pub impact_sparks: ImpactSparkRenderer,
+    pub rails: RailEffectRenderer,
+    pub lightning: VoltaicEffectRenderer,
     /// The joint palettes `model_draws` index.
     pub joints: Vec<Mat4>,
     pub sky: Option<SkyRenderer>,
@@ -351,6 +392,8 @@ impl MapRenderer {
         self.tracers.prepare(gpu, &frame);
         self.muzzle_flashes.prepare(gpu, &frame);
         self.impact_sparks.prepare(gpu, &frame);
+        self.rails.prepare(gpu, &frame);
+        self.lightning.prepare(gpu, &frame);
         if let Some(sky) = &self.sky {
             sky.prepare(gpu, camera, aspect);
         }
@@ -365,7 +408,11 @@ impl MapRenderer {
         self.world.draw_visible_opaque(pass, visible);
         self.models.draw_opaque(pass);
         self.world.draw_visible_blended(pass, visible);
-        // The effects' alpha indices (41 to 46) put them before the models'.
+        // The effects' alpha indices (40 to 46) put them before the models'.
+        self.lightning.draw_beams(pass);
+        self.rails.draw_beams(pass);
+        self.lightning.draw_impacts(pass);
+        self.rails.draw_impacts(pass);
         self.tracers.draw(pass);
         self.muzzle_flashes.draw(pass);
         self.impact_sparks.draw(pass);
@@ -489,6 +536,8 @@ pub fn build_renderer(gpu: &Gpu, map: &mut LoadedMap, output_format: wgpu::Textu
     let mut tracers = StreakTracerRenderer::new(gpu, format);
     let mut muzzle_flashes = MuzzleFlashRenderer::new(gpu, format);
     let mut impact_sparks = ImpactSparkRenderer::new(gpu, format);
+    let mut rails = RailEffectRenderer::new(gpu, format);
+    let mut lightning = VoltaicEffectRenderer::new(gpu, format);
     for effect in &map.effects {
         match effect {
             EffectView::Tracer { start, end, color, age } => {
@@ -540,6 +589,52 @@ pub fn build_renderer(gpu: &Gpu, map: &mut LoadedMap, output_format: wgpu::Textu
                     intensity: None,
                 },
             ),
+            EffectView::Lightning {
+                mode,
+                start,
+                end,
+                color,
+                kind,
+                age,
+            } => {
+                let sample = RailEffectSample {
+                    start: babylon(*start),
+                    end: babylon(*end),
+                    color: Vec3::from(*color),
+                    impact_kind: *kind,
+                    impact_normal: None,
+                    intensity: (*mode == LightningMode::Chain).then_some(1.12),
+                };
+                match mode {
+                    // The held beam has no age; it is simply on.
+                    LightningMode::Hero => lightning.update_hero(&sample),
+                    LightningMode::Remote => {
+                        let key = format!("remote{}", lightning.debug_counts().0);
+                        lightning.update_remote(-age, &key, &sample, sample.end - sample.start);
+                    }
+                    // HitscanEffects.fireLightningArc's default duration.
+                    LightningMode::Chain => lightning.fire_chain_arc(-age, &sample, 0.14),
+                }
+            }
+            EffectView::Rail {
+                start,
+                end,
+                color,
+                kind,
+                normal,
+                age,
+            } => rails.fire_rail(
+                -age,
+                &RailEffectSample {
+                    start: babylon(*start),
+                    end: babylon(*end),
+                    color: Vec3::from(*color),
+                    impact_kind: *kind,
+                    impact_normal: normal.map(babylon),
+                    intensity: None,
+                },
+                None,
+            ),
         }
     }
     MapRenderer {
@@ -549,6 +644,8 @@ pub fn build_renderer(gpu: &Gpu, map: &mut LoadedMap, output_format: wgpu::Textu
         tracers,
         muzzle_flashes,
         impact_sparks,
+        rails,
+        lightning,
         world: renderer,
         models,
         model_draws,

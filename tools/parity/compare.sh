@@ -13,9 +13,10 @@
 # holds projectiles in both (their shader stages ITEMS seconds in).
 # EXPLOSIONS="<id,x,y,z,age>;..." holds those projectiles' explosions in both,
 # that many seconds after they went off against a floor.
-# EFFECTS="tracer:<args>;muzzle:<args>;impact:<args>" holds bullet streaks,
-# muzzle flashes and impact sparks in both, with washoi view's --tracer,
-# --muzzle and --impact arguments.
+# EFFECTS="tracer:<args>;muzzle:<args>;impact:<args>;rail:<args>;lightning:<args>"
+# holds bullet streaks, muzzle flashes, impact sparks, rails and Voltaic
+# beams in both, with washoi view's --tracer, --muzzle, --impact, --rail and
+# --lightning arguments.
 set -e
 HERE=$(cd "$(dirname "$0")" && pwd)
 ROOT=$(cd "$HERE/../.." && pwd)

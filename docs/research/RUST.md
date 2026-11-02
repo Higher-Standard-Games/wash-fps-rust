@@ -2580,6 +2580,34 @@ fit and did not count the parity harness.
 
 Newest first. Each entry names the commits and what proves them.
 
+### Milestone 6, fifteenth slice: rail and lightning beams (November 2, 2026)
+
+- **shagger.**
+  - `weapon::rail` ports the Electrobolt rail (`RailEffectRenderer`,
+    `RailBeamGeometry`, `RailShaderMaterial` as `rail_beam.wgsl` and
+    `rail_impact.wgsl`): glow, core and a twin analytic helix, with the
+    muzzle crack and terminal nucleus.
+  - `weapon::voltaic` ports the Voltaic lightning beam: the local hero beam
+    (two crossed sheets, drawn as a batch of one where the browser binds
+    uniforms), remote players' beams with their muzzle resolver, and chain
+    arcs keyed by their quantised endpoints (`js_round`). The bolt field,
+    forks, endpoint crowns and contact sparks follow the GLSL line by line.
+  - `make_voltaic_seed` (FNV-1a over UTF-16 units) is golden against V8.
+  - `EffectQuadBatch::with_template` draws any template mesh, with a fifth
+    vec4 per instance (`iNormal`).
+- **wash-fps-rust.** `washoi view --rail` and `--lightning hero|remote|chain`
+  hold each at an age; `tools/parity` spawns the same through SHAG's
+  `HitscanEffects` renderers (`EFFECTS=rail:…;lightning:…`).
+- **Checked against the browser.** Rails: the helix, core and endpoints
+  land on the same pixels; the view differs by 6 levels, most of it the
+  procedural pickup the browser view leaves out. Lightning: every bolt,
+  fork, ghost and the chain arc's contact crown match in shape and colour
+  in two views, 5 to 7 levels apart.
+- **Not yet.** Atmospheric fog on effects, the beam lights, wiring the
+  effects to snapshots and events.
+- **Next.** Dynamic and projectile lights (section 21.10's forward light
+  buffer).
+
 ### Milestone 6, fourteenth slice: the HDR target and image processing (November 2, 2026)
 
 - **shagger.**

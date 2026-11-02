@@ -4,7 +4,7 @@
 //! prints the scoreboard.
 //!
 //! ```text
-//! washoi view <map> [--data DIR] [--spawn N] [--screenshot FILE.png] [--size WxH] [--time T] [--at X,Y,Z,YAW] [--pitch DEG] [--player X,Y,Z,YAW[,CLIP[,FRAME]]]... [--projectile ID,X,Y,Z,YAW[,PITCH]]... [--explosion ID,X,Y,Z,AGE]... [--tracer X,Y,Z,X2,Y2,Z2,R,G,B,AGE]... [--muzzle X,Y,Z,R,G,B,STYLE,SCALE,DURATION,AGE]... [--impact X,Y,Z,NX,NY,NZ,IX,IY,IZ,R,G,B,HEAVY,AGE]... [--tracer X,Y,Z,X2,Y2,Z2,R,G,B,AGE]... [--muzzle X,Y,Z,R,G,B,STYLE,SCALE,DURATION,AGE]... [--impact X,Y,Z,NX,NY,NZ,IX,IY,IZ,R,G,B,HEAVY,AGE]... [--no-cull] [--seconds N]
+//! washoi view <map> [--data DIR] [--spawn N] [--screenshot FILE.png] [--size WxH] [--time T] [--at X,Y,Z,YAW] [--pitch DEG] [--player X,Y,Z,YAW[,CLIP[,FRAME]]]... [--projectile ID,X,Y,Z,YAW[,PITCH]]... [--explosion ID,X,Y,Z,AGE]... [--tracer X,Y,Z,X2,Y2,Z2,R,G,B,AGE]... [--muzzle X,Y,Z,R,G,B,STYLE,SCALE,DURATION,AGE]... [--impact X,Y,Z,NX,NY,NZ,IX,IY,IZ,R,G,B,HEAVY,AGE]... [--rail X,Y,Z,X2,Y2,Z2,R,G,B,KIND,NX,NY,NZ,AGE]... [--lightning MODE,X,Y,Z,X2,Y2,Z2,R,G,B,KIND,AGE]... [--no-cull] [--seconds N]
 //! washoi connect <ws://game-server> [--name NAME] [--ticket TICKET] [--seconds N] [--play]
 //! washoi lobby <ws://lobby> [--key-file FILE] list
 //! washoi lobby <ws://lobby> [--key-file FILE] spectate [--seconds N]
@@ -32,7 +32,11 @@
 //! bullet streak from one Quake point to another, `--muzzle` a muzzle flash
 //! (`burst`, `plume` or `arcs`), and `--impact` an impact's sparks at a
 //! point, surface normal and shot direction (`HEAVY` 1 adds the hit star),
-//! each `AGE` seconds in.
+//! and `--rail` an Electrobolt rail from the muzzle to a hit (`KIND` `none`,
+//! `world` or `player`; a zero normal faces the shooter), each `AGE` seconds
+//! in. `--lightning` holds a Voltaic beam: `hero` (the local player's, held
+//! on), `remote` (another player's) or `chain` (an arc between chain
+//! lightning targets).
 
 mod view;
 mod window;
@@ -48,6 +52,7 @@ use shagger::shared::js::{js_cos, js_sin};
 use shagger::shared::json::Value;
 use shagger::shared::net::command::Command;
 use shagger::weapon::muzzle::muzzle_flash_renderer::MuzzleFlashStyle;
+use shagger::weapon::rail::rail_profiles::RailImpactKind;
 use washoi::shared::net::snapshot_events::{SnapshotEvent, WashoiEvents};
 
 fn usage() -> ! {
@@ -152,7 +157,7 @@ fn parse_options(args: impl Iterator<Item = String>) -> Options {
                     age: parts.get(4).and_then(|p| p.parse().ok()).unwrap_or_else(|| usage()),
                 });
             }
-            flag @ ("--tracer" | "--muzzle" | "--impact") => {
+            flag @ ("--tracer" | "--muzzle" | "--impact" | "--rail" | "--lightning") => {
                 let v = value();
                 let parts: Vec<&str> = v.split(',').map(str::trim).collect();
                 let n = |i: usize| -> f64 { parts.get(i).and_then(|p| p.parse().ok()).unwrap_or_else(|| usage()) };
@@ -175,6 +180,36 @@ fn parse_options(args: impl Iterator<Item = String>) -> Options {
                         scale: n(7),
                         duration: n(8),
                         age: n(9),
+                    },
+                    "--lightning" => {
+                        let n = |i: usize| -> f64 {
+                            parts.get(i + 1).and_then(|p| p.parse().ok()).unwrap_or_else(|| usage())
+                        };
+                        view::EffectView::Lightning {
+                            mode: parts
+                                .first()
+                                .and_then(|s| view::LightningMode::parse(s))
+                                .unwrap_or_else(|| usage()),
+                            start: [n(0), n(1), n(2)],
+                            end: [n(3), n(4), n(5)],
+                            color: [n(6) as f32, n(7) as f32, n(8) as f32],
+                            kind: parts
+                                .get(10)
+                                .and_then(|s| RailImpactKind::parse(s))
+                                .unwrap_or_else(|| usage()),
+                            age: n(10),
+                        }
+                    }
+                    "--rail" => view::EffectView::Rail {
+                        start: v3(0),
+                        end: v3(3),
+                        color: c3(6),
+                        kind: parts
+                            .get(9)
+                            .and_then(|s| RailImpactKind::parse(s))
+                            .unwrap_or_else(|| usage()),
+                        normal: Some(v3(10)).filter(|n| n.iter().any(|c| *c != 0.0)),
+                        age: n(13),
                     },
                     _ => view::EffectView::Impact {
                         position: v3(0),
