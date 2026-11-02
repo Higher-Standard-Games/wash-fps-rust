@@ -87,6 +87,11 @@ impl DemoPlayback {
         &self.feed.match_state
     }
 
+    /// The newest snapshot's players.
+    pub fn roster(&self) -> &[(String, shagger::shared::net::game_state::PlayerState)] {
+        &self.feed.roster
+    }
+
     pub fn advance(&mut self, dt: f64) -> DemoView {
         self.clock_ms += dt * 1000.0;
         while self.next < self.frames.len() && self.frame_time(self.next) <= self.clock_ms {

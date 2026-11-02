@@ -28,7 +28,8 @@ use shagger::rendering::glam::{DVec3, Mat4, Vec3};
 use shagger::rendering::gpu::Gpu;
 use shagger::rendering::hdr_target::HDR_FORMAT;
 use shagger::rendering::model_renderer::{ModelDraw, ModelRenderer};
-use shagger::rendering::offscreen::{OFFSCREEN_FORMAT, render_hdr_with_overlay_to_rgba};
+use shagger::rendering::offscreen::{OFFSCREEN_FORMAT, render_hdr_with_ui_to_rgba};
+
 use shagger::rendering::sky_renderer::{SkyRenderer, apply_skybox};
 use shagger::rendering::wgpu;
 use shagger::rendering::world_culling::WorldCulling;
@@ -36,6 +37,7 @@ use shagger::rendering::world_geometry::build_world_geometry;
 use shagger::rendering::world_renderer::{Rgba8Image, WorldRenderer};
 use shagger::shared::collision::shared_collision_world::SharedCollisionWorld;
 use shagger::shared::entities::projectile_def::ProjectileDef;
+use shagger::shared::net::game_state::PlayerState;
 use shagger::shared::spread_utils::mulberry32;
 use shagger::weapon::explosion::explosion_batch_renderer::{ExplosionBatchRenderer, ExplosionLook};
 use shagger::weapon::explosion_effect::{explosion_flash, explosion_for};
@@ -50,7 +52,10 @@ use shagger::weapon::rail::rail_profiles::{RailEffectSample, RailImpactKind};
 use shagger::weapon::tracer::streak_tracer_renderer::StreakTracerShot;
 use shagger::weapon::weapon_view_manager::ViewModelInput;
 use washoi::client::demo_playback::{DemoPlayback, DemoView, LiveProjectile};
+use washoi::client::fps_hud::FpsHud;
 use washoi::client::game_events::{EffectTargets, GameAudio, play_remote_shots};
+use washoi::client::hud::hud_widget::HudFrame;
+use washoi::client::hud_state::HudState;
 use washoi::client::live_watch::LiveWatch;
 use washoi::client::match_state_manager::MatchStateManager;
 use washoi::client::weapon_view::WeaponViewModel;
@@ -142,6 +147,29 @@ pub struct ViewOptions {
     /// Where to write the demo's or match's sound (`--audio-out`), mixed
     /// offline as heard from the camera.
     pub audio_out: Option<PathBuf>,
+    /// Hold the scoreboard open (`--scoreboard`, Tab in the window).
+    pub scoreboard: bool,
+}
+
+/// The HUD's state for a frame of a demo or a match being watched: the
+/// feed's roster and match, behind the followed player (if any).
+#[must_use]
+pub fn watch_hud_state(
+    feed: &Feed,
+    players: &[(String, InterpolatedEntity, PlayerModelVisualStyle)],
+    follow: Option<usize>,
+) -> HudState {
+    let mut state = HudState {
+        watcher: true,
+        playback: matches!(feed, Feed::Demo(_)),
+        spectating: follow
+            .and_then(|i| players.get(i))
+            .map(|(id, _, _)| id.clone())
+            .unwrap_or_default(),
+        ..HudState::default()
+    };
+    state.update_from_game_state(feed.roster(), feed.match_state());
+    state
 }
 
 /// A chase camera behind a player: 150 units back and 40 up along the
@@ -220,6 +248,15 @@ impl Feed {
         match self {
             Self::Demo(d) => d.match_state(),
             Self::Live(l) => l.match_state(),
+        }
+    }
+
+    /// The newest snapshot's players.
+    #[must_use]
+    pub fn roster(&self) -> &[(String, PlayerState)] {
+        match self {
+            Self::Demo(d) => d.roster(),
+            Self::Live(l) => l.roster(),
         }
     }
 
@@ -1208,6 +1245,7 @@ pub fn run(o: &ViewOptions) -> i32 {
     // Shader animation as it stands `--time` seconds after the map loads.
     renderer.world.animate(&gpu, o.time);
     renderer.item_time = o.time;
+    let mut hud: Option<FpsHud> = None;
     if let Some(feed) = &mut feed {
         // Play up to `--time` at 60 frames a second (live: in real time).
         let steps = (o.time * 60.0).round() as usize;
@@ -1226,6 +1264,13 @@ pub fn run(o: &ViewOptions) -> i32 {
             audio
         });
         let mut pcm: Vec<f32> = Vec::new();
+        hud = match FpsHud::new(&gpu, OFFSCREEN_FORMAT) {
+            Ok(hud) => Some(hud),
+            Err(why) => {
+                eprintln!("no HUD: {why}");
+                None
+            }
+        };
         for _ in 0..steps.max(1) {
             if live {
                 std::thread::sleep(std::time::Duration::from_micros(16_667));
@@ -1236,6 +1281,19 @@ pub fn run(o: &ViewOptions) -> i32 {
             renderer.set_live_players(&players, 1.0 / 60.0);
             renderer.set_live_projectiles(&projectiles, 1.0 / 60.0);
             renderer.play_effects(&view.effects, &view.weapons, 1.0 / 60.0);
+            if let Some(hud) = &mut hud {
+                let state = watch_hud_state(feed, &players, o.follow);
+                hud.scoreboard.held = o.scoreboard;
+                hud.update(
+                    &HudFrame {
+                        state: &state,
+                        match_state: feed.match_state(),
+                        dt: 1.0 / 60.0,
+                    },
+                    o.width as f32,
+                    o.height as f32,
+                );
+            }
             if let Some(audio) = &mut audio {
                 let mut ear = camera;
                 if let Some((_, p, _)) = o.follow.and_then(|i| players.get(i)) {
@@ -1355,7 +1413,10 @@ pub fn run(o: &ViewOptions) -> i32 {
             renderer.culling.frustum_culled
         ),
     }
-    let pixels = render_hdr_with_overlay_to_rgba(
+    if let Some(hud) = &mut hud {
+        hud.prepare(&gpu);
+    }
+    let pixels = render_hdr_with_ui_to_rgba(
         &gpu,
         o.width,
         o.height,
@@ -1364,6 +1425,11 @@ pub fn run(o: &ViewOptions) -> i32 {
         &renderer.image_processing,
         |pass| renderer.draw(pass),
         |pass| renderer.draw_overlay(pass),
+        |pass| {
+            if let Some(hud) = &hud {
+                hud.draw(pass);
+            }
+        },
     );
     match image::save_buffer(path, &pixels, o.width, o.height, image::ExtendedColorType::Rgba8) {
         Ok(()) => {

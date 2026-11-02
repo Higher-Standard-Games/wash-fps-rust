@@ -2582,16 +2582,57 @@ fit and did not count the parity harness.
 
 Newest first. Each entry names the commits and what proves them.
 
+### Milestone 9, first slice: the HUD's 2D layer and the top of the HUD (November 2, 2026)
+
+- **shagger `e16cdc8`, `86d97bf`.** `ui/` holds the 2D layer section 11
+  asked for: `Font` (swash, MIT or Apache-2.0; fontdue would bring back the
+  unmaintained `ttf-parser`), a shelf-packed glyph atlas, and `Hud2d`, a
+  frame of rectangles, outlines, gradients, convex polygons and text
+  (letter spacing, alignment, hard shadows) in CSS pixels.
+  `rendering/hud_2d_renderer.rs` draws it over the output after image
+  processing (`begin_ui_pass`, `render_hdr_with_ui_to_rgba`).
+- **wash-fps-rust.** `client/hud_state.rs` ports `HUDState.ts`'s
+  scoreboard half (sorted by score, final standings after the match,
+  spectators). `client/hud/washiki.rs` carries `WashikiTheme.css`: colours
+  as `hsla`, `--hud-zoom`, the ink shadows, and the hand-cut slabs (a
+  `clip-path` polygon over a `linear-gradient`, `skewX`, a hard
+  `drop-shadow`). Widgets keep `FPSHudWidget`'s shape (`update`, then
+  `size` and `draw`): `Timer` (idle, warning gold, critical red flash),
+  `FragCounter`, `GametypeBadge`, `PhaseMessage` (warmup, 3-2-1, fight,
+  result, overtime) and `Scoreboard` (free-for-all and team lists; Tab in
+  the window, `--scoreboard` on a screenshot, locked open after the
+  match). `client/fps_hud.rs` lays out the top-centre row as `FPSHud.ts`
+  does. The fonts ship in `assets/fonts` (Orbitron Black and Rajdhani
+  Bold, SIL Open Font License 1.1, its text beside them).
+- **Proof.** Unit tests (CSS `hsla` and gradient angles, the atlas
+  packing, the scoreboard's order); screenshots of the dm14 demo show the
+  frag wing, clock and gametype tab, and the scoreboard over the match.
+- **Left out.** Scanline overlays, perspective tilts and blurred glows;
+  the post-game stage and the duel's versus card; vitals, ammo, the
+  crosshair and the kill feed come next.
+
+### Milestone 8, fifth slice: the bomb's sounds (November 2, 2026)
+
+- **wash-fps-rust `9df76a1`.** `client/fps_bomb_audio.rs` ports
+  `FPSBombAudio.ts`: the beep on the server's interval, the side-read
+  lines on bomb phase changes, the round start and go, the spoken 3-2-1,
+  and the last call for the side running out of time. Spectating, the
+  lines are read for the side of the player followed. The detonation's
+  sound belongs to `BombSiteMarkers.ts` and comes with the bomb's visuals.
+- **Proof.** Unit tests: the beep follows the interval; the last call
+  comes once a round, when the fuse leaves a defuse and five seconds.
+
 ### Milestone 8, fourth slice: music playlists (November 2, 2026)
 
-- **shagger `cac2376`.** `audio/music.rs` ports `AudioManager.ts`'s music
+- **shagger `cac2376`, then `e16cdc8`.** `audio/music.rs` ports `AudioManager.ts`'s music
   half: `Playlist` from `*.playlist.json`, `startPlaylist` (same name
   skipped, Fisher-Yates shuffle, music off remembers it), `stopPlaylist`,
   missing tracks skipped (the playlists list
   `Noodlesoup_Telefragged_Me.mp3`, which no package holds), no fade
   between tracks, the 0.02-per-50-ms fades, `s_volume`, `s_musicenabled`
-  and muted playlists. MP3s decode with `minimp3` (MIT around CC0 C;
-  `nanomp3` needs Rust 1.89) and stream through an rtrb ring into new
+  and muted playlists. MP3s decode with `rmp3` (CC0 around the CC0 C
+  library; the `minimp3` crate pulls in `slice-ring-buffer`,
+  RUSTSEC-2025-0044, and `nanomp3` needs Rust 1.89) and stream through an rtrb ring into new
   stream voices on the music bus, which the sound effects' `StopAll`
   leaves alone. A thread decodes ahead on a sound card; offline, `update`
   decodes, so a render to a file is the same every run.

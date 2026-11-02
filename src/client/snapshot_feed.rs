@@ -7,7 +7,7 @@
 use std::collections::HashMap;
 
 use shagger::network::client::snapshot_buffer::{EntitySnapshot, InterpolatedEntity, SnapshotBuffer};
-use shagger::shared::net::game_state::GameState;
+use shagger::shared::net::game_state::{GameState, PlayerState};
 
 use crate::client::match_state_manager::MatchStateManager;
 use crate::client::remote_player_logic::{apply_roster, extract_entities};
@@ -55,6 +55,9 @@ pub struct SnapshotFeed {
     pub teams: HashMap<String, String>,
     /// The match as its `match_state` events tell it.
     pub match_state: MatchStateManager,
+    /// The newest snapshot's players (`state.players`): names, scores,
+    /// deaths and pings for the HUD.
+    pub roster: Vec<(String, PlayerState)>,
     /// Effect events waiting for the next frame.
     effects: Vec<SnapshotEvent>,
     weapons: HashMap<String, String>,
@@ -71,6 +74,7 @@ impl SnapshotFeed {
     /// local player's own body is left out.
     pub fn push(&mut self, now: f64, state: &GameState<SnapshotEvent>, local_entity_id: &str) {
         apply_roster(&mut self.teams, state, local_entity_id);
+        self.roster = state.players.iter().map(|(k, p)| (k.to_owned(), p.clone())).collect();
         let entities = extract_entities(state, local_entity_id);
         self.snapshots.push(entities.clone());
         self.buffer.push(now, state.tick, entities, None);
