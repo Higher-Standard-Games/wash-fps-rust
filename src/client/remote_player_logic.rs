@@ -1,8 +1,85 @@
 //! wash-fps `client/RemotePlayerLogic.ts`: the decisions the remote player
-//! renderer makes from snapshot data. Only `deriveAnimation` and its
-//! thresholds are ported so far.
+//! renderer makes from snapshot data. Ported so far: `deriveAnimation`
+//! and its thresholds, `extractEntities` and `applyRoster`.
 
-use shagger::network::client::snapshot_buffer::InterpolatedEntity;
+use std::collections::HashMap;
+
+use shagger::network::client::snapshot_buffer::{EntitySnapshot, InterpolatedEntity};
+use shagger::shared::net::game_state::GameState;
+
+/// `CLIENT_KEY_PREFIX` (`ClientEntityKey.ts`): the entity keys of players.
+pub const CLIENT_KEY_PREFIX: &str = "player_";
+
+/// `isClientKey`.
+#[must_use]
+pub fn is_client_key(key: &str) -> bool {
+    key.starts_with(CLIENT_KEY_PREFIX)
+}
+
+/// `extractEntities`: every player's body in a snapshot but the local
+/// one's, as the interpolation buffer holds it. The wire carries no water
+/// level or ladder flag, so those read dry and off.
+#[must_use]
+pub fn extract_entities<E>(state: &GameState<E>, local_entity_id: &str) -> HashMap<String, EntitySnapshot> {
+    let mut entities = HashMap::new();
+    for (entity_id, entity) in state.entities.iter() {
+        if entity_id == local_entity_id || !is_client_key(entity_id) {
+            continue;
+        }
+        let Some(transform) = entity.transform else {
+            continue;
+        };
+        let velocity = entity.velocity;
+        let movement = entity.movement_state;
+        let view = movement.and_then(|m| m.view);
+        entities.insert(
+            entity_id.to_owned(),
+            EntitySnapshot {
+                x: transform.position.x,
+                y: transform.position.y,
+                z: transform.position.z,
+                yaw: transform.rotation[1],
+                pitch: Some(transform.rotation[0]),
+                vx: velocity.map_or(0.0, |v| v.linear.x),
+                vy: velocity.map_or(0.0, |v| v.linear.y),
+                vz: velocity.map_or(0.0, |v| v.linear.z),
+                grounded: velocity.is_none_or(|v| v.grounded),
+                crouching: movement.is_some_and(|m| m.is_crouching),
+                sliding: movement.is_some_and(|m| m.is_sliding),
+                wall_jumping: movement.is_some_and(|m| m.is_wall_jumping),
+                aiming: movement.map(|m| m.is_aiming),
+                crouch_view_offset: view.map(|v| v.crouch_view_offset),
+                strafe_input: view.map(|v| v.strafe_input),
+                forward_input: view.map(|v| v.forward_input),
+                slide_phase: view.map(|v| v.slide_phase),
+                ledge_grab_phase: view.map(|v| v.ledge_grab_phase),
+                powerup_mask: Some(entity.powerups.map_or(0, u32::from)),
+                water_level: Some(0),
+                on_ladder: Some(false),
+            },
+        );
+    }
+    entities
+}
+
+/// `applyRoster`: each player's team from the snapshot roster ("ffa" for
+/// none). Returns the local player's team when the roster names them
+/// (`Some(None)` for no team), `None` when it does not.
+pub fn apply_roster<E>(
+    teams: &mut HashMap<String, String>,
+    state: &GameState<E>,
+    local_entity_id: &str,
+) -> Option<Option<String>> {
+    let mut local = None;
+    for player in state.players.values() {
+        let team = if player.team.is_empty() { "ffa" } else { &player.team };
+        teams.insert(player.entity_id.clone(), team.to_owned());
+        if player.entity_id == local_entity_id {
+            local = Some((!player.team.is_empty()).then(|| player.team.clone()));
+        }
+    }
+    local
+}
 
 pub const IDLE_SPEED_THRESHOLD: f64 = 50.0;
 

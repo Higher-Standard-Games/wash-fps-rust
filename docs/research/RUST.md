@@ -2580,6 +2580,32 @@ fit and did not count the parity harness.
 
 Newest first. Each entry names the commits and what proves them.
 
+### Milestone 7, first slice: demos play in the window (November 2, 2026)
+
+- **wash-fps-rust.**
+  - `client::remote_player_logic` ports `extractEntities`, `applyRoster` and
+    `isClientKey`.
+  - `client::demo_playback` reads a `.shagdemo` and feeds each frame to
+    shagger's `SnapshotBuffer` at the moment it was recorded, then samples
+    every player each frame. wash-fps's deterministic `DemoTimeline`,
+    seeking and time scale are not ported; with no jitter the buffer
+    brackets the frames as the timeline would, a delay behind.
+  - `MapRenderer::set_live_players` poses and places the live players each
+    frame on top of the static draws (their joint palettes after the static
+    ones), styled as a spectator sees them (the FFA slot; per-player FFA
+    colours are not ported).
+  - `washoi demo <file.shagdemo>` plays the match on its map in the window
+    with the free camera, or with `--screenshot` draws it `--time` seconds
+    in and prints where each player is (Quake axes, for `--at`).
+- **Proof.** The dm2 deathmatch demo (3 players, 15,885 frames, 254 s)
+  plays through; at 20 s a bot is drawn mid-jump with its outline and tint
+  where the recording puts it. A test plays a recorded bot demo end to end
+  and checks the players move.
+- **Not yet.** Projectiles, beams, hitscan, explosions and pickups from the
+  demo's events, following a player's view, the HUD, and watching a live
+  match in the window (`washoi lobby … spectate` still runs headless).
+- **Next.** Demo events (projectiles and effects) and live spectating.
+
 ### Milestone 4: prediction and reconciliation (November 2, 2026)
 
 - **shagger `331ec69`.** `network::client::snapshot_buffer` ports

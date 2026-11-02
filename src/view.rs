@@ -5,6 +5,7 @@
 
 use std::path::{Path, PathBuf};
 
+use shagger::animation::player_model_manager::PlayerModelVisualStyle;
 use shagger::babylon::post_processes::image_processing_post_process::{
     ImageProcessingConfiguration, ImageProcessingPostProcess, Vignette, VignetteBlendMode,
 };
@@ -46,6 +47,7 @@ use shagger::weapon::rail::rail_profiles::{RailEffectSample, RailImpactKind};
 use shagger::weapon::tracer::streak_tracer_renderer::{StreakTracerRenderer, StreakTracerShot};
 use shagger::weapon::voltaic::voltaic_effect_renderer::VoltaicEffectRenderer;
 use shagger::weapon::weapon_view_manager::ViewModelInput;
+use washoi::client::demo_playback::DemoPlayback;
 use washoi::client::weapon_view::WeaponViewModel;
 use washoi::shared::entities::definitions::projectiles::projectile_def;
 
@@ -99,6 +101,8 @@ pub struct ViewOptions {
     /// aimed down its sights (`--aim`).
     pub weapon: Option<String>,
     pub aim: bool,
+    /// A demo to play on its map (`washoi demo`); `time` seeks it.
+    pub demo: Option<PathBuf>,
 }
 
 /// An explosion held at an age (`--explosion`).
@@ -254,6 +258,8 @@ pub struct LoadedMap {
     pub effects: Vec<EffectView>,
     /// The first-person weapon, if any.
     pub weapon: Option<String>,
+    /// Load the player model for players that move (a demo or a match).
+    pub remote_players: bool,
 }
 
 /// Reads every package in `data` and the map's BSP from them.
@@ -308,6 +314,7 @@ pub fn load_map(data: &Path, map: &str) -> Result<LoadedMap, String> {
         explosions: Vec::new(),
         effects: Vec::new(),
         weapon: None,
+        remote_players: false,
     })
 }
 
@@ -337,8 +344,14 @@ pub struct MapRenderer {
     pub impact_sparks: ImpactSparkRenderer,
     pub rails: RailEffectRenderer,
     pub lightning: VoltaicEffectRenderer,
-    /// The joint palettes `model_draws` index.
+    /// The joint palettes `model_draws` index, then the live players'.
     pub joints: Vec<Mat4>,
+    /// How many of `joints` belong to `model_draws`.
+    static_joints: usize,
+    /// The player model, when players are drawn.
+    pub remote_players: Option<RemotePlayerRenderer>,
+    /// This frame's live players (`set_live_players`).
+    live_draws: Vec<ModelDraw>,
     pub sky: Option<SkyRenderer>,
     pub culling: WorldCulling,
     /// Off draws every batch (`--no-cull`), for comparing.
@@ -374,6 +387,22 @@ pub fn shag_image_processing() -> ImageProcessingConfiguration {
 
 impl MapRenderer {
     /// Writes this frame's camera and culls for it.
+    /// Poses and places the players a demo or a match shows this frame,
+    /// advancing their clips by `dt`; players missing from `players` are
+    /// forgotten.
+    pub fn set_live_players(&mut self, players: &[(String, InterpolatedEntity, PlayerModelVisualStyle)], dt: f64) {
+        self.joints.truncate(self.static_joints);
+        self.live_draws.clear();
+        let Some(renderer) = &mut self.remote_players else {
+            return;
+        };
+        renderer.retain(|id| players.iter().any(|(p, _, _)| p == id));
+        for (id, interp, style) in players {
+            renderer.update(id, interp, dt, 1.0, None);
+            renderer.draws(id, interp, style, &mut self.joints, &mut self.live_draws);
+        }
+    }
+
     pub fn prepare(&mut self, gpu: &Gpu, camera: &Camera, size: [f32; 2]) {
         let aspect = size[0] / size[1];
         self.culling.update(camera, aspect);
@@ -386,6 +415,7 @@ impl MapRenderer {
         self.world.set_dynamic_lights(&lights);
         self.world.prepare(gpu, camera.view_projection(aspect), camera.position);
         self.frame_draws.clone_from(&self.model_draws);
+        self.frame_draws.extend_from_slice(&self.live_draws);
         self.items.draws(
             self.item_time,
             camera_rotation(camera.view().as_dmat4()),
@@ -520,7 +550,8 @@ pub fn build_renderer(gpu: &Gpu, map: &mut LoadedMap, output_format: wgpu::Textu
         println!("  no ammo icon: {}", items.missing_icons.join(", "));
     }
     let mut joints = Vec::new();
-    if !map.players.is_empty() {
+    let mut remote_players = None;
+    if !map.players.is_empty() || map.remote_players {
         let pk3 = &mut map.pk3;
         match RemotePlayerRenderer::load(gpu, &mut models, |path| pk3.get_file(path)) {
             Ok(mut players) => {
@@ -532,6 +563,7 @@ pub fn build_renderer(gpu: &Gpu, map: &mut LoadedMap, output_format: wgpu::Textu
                     players.go_to_frame(&id, player.frame);
                     players.draws(&id, &interp, &style, &mut joints, &mut model_draws);
                 }
+                remote_players = Some(players);
             }
             Err(why) => eprintln!("player model: {why}"),
         }
@@ -721,7 +753,10 @@ pub fn build_renderer(gpu: &Gpu, map: &mut LoadedMap, output_format: wgpu::Textu
         items,
         item_time: 0.0,
         frame_draws: Vec::new(),
+        static_joints: joints.len(),
         joints,
+        remote_players,
+        live_draws: Vec::new(),
         sky,
         culling,
         cull: true,
@@ -733,8 +768,43 @@ pub fn build_renderer(gpu: &Gpu, map: &mut LoadedMap, output_format: wgpu::Textu
     }
 }
 
+/// The players a demo or a match shows, styled as a spectator sees them:
+/// no perspective, so every player takes the FFA slot (wash-fps's per-player
+/// FFA colours are not ported yet).
+#[must_use]
+pub fn styled_players(
+    players: Vec<(String, InterpolatedEntity)>,
+) -> Vec<(String, InterpolatedEntity, PlayerModelVisualStyle)> {
+    let style = get_player_model_visual_style(PlayerTeamSlot::Ffa, MODEL_SCALE);
+    players.into_iter().map(|(id, p)| (id, p, style)).collect()
+}
+
 pub fn run(o: &ViewOptions) -> i32 {
-    let mut map = match load_map(&o.data, &o.map) {
+    let mut demo = match &o.demo {
+        Some(path) => match DemoPlayback::load(path) {
+            Ok(d) => {
+                println!(
+                    "demo: {} on {}, {} frames, {:.0} s, {} players",
+                    d.header.gametype,
+                    d.header.map,
+                    d.frame_count(),
+                    d.duration(),
+                    d.header.players.len()
+                );
+                Some(d)
+            }
+            Err(why) => {
+                eprintln!("{why}");
+                return 1;
+            }
+        },
+        None => None,
+    };
+    let map_name = demo
+        .as_ref()
+        .map_or(o.map.as_str(), |d| d.header.map.as_str())
+        .to_owned();
+    let mut map = match load_map(&o.data, &map_name) {
         Ok(m) => m,
         Err(why) => {
             eprintln!("{why}");
@@ -746,20 +816,21 @@ pub fn run(o: &ViewOptions) -> i32 {
     map.explosions.clone_from(&o.explosions);
     map.effects.clone_from(&o.effects);
     map.weapon.clone_from(&o.weapon);
+    map.remote_players = demo.is_some();
     let at = o.at.map(|[x, y, z, angle]| Camera::from_q3([x, y, z], angle));
     let Some(mut camera) = at.or_else(|| map.spawns.get(o.spawn).or(map.spawns.first()).copied()) else {
-        eprintln!("{} has no spawn point", o.map);
+        eprintln!("{} has no spawn point", map_name);
         return 1;
     };
     camera.pitch = o.pitch.to_radians();
     println!(
         "{}: {} spawn points, viewing from spawn {}",
-        o.map,
+        map_name,
         map.spawns.len(),
         o.spawn.min(map.spawns.len() - 1)
     );
     let Some(path) = &o.screenshot else {
-        return crate::window::run(map, camera, o.seconds);
+        return crate::window::run(map, camera, o.seconds, demo);
     };
     let gpu = match Gpu::headless() {
         Ok(g) => g,
@@ -775,6 +846,20 @@ pub fn run(o: &ViewOptions) -> i32 {
     // Shader animation as it stands `--time` seconds after the map loads.
     renderer.world.animate(&gpu, o.time);
     renderer.item_time = o.time;
+    if let Some(demo) = &mut demo {
+        // Play the demo up to `--time` at 60 frames a second.
+        let steps = (o.time * 60.0).round() as usize;
+        let mut players = Vec::new();
+        for _ in 0..steps.max(1) {
+            players = styled_players(demo.advance(1.0 / 60.0));
+            renderer.set_live_players(&players, 1.0 / 60.0);
+        }
+        println!("demo at {:.2} s: {} players", demo.time(), players.len());
+        for (id, p, _) in &players {
+            // Quake axes, as --at takes them.
+            println!("  {id} at {:.0},{:.0},{:.0} yaw {:.2}", p.x, p.z, p.y, p.yaw);
+        }
+    }
     if let Some(view_model) = &mut renderer.view_model {
         // Settle the aim (and the bob, standing still) over two seconds.
         for _ in 0..120 {

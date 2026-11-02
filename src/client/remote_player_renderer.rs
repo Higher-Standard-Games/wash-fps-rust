@@ -156,6 +156,11 @@ impl RemotePlayerRenderer {
         }
     }
 
+    /// Keeps only the players `keep` accepts.
+    pub fn retain(&mut self, mut keep: impl FnMut(&str) -> bool) {
+        self.instances.retain(|id, _| keep(id));
+    }
+
     /// Forgets a player who left.
     pub fn remove(&mut self, id: &str) {
         self.instances.remove(id);

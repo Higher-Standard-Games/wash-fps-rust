@@ -1,4 +1,5 @@
-//! The window for `washoi view`: winit and a wgpu surface, with a free camera.
+//! The window for `washoi view` and `washoi demo`: winit and a wgpu surface,
+//! with a free camera. A demo plays its players on the map in real time.
 //!
 //! Mouse looks (click to capture it, Escape to let go or quit), W A S D move,
 //! Space and C go up and down, Shift is faster. `--seconds` closes the window
@@ -21,7 +22,9 @@ use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop};
 use winit::keyboard::{KeyCode, PhysicalKey};
 use winit::window::{CursorGrabMode, Window, WindowId};
 
-use crate::view::{CLEAR, LoadedMap, MapRenderer, build_renderer};
+use washoi::client::demo_playback::DemoPlayback;
+
+use crate::view::{CLEAR, LoadedMap, MapRenderer, build_renderer, styled_players};
 
 /// Units per second (Q3's run speed is 320).
 const SPEED: f32 = 320.0;
@@ -54,6 +57,8 @@ struct App {
     aiming: bool,
     /// The view bob cycle (radians), advanced with horizontal speed.
     bob_cycle: f64,
+    /// A demo playing on the map (`washoi demo`).
+    demo: Option<DemoPlayback>,
 }
 
 impl App {
@@ -140,6 +145,14 @@ impl App {
         let view = frame.texture.create_view(&wgpu::TextureViewDescriptor::default());
         s.renderer.world.animate(&s.gpu, f64::from(dt));
         s.renderer.item_time += f64::from(dt);
+        if let Some(demo) = &mut self.demo {
+            let players = styled_players(demo.advance(f64::from(dt)));
+            s.renderer.set_live_players(&players, f64::from(dt));
+            if demo.finished() && self.seconds.is_none() {
+                // Hold the last frame; the title says so.
+                s.window.set_title("Washoi (demo ended)");
+            }
+        }
         if let Some(view_model) = &mut s.renderer.view_model {
             let horizontal = f64::from(self.velocity.x.hypot(self.velocity.z));
             // The view bob's walk cycle: a stride per 160 units, as a run reads.
@@ -273,7 +286,7 @@ impl ApplicationHandler for App {
 }
 
 /// Opens the window and runs until it closes.
-pub fn run(map: LoadedMap, camera: Camera, seconds: Option<f64>) -> i32 {
+pub fn run(map: LoadedMap, camera: Camera, seconds: Option<f64>, demo: Option<DemoPlayback>) -> i32 {
     let event_loop = match EventLoop::new() {
         Ok(l) => l,
         Err(e) => {
@@ -296,6 +309,7 @@ pub fn run(map: LoadedMap, camera: Camera, seconds: Option<f64>) -> i32 {
         velocity: Vec3::ZERO,
         aiming: false,
         bob_cycle: 0.0,
+        demo,
     };
     if let Err(e) = event_loop.run_app(&mut app) {
         eprintln!("event loop: {e}");

@@ -1,6 +1,7 @@
 //! wash-fps `client`: what the game client draws (remote players and the
 //! local first-person weapon so far).
 
+pub mod demo_playback;
 pub mod input_history;
 pub mod player_model_visual_settings;
 pub mod prediction;

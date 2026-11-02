@@ -5,6 +5,7 @@
 //!
 //! ```text
 //! washoi view <map> [--data DIR] [--spawn N] [--screenshot FILE.png] [--size WxH] [--time T] [--at X,Y,Z,YAW] [--pitch DEG] [--player X,Y,Z,YAW[,CLIP[,FRAME]]]... [--projectile ID,X,Y,Z,YAW[,PITCH]]... [--explosion ID,X,Y,Z,AGE]... [--tracer X,Y,Z,X2,Y2,Z2,R,G,B,AGE]... [--muzzle X,Y,Z,R,G,B,STYLE,SCALE,DURATION,AGE]... [--impact X,Y,Z,NX,NY,NZ,IX,IY,IZ,R,G,B,HEAVY,AGE]... [--rail X,Y,Z,X2,Y2,Z2,R,G,B,KIND,NX,NY,NZ,AGE]... [--lightning MODE,X,Y,Z,X2,Y2,Z2,R,G,B,KIND,AGE]... [--weapon ID [--aim]] [--no-cull] [--no-lights] [--seconds N]
+//! washoi demo <file.shagdemo> [--data DIR] [--screenshot FILE.png] [--size WxH] [--time T] [--at X,Y,Z,YAW] [--pitch DEG] [--seconds N]
 //! washoi connect <ws://game-server> [--name NAME] [--ticket TICKET] [--seconds N] [--play]
 //! washoi lobby <ws://lobby> [--key-file FILE] list
 //! washoi lobby <ws://lobby> [--key-file FILE] spectate [--seconds N]
@@ -16,6 +17,10 @@
 //! new account's key (sent once, in `welcome`) is written to it. Without it
 //! every login makes a new account. `--play` joins the match and runs forward
 //! in a slow circle, so the command path is exercised too.
+//!
+//! `demo` plays a recorded match on its map in the window (or, with
+//! `--screenshot`, draws it `--time` seconds in): the players move,
+//! animate and turn as recorded.
 //!
 //! `view` draws a map with the renderer (`view.rs`), from the
 //! packages in `--data` (default `target/washoi-maps/pk3`, which
@@ -64,6 +69,7 @@ fn usage() -> ! {
     eprintln!(
         "washoi {}\n\
          usage: washoi view <map> [--data DIR] [--spawn N] [--screenshot FILE.png] [--size WxH] [--time T] [--at X,Y,Z,YAW] [--pitch DEG] [--player X,Y,Z,YAW[,CLIP[,FRAME]]]... [--projectile ID,X,Y,Z,YAW[,PITCH]]... [--explosion ID,X,Y,Z,AGE]... [--weapon ID [--aim]] [--no-cull] [--no-lights] [--seconds N]\n\
+         \x20      washoi demo <file.shagdemo> [--data DIR] [--screenshot FILE.png] [--size WxH] [--time T] [--at X,Y,Z,YAW] [--pitch DEG] [--seconds N]\n\
          \x20      washoi connect <ws://game-server> [--name NAME] [--ticket TICKET] [--seconds N] [--play]\n\
          \x20      washoi lobby <ws://lobby> [--key-file FILE] list\n\
          \x20      washoi lobby <ws://lobby> [--key-file FILE] spectate [--seconds N]\n\
@@ -265,8 +271,9 @@ fn main() {
             &data_dir(&o),
         ),
         "lobby" => lobby(&url, &o),
-        "view" => {
+        "view" | "demo" => {
             let (width, height) = o.size.unwrap_or((1280, 720));
+            let demo = (mode == "demo").then(|| PathBuf::from(&url));
             view::run(&view::ViewOptions {
                 seconds: o.seconds,
                 map: url,
@@ -289,6 +296,7 @@ fn main() {
                 effects: o.effects.clone(),
                 weapon: o.weapon.clone(),
                 aim: o.aim,
+                demo,
             })
         }
         _ => usage(),
