@@ -23,7 +23,8 @@ const { open, boot, waitForMap, sleep } = require('./lib.cjs');
     b.command('demoplay');
     await waitForMap(b);
     await sleep(2000);
-    await b.ev(async ([keepRe, players, itemTime, projectiles, explosions, effects]) => {
+    const lights = process.env.LIGHTS ? '1' : '';
+    await b.ev(async ([keepRe, players, itemTime, projectiles, explosions, effects, lights]) => {
       const { DemoService } = await import('/src/games/fps/client/DemoService.ts');
       DemoService.getInstance().activeDemoViewer?.pause();
       const scene = window.scene;
@@ -49,8 +50,10 @@ const { open, boot, waitForMap, sleep } = require('./lib.cjs');
         for (const proj of manager.projectiles) {
           if (!proj.serverEntityId?.startsWith('probe')) continue;
           proj.gravity = 0;
-          proj.light?.setEnabled(false);
-          if (proj.light) proj.light.intensity = 0;
+          if (!lights) {
+            proj.light?.setEnabled(false);
+            if (proj.light) proj.light.intensity = 0;
+          }
           for (const m of proj.fadeMeshes) m.visibility = 1;
           proj.spawnTime = -1e9;
         }
@@ -94,7 +97,7 @@ const { open, boot, waitForMap, sleep } = require('./lib.cjs');
       if (explosions) {
         // Each explosion from mulberry32 seed 1 in place of Math.random, as
         // washoi view spawns it, at its age on a held clock, without its
-        // flash light.
+        // flash light unless LIGHTS is set.
         const { Vector3 } = await import('/node_modules/@babylonjs/core/Maths/math.vector.js');
         const fx = await import('/src/engine/weapon/ExplosionEffect.ts');
         const configs = { rocket: fx.ROCKET_EXPLOSION, grenade: fx.GRENADE_EXPLOSION, plasma_bolt: fx.PLASMA_EXPLOSION, blade_blast: fx.BLADE_EXPLOSION };
@@ -115,9 +118,11 @@ const { open, boot, waitForMap, sleep } = require('./lib.cjs');
         }
         Math.random = random;
         const { getPointLightPool } = await import('/src/engine/weapon/PointLightPool.ts');
-        for (const exp of effect.explosions) {
-          getPointLightPool().release(exp.light);
-          exp.light = null;
+        if (!lights) {
+          for (const exp of effect.explosions) {
+            getPointLightPool().release(exp.light);
+            exp.light = null;
+          }
         }
         effect.clock = () => 0;
         effect.renderer.clock = effect.clock;
@@ -235,7 +240,7 @@ const { open, boot, waitForMap, sleep } = require('./lib.cjs');
       };
       scene.onBeforeCameraRenderObservable.add(place);
       for (const el of document.body.querySelectorAll('body > *')) if (!el.querySelector('canvas') && el.tagName !== 'CANVAS') el.style.visibility = 'hidden';
-    }, [keepRe, players, itemTime, projectiles, explosions, effects]);
+    }, [keepRe, players, itemTime, projectiles, explosions, effects, lights]);
     for (const [i, at] of list.split(';').entries()) {
       await b.ev((v) => { window.__probeView = v; }, at.split(',').map(Number));
       await sleep(5000);

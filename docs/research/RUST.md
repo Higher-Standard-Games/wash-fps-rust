@@ -2580,6 +2580,41 @@ fit and did not count the parity harness.
 
 Newest first. Each entry names the commits and what proves them.
 
+### Milestone 6, sixteenth slice: dynamic lights, models first (November 2, 2026)
+
+- **shagger.**
+  - `weapon::point_light_pool` ports `PointLightPool`: eight effect lights,
+    the oldest stolen when all are taken, a stolen holder's handle going
+    stale.
+  - `rendering::dynamic_lights` is what Babylon's `ClusteredLightContainer`
+    hands materials: position and range (capped at 16383), diffuse and
+    specular times intensity. Every surface loops over all of them. The
+    browser culls by screen tile and depth slice, but each light already
+    stops at its range.
+  - `standard.wgsl` adds them through `computeLighting` (linear falloff to
+    the range, Blinn-Phong specular). `model.wgsl` adds them to the PBR
+    diffuse sum with an inverse-square falloff inside the range.
+    `world.wgsl` can add them to `diffuseBase` on lightmapped surfaces, as
+    BspBakedLightingPlugin's StandardMaterial path does.
+  - `explosion_effect::explosion_flash` is the flash light's fade.
+- **wash-fps-rust.** Held projectiles carry their definitions' lights and
+  explosions their flashes, through the pool. `--no-lights` turns them off,
+  and `tools/parity` keeps them in both only with `LIGHTS=1`.
+- **Found: the world needs its companion surfaces first.** A probe of the
+  browser's `washoi_dm2` shows 27 of its lightmapped BSP materials are
+  PBRMaterials (`shouldUseGeneratedPBR`: surfaces with a normal map and a
+  gloss map, specular-gloss workflow, reflectivity 1.5, `usePhysicalLightFalloff`
+  off) and 20 are StandardMaterials. washoi view draws every world surface
+  without its normal and gloss maps, and so without the baked gloss
+  specular (`bspSpec`) either. A dynamic light on the PBR ones goes through
+  PBR's BRDF on linear albedo and reads as a tight hot spot. The same light
+  through StandardMaterial washes a whole wall. So the world's dynamic
+  lights stay off until those surfaces are ported. The models take theirs
+  now.
+- **Next.** The companion surfaces: normal maps, gloss maps and the
+  generated PBR world materials, with their baked gloss. Then the world's
+  dynamic lights.
+
 ### Milestone 6, fifteenth slice: rail and lightning beams (November 2, 2026)
 
 - **shagger.**

@@ -19,6 +19,7 @@ use shagger::physics::player_physics_constants::DEFAULT_VIEWHEIGHT;
 use shagger::physics::sweep_backend_adapter::SweepBackendAdapter;
 use shagger::physics::sweep_collision_backend::SweepCollisionBackend;
 use shagger::rendering::camera::Camera;
+use shagger::rendering::dynamic_lights::DynamicLight;
 use shagger::rendering::effect_quad_batch::EffectFrame;
 use shagger::rendering::glam::{DVec3, Mat4, Vec3};
 use shagger::rendering::gpu::Gpu;
@@ -33,9 +34,10 @@ use shagger::rendering::world_renderer::{Rgba8Image, WorldRenderer};
 use shagger::shared::collision::shared_collision_world::SharedCollisionWorld;
 use shagger::shared::spread_utils::mulberry32;
 use shagger::weapon::explosion::explosion_batch_renderer::ExplosionBatchRenderer;
-use shagger::weapon::explosion_effect::explosion_for;
+use shagger::weapon::explosion_effect::{explosion_flash, explosion_for};
 use shagger::weapon::impact::impact_spark_renderer::{ImpactSparkBurst, ImpactSparkRenderer};
 use shagger::weapon::muzzle::muzzle_flash_renderer::{MuzzleFlashRenderer, MuzzleFlashSpawn, MuzzleFlashStyle};
+use shagger::weapon::point_light_pool::PointLightPool;
 use shagger::weapon::projectile_manager::{
     MAX_TRAIL_POINTS, ProjectileModel, ProjectileTrail, load_projectile_model, projectile_matrix,
 };
@@ -85,6 +87,8 @@ pub struct ViewOptions {
     pub pitch: f32,
     /// Draw every batch instead of culling.
     pub no_cull: bool,
+    /// Leave the projectiles' and explosions' lights off.
+    pub no_lights: bool,
     pub players: Vec<PlayerView>,
     pub projectiles: Vec<ProjectileView>,
     pub explosions: Vec<ExplosionView>,
@@ -330,6 +334,10 @@ pub struct MapRenderer {
     pub culling: WorldCulling,
     /// Off draws every batch (`--no-cull`), for comparing.
     pub cull: bool,
+    /// The effect lights (projectiles, explosion flashes).
+    pub lights: PointLightPool,
+    /// Off leaves them dark (`--no-lights`).
+    pub dynamic_lights: bool,
     /// Image processing from the HDR target into the output.
     pub post: ImageProcessingPostProcess,
     pub image_processing: ImageProcessingConfiguration,
@@ -358,6 +366,15 @@ impl MapRenderer {
     pub fn prepare(&mut self, gpu: &Gpu, camera: &Camera, size: [f32; 2]) {
         let aspect = size[0] / size[1];
         self.culling.update(camera, aspect);
+        let lights: Vec<DynamicLight> = if self.dynamic_lights {
+            self.lights.lights().collect()
+        } else {
+            Vec::new()
+        };
+        // The world keeps its lights off until its companion surfaces (normal
+        // and gloss maps, drawn as PBRMaterials in the browser) are ported:
+        // those take the lights through PBR's BRDF, not StandardMaterial's.
+        self.models.set_dynamic_lights(&lights);
         self.world.prepare(gpu, camera.view_projection(aspect), camera.position);
         self.frame_draws.clone_from(&self.model_draws);
         self.items.draws(
@@ -501,6 +518,8 @@ pub fn build_renderer(gpu: &Gpu, map: &mut LoadedMap, output_format: wgpu::Textu
     }
     let mut projectiles = Vec::new();
     let mut trails = Vec::new();
+    let mut lights = PointLightPool::new();
+    let mut acquired = 0.0;
     for view in &map.projectiles {
         let Some(def) = projectile_def(&view.id) else {
             eprintln!("projectile: no definition {}", view.id);
@@ -515,6 +534,17 @@ pub fn build_renderer(gpu: &Gpu, map: &mut LoadedMap, output_format: wgpu::Textu
                 }
                 let (position, direction) = view.babylon();
                 let scale = def.scale.unwrap_or(1.0) as f32;
+                // The projectile carries its pool light at its origin.
+                if let Some(intensity) = def.light_intensity.filter(|i| *i > 0.0) {
+                    acquired += 1.0;
+                    lights.acquire(
+                        acquired,
+                        position,
+                        light.unwrap_or(Vec3::ONE),
+                        intensity as f32,
+                        def.light_range.unwrap_or(20.0) as f32,
+                    );
+                }
                 projectiles.push((model, projectile_matrix(position, direction, scale)));
                 if def.trail_effect.is_some() {
                     trails.push((held_trail(position, direction, def.speed, def.trail_length), light));
@@ -532,6 +562,11 @@ pub fn build_renderer(gpu: &Gpu, map: &mut LoadedMap, output_format: wgpu::Textu
         let [x, y, z] = view.origin;
         let position = DVec3::new(f64::from(x), f64::from(z), f64::from(y));
         explosions.spawn(-view.age, position, look, DVec3::Y, &mut mulberry32(1));
+        // Its flash light, faded to its age.
+        if let Some((intensity, range)) = explosion_flash(look, view.age) {
+            acquired += 1.0;
+            lights.acquire(acquired, position.as_vec3(), look.outer_color, intensity, range);
+        }
     }
     let mut tracers = StreakTracerRenderer::new(gpu, format);
     let mut muzzle_flashes = MuzzleFlashRenderer::new(gpu, format);
@@ -656,6 +691,8 @@ pub fn build_renderer(gpu: &Gpu, map: &mut LoadedMap, output_format: wgpu::Textu
         sky,
         culling,
         cull: true,
+        lights,
+        dynamic_lights: true,
         post: ImageProcessingPostProcess::new(gpu, output_format),
         image_processing: shag_image_processing(),
     }
@@ -698,6 +735,7 @@ pub fn run(o: &ViewOptions) -> i32 {
     println!("gpu: {}", gpu.describe());
     let mut renderer = build_renderer(&gpu, &mut map, OFFSCREEN_FORMAT);
     renderer.cull = !o.no_cull;
+    renderer.dynamic_lights = !o.no_lights;
     // Shader animation as it stands `--time` seconds after the map loads.
     renderer.world.animate(&gpu, o.time);
     renderer.item_time = o.time;
