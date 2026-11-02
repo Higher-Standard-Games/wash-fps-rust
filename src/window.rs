@@ -10,9 +10,9 @@ use std::time::{Duration, Instant};
 use shagger::rendering::camera::Camera;
 use shagger::rendering::glam::Vec3;
 use shagger::rendering::gpu::Gpu;
+use shagger::rendering::hdr_target::HdrTarget;
 use shagger::rendering::offscreen::begin_main_pass;
 use shagger::rendering::wgpu;
-use shagger::rendering::world_renderer::DEPTH_FORMAT;
 use winit::application::ApplicationHandler;
 use winit::dpi::PhysicalSize;
 use winit::event::{DeviceEvent, DeviceId, ElementState, MouseButton, WindowEvent};
@@ -32,7 +32,7 @@ struct Surface {
     gpu: Gpu,
     surface: wgpu::Surface<'static>,
     config: wgpu::SurfaceConfiguration,
-    depth: wgpu::TextureView,
+    hdr: HdrTarget,
     renderer: MapRenderer,
 }
 
@@ -47,25 +47,6 @@ struct App {
     seconds: Option<f64>,
     frames: u64,
     error: Option<String>,
-}
-
-fn depth_view(device: &wgpu::Device, width: u32, height: u32) -> wgpu::TextureView {
-    device
-        .create_texture(&wgpu::TextureDescriptor {
-            label: Some("depth"),
-            size: wgpu::Extent3d {
-                width,
-                height,
-                depth_or_array_layers: 1,
-            },
-            mip_level_count: 1,
-            sample_count: 1,
-            dimension: wgpu::TextureDimension::D2,
-            format: DEPTH_FORMAT,
-            usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
-            view_formats: &[],
-        })
-        .create_view(&wgpu::TextureViewDescriptor::default())
 }
 
 impl App {
@@ -93,13 +74,13 @@ impl App {
         surface.configure(&gpu.device, &config);
         let map = self.map.as_mut().expect("the map is loaded before the window opens");
         let renderer = build_renderer(&gpu, map, config.format);
-        let depth = depth_view(&gpu.device, config.width, config.height);
+        let hdr = HdrTarget::new(&gpu, config.width, config.height);
         self.surface = Some(Surface {
             window,
             gpu,
             surface,
             config,
-            depth,
+            hdr,
             renderer,
         });
         Ok(())
@@ -157,9 +138,16 @@ impl App {
             .device
             .create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some("frame") });
         {
-            let mut pass = begin_main_pass(&mut encoder, &view, &s.depth, CLEAR);
+            let mut pass = begin_main_pass(&mut encoder, &s.hdr.color, &s.hdr.depth, CLEAR);
             s.renderer.draw(&mut pass);
         }
+        s.hdr.resolve(
+            &s.gpu,
+            &mut encoder,
+            &s.renderer.post,
+            &s.renderer.image_processing,
+            &view,
+        );
         s.gpu.queue.submit([encoder.finish()]);
         s.window.pre_present_notify();
         s.gpu.queue.present(frame);
@@ -186,7 +174,7 @@ impl ApplicationHandler for App {
                     s.config.width = size.width.max(1);
                     s.config.height = size.height.max(1);
                     s.surface.configure(&s.gpu.device, &s.config);
-                    s.depth = depth_view(&s.gpu.device, s.config.width, s.config.height);
+                    s.hdr.resize(&s.gpu, s.config.width, s.config.height);
                 }
             }
             WindowEvent::KeyboardInput { event, .. } => {

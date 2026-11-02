@@ -5,6 +5,9 @@
 
 use std::path::{Path, PathBuf};
 
+use shagger::babylon::post_processes::image_processing_post_process::{
+    ImageProcessingConfiguration, ImageProcessingPostProcess, Vignette, VignetteBlendMode,
+};
 use shagger::lighting::sky_light_system::bsp_mode_lights;
 use shagger::loader::bsp::bsp_loader::{BspFile, load, load_collision};
 use shagger::loader::pk3::node_pk3::ingest_pk3_dir;
@@ -19,8 +22,9 @@ use shagger::rendering::camera::Camera;
 use shagger::rendering::effect_quad_batch::EffectFrame;
 use shagger::rendering::glam::{DVec3, Mat4, Vec3};
 use shagger::rendering::gpu::Gpu;
-use shagger::rendering::model_renderer::{ImageProcessing, ModelDraw, ModelRenderer};
-use shagger::rendering::offscreen::{OFFSCREEN_FORMAT, render_to_rgba};
+use shagger::rendering::hdr_target::HDR_FORMAT;
+use shagger::rendering::model_renderer::{ModelDraw, ModelRenderer};
+use shagger::rendering::offscreen::{OFFSCREEN_FORMAT, render_hdr_to_rgba};
 use shagger::rendering::sky_renderer::{SkyRenderer, apply_skybox};
 use shagger::rendering::wgpu;
 use shagger::rendering::world_culling::WorldCulling;
@@ -285,6 +289,27 @@ pub struct MapRenderer {
     pub culling: WorldCulling,
     /// Off draws every batch (`--no-cull`), for comparing.
     pub cull: bool,
+    /// Image processing from the HDR target into the output.
+    pub post: ImageProcessingPostProcess,
+    pub image_processing: ImageProcessingConfiguration,
+}
+
+/// SHAG's image processing: PostProcessingManager's default settings
+/// (`colorGrading` and `vignette`), on DefaultRenderingPipeline's
+/// `imageProcessing` with Babylon's other defaults.
+#[must_use]
+pub fn shag_image_processing() -> ImageProcessingConfiguration {
+    ImageProcessingConfiguration {
+        exposure: 1.0,
+        contrast: 1.05,
+        vignette: Some(Vignette {
+            weight: 0.3,
+            stretch: 0.5,
+            color: [0.0; 3],
+            blend_mode: VignetteBlendMode::Multiply,
+            ..Vignette::default()
+        }),
+    }
 }
 
 impl MapRenderer {
@@ -349,8 +374,10 @@ impl MapRenderer {
     }
 }
 
-/// Builds the world and its sky and uploads them with their textures.
-pub fn build_renderer(gpu: &Gpu, map: &mut LoadedMap, format: wgpu::TextureFormat) -> MapRenderer {
+/// Builds the world and its sky and uploads them with their textures. The
+/// scene draws into an HDR target; image processing writes `output_format`.
+pub fn build_renderer(gpu: &Gpu, map: &mut LoadedMap, output_format: wgpu::TextureFormat) -> MapRenderer {
+    let format = HDR_FORMAT;
     let geometry = build_world_geometry(&map.bsp, |name, options| {
         map.shaders.resolve_material_passes(&map.pk3, name, options)
     });
@@ -396,13 +423,8 @@ pub fn build_renderer(gpu: &Gpu, map: &mut LoadedMap, format: wgpu::TextureForma
     };
     let culling = WorldCulling::new(&map.bsp, &geometry);
     let mut models = ModelRenderer::new(gpu, format);
-    // SHAG's lights for a BSP map, with r_bsp_pbr at its default, and the
-    // scene's image processing (contrast 1.05).
+    // SHAG's lights for a BSP map, with r_bsp_pbr at its default.
     models.set_lights(bsp_mode_lights(true));
-    models.set_image_processing(ImageProcessing {
-        contrast: 1.05,
-        exposure: 1.0,
-    });
     let pickups = build_weapon_pickups(gpu, &mut map.pk3, &mut models, &map.pickups);
     for failure in &pickups.failures {
         eprintln!("pickup model: {failure}");
@@ -537,6 +559,8 @@ pub fn build_renderer(gpu: &Gpu, map: &mut LoadedMap, format: wgpu::TextureForma
         sky,
         culling,
         cull: true,
+        post: ImageProcessingPostProcess::new(gpu, output_format),
+        image_processing: shag_image_processing(),
     }
 }
 
@@ -595,7 +619,15 @@ pub fn run(o: &ViewOptions) -> i32 {
             renderer.culling.frustum_culled
         ),
     }
-    let pixels = render_to_rgba(&gpu, o.width, o.height, CLEAR, |pass| renderer.draw(pass));
+    let pixels = render_hdr_to_rgba(
+        &gpu,
+        o.width,
+        o.height,
+        CLEAR,
+        &renderer.post,
+        &renderer.image_processing,
+        |pass| renderer.draw(pass),
+    );
     match image::save_buffer(path, &pixels, o.width, o.height, image::ExtendedColorType::Rgba8) {
         Ok(()) => {
             println!("wrote {}", path.display());

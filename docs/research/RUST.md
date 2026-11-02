@@ -2099,7 +2099,8 @@ per frame:
       fog volumes
       markers
   view model pass  (load colour, clear depth, own projection with cg_weaponfov)
-  post: glow, bloom, image processing, outline, colour correction  → swap chain (sRGB)
+  post: glow, bloom, image processing, outline, colour correction  → swap chain (not sRGB:
+        image processing already writes display-space bytes, as Babylon's canvas holds them)
   HUD (egui)                                                       → swap chain
 ```
 
@@ -2313,7 +2314,8 @@ read it:
   - the view model with its own FOV;
   - beams, tracers, muzzle flashes, impacts and explosions;
   - dynamic lights as a forward storage buffer;
-  - HDR target, exposure, contrast and sRGB output;
+  - the HDR target with image processing as a post-process (exposure,
+    contrast, the vignette and gamma);
   - pipeline precompile at load.
 - **Out, until milestone 11:**
   - water reflection and refraction (water draws as a translucent surface);
@@ -2577,6 +2579,42 @@ fit and did not count the parity harness.
 ## 23. Progress log
 
 Newest first. Each entry names the commits and what proves them.
+
+### Milestone 6, fourteenth slice: the HDR target and image processing (November 2, 2026)
+
+- **shagger.**
+  - `babylon::post_processes::image_processing_post_process` ports
+    `ImageProcessingConfiguration` (exposure, contrast and the vignette, with
+    `bind`'s scale and stretch maths, unit tested) and the post-process's
+    shader: from linear colour, exposure, vignette (multiply or opaque),
+    gamma, saturate, contrast. Apache-2.0, with a `NOTICE` entry.
+  - `rendering::hdr_target` is the Rgba16Float colour and depth the scene
+    renders into, as SHAG's `DefaultRenderingPipeline` (`hdr: true`) sets
+    up. `offscreen::render_hdr_to_rgba` renders a screenshot the same way.
+  - Every material now hands the target what Babylon's do when image
+    processing runs as a post-process: the world, sky and
+    `StandardMaterial`s take their colour to linear space (pow 2.2), the
+    PBR models clamp linear colour to 30, the explosion batch takes its
+    `uLinearOutput` path, and the effect quads and outline stay raw.
+    `ModelRenderer::set_image_processing` is gone; no shader does image
+    processing itself any more, so blending happens in linear colour as in
+    the browser.
+- **wash-fps-rust.** Every renderer draws in `HDR_FORMAT`; the window and
+  `--screenshot` resolve the target through SHAG's configuration
+  (`PostProcessingManager`'s defaults: contrast 1.05, exposure 1, vignette
+  weight 0.3, stretch 0.5, black, multiply).
+- **Checked against the browser** with `tools/parity` on `washoi_dm2`. The
+  vignette's falloff matches the browser's region for region (the corners
+  and bottom edge now agree to within a level, where washoi view used to be
+  2 to 4 levels brighter there). The streaks, flashes and sparks lost their
+  greyer cores and now look like the browser's; the views differ by 6
+  levels (the world alone by 4 to 7, much of it the procedural pickup the
+  browser view leaves out without `ITEMS`). Explosions: 5 to 6 levels.
+  Projectiles, trails and pickups (`ITEMS=1.7`): 4 levels in both views,
+  down from 5.7 to 7. Rust is still 3 to 4 levels darker overall.
+- **Not yet.** Bloom (off in the browser at SHAG's defaults), glow,
+  chromatic aberration and colour correction (milestone 11), MSAA.
+- **Next.** Rail and lightning beams, then dynamic and projectile lights.
 
 ### Milestone 6, thirteenth slice: bullet streaks, muzzle flashes and impact sparks (November 2, 2026)
 
