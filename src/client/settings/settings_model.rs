@@ -6,13 +6,17 @@
 //! `Cvar.register` calls at module load, naming each owner.
 
 use shagger::audio::audio_cvars::register_audio_cvars;
-use shagger::core::cvar::{CvarOptions, CvarType, Cvars};
+use shagger::core::cvar::{CvarOptions, CvarType, CvarValue, Cvars};
 use shagger::input::input_system::InputSystem;
 use shagger::input::input_types::{InputBinding, MouseButton, ScrollDirection};
 use shagger::movement::movement_vars::register_movement_vars;
 
+use shagger::rendering::render_vars::register_render_vars;
+
 use crate::client::crosshair::register_crosshair_cvars;
 use crate::client::fps_actions::fps;
+use crate::client::fps_player_audio::register_player_audio_cvars;
+use crate::client::player_model_visual_settings::register_player_model_visual_cvars;
 
 // ═══════════════════════════════ KEYS ═══════════════════════════════
 
@@ -438,6 +442,456 @@ pub fn reset_keys(input: &mut InputSystem) {
 
 // ═══════════════════════════════ CVARS ═══════════════════════════════
 
+/// `CvarChoice`: a choice that sets several cvars at once, and knows when
+/// they are all set. Every value the screen's choices set is a number.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct CvarChoice {
+    pub id: &'static str,
+    pub label: &'static str,
+    pub values: &'static [(&'static str, f64)],
+}
+
+/// `valueMatches`, for a wanted number.
+fn value_matches(current: Option<&CvarValue>, wanted: f64) -> bool {
+    matches!(current, Some(CvarValue::Number(n)) if (n - wanted).abs() < 1e-6)
+}
+
+/// `currentChoice`: the choice whose every value is set now, or `None` for
+/// a mix of one's own.
+#[must_use]
+pub fn current_choice<'a>(cvars: &Cvars, choices: &'a [CvarChoice]) -> Option<&'a CvarChoice> {
+    choices
+        .iter()
+        .find(|c| c.values.iter().all(|(name, v)| value_matches(cvars.get(name), *v)))
+}
+
+/// `applyChoice`.
+pub fn apply_choice(cvars: &mut Cvars, choice: &CvarChoice) {
+    for (name, value) in choice.values {
+        cvars.set(name, *value);
+    }
+}
+
+// ── Video presets ──
+
+/// `VIDEO_PRESETS`: what costs frames; brightness, outlines and the like are
+/// left alone. Balanced is the game's own defaults. With each preset's line
+/// and meter bars.
+pub const VIDEO_PRESETS: [(CvarChoice, &str, u8); 3] = [
+    (
+        CvarChoice {
+            id: "smooth",
+            label: "Smooth",
+            values: &[
+                ("r_bloom", 0.0),
+                ("r_glow", 0.0),
+                ("r_ssr", 0.0),
+                ("r_ssr_strength", 0.4),
+                ("r_anisotropy", 4.0),
+                ("r_picmip", 1.0),
+                ("r_godrays", 0.0),
+                ("r_softhalos", 0.0),
+                ("r_water_quality", 1.0),
+                ("r_water_actors", 0.0),
+                ("r_arealights", 0.0),
+                ("r_bsp_pbr", 0.0),
+            ],
+        },
+        "The most frames. Plain water, no light shafts, no bloom, hard-edged halos.",
+        1,
+    ),
+    (
+        CvarChoice {
+            id: "balanced",
+            label: "Balanced",
+            values: &[
+                ("r_bloom", 0.0),
+                ("r_glow", 0.0),
+                ("r_ssr", 0.0),
+                ("r_ssr_strength", 0.4),
+                ("r_anisotropy", 4.0),
+                ("r_picmip", 0.0),
+                ("r_godrays", 1.0),
+                ("r_godrays_samples", 60.0),
+                ("r_softhalos", 1.0),
+                ("r_water_quality", 2.0),
+                ("r_water_actors", 1.0),
+                ("r_arealights", 1.0),
+                ("r_bsp_pbr", 1.0),
+            ],
+        },
+        "The look the game ships with.",
+        2,
+    ),
+    (
+        CvarChoice {
+            id: "pretty",
+            label: "Pretty",
+            values: &[
+                ("r_bloom", 1.3),
+                // A hint of glow on lit strips and signs; more turns every
+                // lamp into a blurred blob.
+                ("r_glow", 0.35),
+                ("r_ssr", 1.0),
+                ("r_ssr_strength", 0.5),
+                ("r_anisotropy", 16.0),
+                ("r_picmip", 0.0),
+                ("r_godrays", 1.0),
+                ("r_godrays_samples", 60.0),
+                ("r_softhalos", 1.0),
+                ("r_water_quality", 3.0),
+                ("r_water_actors", 1.0),
+                ("r_arealights", 1.0),
+                ("r_bsp_pbr", 1.0),
+            ],
+        },
+        "Adds glow, reflections and see-through water. Wants a strong graphics card.",
+        3,
+    ),
+];
+
+/// `GODRAY_CHOICES`: light shafts, one choice over the gate and the samples.
+pub const GODRAY_CHOICES: [CvarChoice; 3] = [
+    CvarChoice {
+        id: "off",
+        label: "Off",
+        values: &[("r_godrays", 0.0)],
+    },
+    CvarChoice {
+        id: "low",
+        label: "Low",
+        values: &[("r_godrays", 1.0), ("r_godrays_samples", 30.0)],
+    },
+    CvarChoice {
+        id: "high",
+        label: "High",
+        values: &[("r_godrays", 1.0), ("r_godrays_samples", 60.0)],
+    },
+];
+
+fn number(cvars: &Cvars, name: &str) -> f64 {
+    if cvars.exists(name) {
+        cvars.get_number(name)
+    } else {
+        0.0
+    }
+}
+
+/// `godrayChoice`: off whatever the sample count; on, fewer samples than
+/// halfway to high is low.
+#[must_use]
+pub fn godray_choice(cvars: &Cvars) -> &'static CvarChoice {
+    if number(cvars, "r_godrays") < 0.5 {
+        &GODRAY_CHOICES[0]
+    } else if number(cvars, "r_godrays_samples") > 45.0 {
+        &GODRAY_CHOICES[2]
+    } else {
+        &GODRAY_CHOICES[1]
+    }
+}
+
+/// `FrameCost`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FrameCost {
+    Low,
+    Mid,
+    High,
+}
+
+impl FrameCost {
+    /// `COST_WORD`.
+    #[must_use]
+    pub const fn word(self) -> &'static str {
+        match self {
+            Self::Low => "Light",
+            Self::Mid => "Medium",
+            Self::High => "Heavy",
+        }
+    }
+
+    /// The pips lit of three.
+    #[must_use]
+    pub const fn pips(self) -> u8 {
+        match self {
+            Self::Low => 1,
+            Self::Mid => 2,
+            Self::High => 3,
+        }
+    }
+}
+
+/// `VIDEO_SECTIONS`' ids.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum VideoSection {
+    Screen,
+    Effects,
+    World,
+    Textures,
+    Advanced,
+}
+
+/// `VIDEO_SECTIONS`: id and name.
+pub const VIDEO_SECTIONS: [(VideoSection, &str); 5] = [
+    (VideoSection::Screen, "Screen"),
+    (VideoSection::Effects, "Effects"),
+    (VideoSection::World, "World"),
+    (VideoSection::Textures, "Textures"),
+    (VideoSection::Advanced, "Advanced"),
+];
+
+/// `VIDEO_SECTIONS[i].load`: how heavy a section is set, in points (light
+/// 1, medium 2, heavy 3).
+#[must_use]
+pub fn section_load(cvars: &Cvars, section: VideoSection) -> f64 {
+    let on = |name: &str, points: f64| if number(cvars, name) > 0.0 { points } else { 0.0 };
+    match section {
+        VideoSection::Screen => 0.0,
+        VideoSection::Effects => {
+            on("r_bloom", 1.0)
+                + on("r_glow", 2.0)
+                + on("r_ssr", 3.0)
+                + match godray_choice(cvars).id {
+                    "off" => 0.0,
+                    "low" => 1.0,
+                    _ => 2.0,
+                }
+                + on("r_softhalos", 1.0)
+                + if cvars.exists("r_cel_outlines") && cvars.get_bool("r_cel_outlines") {
+                    1.0
+                } else {
+                    0.0
+                }
+        }
+        VideoSection::World => {
+            let water = number(cvars, "r_water_quality");
+            water - 1.0
+                + if water >= 3.0 && number(cvars, "r_water_actors") > 0.0 {
+                    1.0
+                } else {
+                    0.0
+                }
+                + on("r_arealights", 2.0)
+        }
+        VideoSection::Textures => {
+            let aniso = number(cvars, "r_anisotropy");
+            (if aniso >= 16.0 {
+                2.0
+            } else if aniso >= 4.0 {
+                1.0
+            } else {
+                0.0
+            }) + on("r_bsp_pbr", 2.0)
+        }
+        VideoSection::Advanced => {
+            if number(cvars, "r_picmip") == 0.0 {
+                1.0
+            } else {
+                0.0
+            }
+        }
+    }
+}
+
+/// `loadLevel`: up to one point is light, up to three medium, more heavy.
+#[must_use]
+pub fn load_level(points: f64) -> FrameCost {
+    if points <= 1.0 {
+        FrameCost::Low
+    } else if points <= 3.0 {
+        FrameCost::Mid
+    } else {
+        FrameCost::High
+    }
+}
+
+// ── Players ──
+
+/// `TeamColor`: the swatch (HSL), and the model tint and outline as RGB
+/// floats at full glow.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct TeamColor {
+    pub id: &'static str,
+    pub label: &'static str,
+    pub hsl: [f32; 3],
+    pub fill: &'static str,
+    pub outline: &'static str,
+}
+
+const fn team(
+    id: &'static str,
+    label: &'static str,
+    hsl: [f32; 3],
+    fill: &'static str,
+    outline: &'static str,
+) -> TeamColor {
+    TeamColor {
+        id,
+        label,
+        hsl,
+        fill,
+        outline,
+    }
+}
+
+/// `TEAM_COLORS`: each sets a side's body and its outline together. Pink
+/// and cyan are the game's defaults for your side and enemies.
+pub const TEAM_COLORS: [TeamColor; 8] = [
+    team("pink", "Pink", [318.0, 1.0, 0.62], "1.55 0.2 1.35", "1.85 0.28 1.65"),
+    team("cyan", "Cyan", [190.0, 1.0, 0.55], "0.1 1.15 1.85", "0.16 1.35 2.2"),
+    team("lime", "Lime", [96.0, 0.9, 0.55], "0.55 1.7 0.2", "0.7 2 0.3"),
+    team("orange", "Orange", [28.0, 1.0, 0.58], "1.8 0.7 0.1", "2.1 0.85 0.15"),
+    team("yellow", "Yellow", [52.0, 1.0, 0.58], "1.7 1.5 0.15", "2 1.8 0.2"),
+    team("red", "Red", [356.0, 0.95, 0.6], "1.8 0.2 0.25", "2.1 0.3 0.3"),
+    team("violet", "Violet", [272.0, 0.95, 0.68], "0.9 0.3 1.9", "1.1 0.4 2.2"),
+    team("white", "White", [45.0, 0.6, 0.95], "1.6 1.6 1.6", "1.9 1.9 1.9"),
+];
+
+/// `Side`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Side {
+    Ally,
+    Enemy,
+}
+
+/// `SIDE_CVARS`: enemies also covers players seen from no side; FFA
+/// opponents wear the FFA cvars.
+const fn side_cvars(side: Side) -> &'static [(&'static str, &'static str)] {
+    match side {
+        Side::Ally => &[("cl_team_ally_color", "cl_team_ally_outline_color")],
+        Side::Enemy => &[
+            ("cl_team_enemy_color", "cl_team_enemy_outline_color"),
+            ("cl_team_ffa_color", "cl_team_ffa_outline_color"),
+        ],
+    }
+}
+
+/// `sameRgb`.
+fn same_rgb(a: &str, b: &str) -> bool {
+    let parse = |t: &str| -> Vec<f64> { t.split_whitespace().map(|p| p.parse().unwrap_or(f64::NAN)).collect() };
+    let (x, y) = (parse(a), parse(b));
+    x.len() == 3 && y.len() == 3 && x.iter().zip(&y).all(|(p, q)| (p - q).abs() < 0.01)
+}
+
+fn text(cvars: &Cvars, name: &str) -> String {
+    if cvars.exists(name) {
+        cvars.get_string(name)
+    } else {
+        String::new()
+    }
+}
+
+/// `sideColor`: the colour a side is drawn in now, or `None` when it was
+/// set to something else.
+#[must_use]
+pub fn side_color(cvars: &Cvars, side: Side) -> Option<&'static TeamColor> {
+    TEAM_COLORS.iter().find(|color| {
+        side_cvars(side).iter().all(|(fill, outline)| {
+            same_rgb(&text(cvars, fill), color.fill) && same_rgb(&text(cvars, outline), color.outline)
+        })
+    })
+}
+
+/// `setSideColor`.
+pub fn set_side_color(cvars: &mut Cvars, side: Side, color: &TeamColor) {
+    for (fill, outline) in side_cvars(side) {
+        cvars.set(fill, color.fill);
+        cvars.set(outline, color.outline);
+    }
+}
+
+/// `sideColorsAreDefault`.
+#[must_use]
+pub fn side_colors_are_default(cvars: &Cvars) -> bool {
+    side_cvars(Side::Ally)
+        .iter()
+        .chain(side_cvars(Side::Enemy))
+        .flat_map(|(fill, outline)| [*fill, *outline])
+        .all(|name| {
+            let default = cvars.get_cvar(name).map(|c| match &c.default_value {
+                CvarValue::String(s) => s.clone(),
+                _ => String::new(),
+            });
+            same_rgb(&text(cvars, name), &default.unwrap_or_default())
+        })
+}
+
+/// `COLOR_BLIND_SIDE_COLORS`: cyan and orange stay furthest apart under
+/// every kind the correction covers.
+#[must_use]
+pub const fn color_blind_side_color(side: Side) -> &'static TeamColor {
+    match side {
+        Side::Ally => &TEAM_COLORS[1],
+        Side::Enemy => &TEAM_COLORS[3],
+    }
+}
+
+/// `resetSideColors`.
+pub fn reset_side_colors(cvars: &mut Cvars) {
+    for (fill, outline) in side_cvars(Side::Ally).iter().chain(side_cvars(Side::Enemy)) {
+        cvars.reset(fill);
+        cvars.reset(outline);
+    }
+}
+
+/// `OUTLINE_CHOICES`: Thin is the game's default size, Bold twice it.
+pub const OUTLINE_CHOICES: [CvarChoice; 3] = [
+    CvarChoice {
+        id: "off",
+        label: "Off",
+        values: &[("cl_player_outline", 0.0)],
+    },
+    CvarChoice {
+        id: "thin",
+        label: "Thin",
+        values: &[("cl_player_outline", 1.0), ("cl_player_outline_size", 25.0)],
+    },
+    CvarChoice {
+        id: "bold",
+        label: "Bold",
+        values: &[("cl_player_outline", 1.0), ("cl_player_outline_size", 50.0)],
+    },
+];
+
+/// `BOOST_CHOICES`: a glow of the players' own for dark corners.
+pub const BOOST_CHOICES: [CvarChoice; 3] = [
+    CvarChoice {
+        id: "off",
+        label: "Off",
+        values: &[("cl_player_fullbright", 0.0)],
+    },
+    CvarChoice {
+        id: "some",
+        label: "Some",
+        values: &[("cl_player_fullbright", 1.0), ("cl_player_fullbright_intensity", 0.25)],
+    },
+    CvarChoice {
+        id: "lots",
+        label: "Lots",
+        values: &[("cl_player_fullbright", 1.0), ("cl_player_fullbright_intensity", 0.6)],
+    },
+];
+
+// ── Crosshair ──
+
+/// `CROSSHAIR_COLORS`: the game's defaults (green, red on a hit) among them.
+pub const CROSSHAIR_COLORS: [(&str, &str); 6] = [
+    ("00FF00", "Green"),
+    ("00E7FF", "Cyan"),
+    ("FFB400", "Amber"),
+    ("F4F7FF", "White"),
+    ("FF4FD8", "Magenta"),
+    ("FF3355", "Red"),
+];
+
+/// `HIT_COLORS`.
+pub const HIT_COLORS: [(&str, &str); 5] = [
+    ("FF0000", "Red"),
+    ("F4F7FF", "White"),
+    ("FFB400", "Amber"),
+    ("FF4FD8", "Magenta"),
+    ("00E7FF", "Cyan"),
+];
+
 /// `SettingsPageId`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum SettingsPageId {
@@ -544,8 +998,13 @@ pub fn register_client_cvars(cvars: &mut Cvars) {
     // shagger: MovementVars.ts, AudioManager.ts.
     register_movement_vars(cvars);
     register_audio_cvars(cvars);
+    // shagger: RenderVars.ts and PostProcessingManager.ts.
+    register_render_vars(cvars);
     // Crosshair.ts.
     register_crosshair_cvars(cvars);
+    // PlayerModelVisualSettings.ts, FPSPlayerAudio.ts.
+    register_player_model_visual_cvars(cvars);
+    register_player_audio_cvars(cvars);
     // Game.ts.
     int_flag(
         cvars,
@@ -634,5 +1093,37 @@ mod tests {
         );
         reset_keys(&mut input);
         assert_eq!(input.bindings_json(), "{}");
+    }
+
+    #[test]
+    fn presets_and_side_colours_read_back_from_the_cvars() {
+        let mut cvars = Cvars::new(None, false);
+        register_client_cvars(&mut cvars);
+        // Balanced is the game's own defaults.
+        assert_eq!(
+            current_choice(&cvars, &VIDEO_PRESETS.map(|p| p.0)).map(|c| c.id),
+            Some("balanced")
+        );
+        assert_eq!(load_level(section_load(&cvars, VideoSection::Effects)), FrameCost::Mid);
+        apply_choice(&mut cvars, &VIDEO_PRESETS[2].0);
+        assert_eq!(
+            current_choice(&cvars, &VIDEO_PRESETS.map(|p| p.0)).map(|c| c.id),
+            Some("pretty")
+        );
+        assert_eq!(load_level(section_load(&cvars, VideoSection::Effects)), FrameCost::High);
+        apply_choice(&mut cvars, &GODRAY_CHOICES[1]);
+        assert_eq!(godray_choice(&cvars).id, "low");
+        assert!(current_choice(&cvars, &VIDEO_PRESETS.map(|p| p.0)).is_none());
+
+        assert_eq!(side_color(&cvars, Side::Ally).map(|c| c.id), Some("pink"));
+        assert_eq!(side_color(&cvars, Side::Enemy).map(|c| c.id), Some("cyan"));
+        assert!(side_colors_are_default(&cvars));
+        set_side_color(&mut cvars, Side::Enemy, color_blind_side_color(Side::Enemy));
+        assert_eq!(side_color(&cvars, Side::Enemy).map(|c| c.id), Some("orange"));
+        assert!(!side_colors_are_default(&cvars));
+        reset_side_colors(&mut cvars);
+        assert!(side_colors_are_default(&cvars));
+        assert_eq!(current_choice(&cvars, &OUTLINE_CHOICES).map(|c| c.id), Some("thin"));
+        assert!(current_choice(&cvars, &BOOST_CHOICES).is_none_or(|c| c.id == "off"));
     }
 }

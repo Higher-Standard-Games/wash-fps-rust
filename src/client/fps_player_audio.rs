@@ -1,8 +1,9 @@
-//! wash-fps `client/FPSPlayerAudio.ts`: which voice a player speaks with.
-//! The cvars (`cl_team_ally_sounds`, `cl_team_enemy_sounds`) are not
-//! ported yet, so the voices are their defaults.
+//! wash-fps `client/FPSPlayerAudio.ts`: which voice a player speaks with,
+//! by side (`cl_team_ally_sounds`, `cl_team_enemy_sounds`).
 
 use std::collections::HashMap;
+
+use shagger::core::cvar::{CvarOptions, CvarType, Cvars, with_cvars};
 
 use crate::client::player_model_visual_settings::{PlayerTeamSlot, get_player_team_slot};
 
@@ -20,13 +21,53 @@ pub enum PlayerVoiceSide {
     Enemy,
 }
 
-/// `playerVoiceSet(side)`, at the cvars' defaults.
+/// `VOICE_CVARS`.
 #[must_use]
-pub fn player_voice_set(side: PlayerVoiceSide) -> &'static str {
+pub const fn voice_cvar(side: PlayerVoiceSide) -> &'static str {
+    match side {
+        PlayerVoiceSide::Ally => "cl_team_ally_sounds",
+        PlayerVoiceSide::Enemy => "cl_team_enemy_sounds",
+    }
+}
+
+/// `DEFAULTS`.
+const fn default_voice(side: PlayerVoiceSide) -> &'static str {
     match side {
         PlayerVoiceSide::Ally => "male",
         PlayerVoiceSide::Enemy => "bobot",
     }
+}
+
+/// `registerPlayerAudioCvars`.
+pub fn register_player_audio_cvars(cvars: &mut Cvars) {
+    for (side, who) in [(PlayerVoiceSide::Ally, "Your side"), (PlayerVoiceSide::Enemy, "Enemy")] {
+        cvars.register(
+            voice_cvar(side),
+            default_voice(side),
+            CvarOptions::describe(&format!("{who} player sounds: male, female, bobot")).kind(CvarType::String),
+        );
+    }
+}
+
+/// `playerVoiceSet(side)`: the cvar's voice, or the default for anything else.
+#[must_use]
+pub fn player_voice_set(side: PlayerVoiceSide) -> &'static str {
+    let value = with_cvars(|c| c.get(voice_cvar(side)).map(|_| c.get_string(voice_cvar(side))))
+        .unwrap_or_default()
+        .trim()
+        .to_lowercase();
+    PLAYER_VOICE_SETS
+        .iter()
+        .find(|v| **v == value)
+        .copied()
+        .unwrap_or(default_voice(side))
+}
+
+/// `setPlayerVoiceSet`.
+pub fn set_player_voice_set(side: PlayerVoiceSide, voice: &str) {
+    with_cvars(|c| {
+        c.set(voice_cvar(side), voice);
+    });
 }
 
 /// `playerVoiceForEntity`: the viewed player speaks as an ally; others by

@@ -17,7 +17,7 @@ use shagger::rendering::wgpu;
 use shagger::ui::egui_layer::{EguiLayer, egui};
 use washoi::client::lobby_panel::{LobbyChoice, LobbyPanel, Tab, install_style};
 use washoi::client::settings::fps_settings_view::FpsSettingsView;
-use washoi::client::settings::settings_model::SETTINGS_PAGES;
+use washoi::client::settings::settings_model::{SETTINGS_PAGES, VIDEO_SECTIONS};
 use washoi::console::GameConsole;
 use winit::application::ApplicationHandler;
 use winit::event::{ElementState, MouseScrollDelta, WindowEvent};
@@ -235,7 +235,8 @@ pub fn choose(url: &str, key_file: Option<std::path::PathBuf>) -> Result<Option<
 pub struct Shot {
     /// Press Quick play once it can.
     pub quick: bool,
-    /// Open this settings page (`controls`, `gameplay`, `video`, `audio`).
+    /// Open this settings page (`controls`, `gameplay`, `video`, `audio`),
+    /// and with `video/effects` a video section.
     pub settings: Option<String>,
     /// Open this rail page (`play`, `leaderboard`, `profile`) once logged in.
     pub tab: Option<String>,
@@ -259,12 +260,26 @@ pub fn screenshot(
     install_style(&layer.ctx);
     let mut panel = LobbyPanel::connect(url, key_file);
     if let Some(page) = &shot.settings {
+        // `video/effects` opens a video section too.
+        let (page, section) = page
+            .split_once('/')
+            .map_or((page.as_str(), None), |(p, s)| (p, Some(s)));
         let id = SETTINGS_PAGES
             .iter()
             .find(|(_, title, _)| title.eq_ignore_ascii_case(page))
             .map(|p| p.0)
             .ok_or_else(|| format!("no settings page {page}"))?;
-        panel.settings = Some(FpsSettingsView::open(id));
+        let mut view = FpsSettingsView::open(id);
+        if let Some(section) = section {
+            view.video_section = Some(
+                VIDEO_SECTIONS
+                    .iter()
+                    .find(|(_, name)| name.eq_ignore_ascii_case(section))
+                    .map(|s| s.0)
+                    .ok_or_else(|| format!("no video section {section}"))?,
+            );
+        }
+        panel.settings = Some(view);
     }
     let mut console = GameConsole::new(None);
     if let Some(lines) = &shot.console {

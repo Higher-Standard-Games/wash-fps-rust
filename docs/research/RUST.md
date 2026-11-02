@@ -2582,6 +2582,31 @@ fit and did not count the parity harness.
 
 Newest first. Each entry names the commits and what proves them.
 
+### Milestone 10, sixth slice: team colours, voices and the video page (November 2, 2026)
+
+- **shagger `0079a47`, `c06a960`.** `rendering/render_vars.rs` ports
+  `RenderVars.ts`'s 56 `r_*` variables (defaults, ranges, words, its int,
+  float and persistence rules) as cvars, with `PostProcessingManager.ts`'s
+  `r_cel_outlines` and colour-blindness correction cvars. The renderer
+  reads them as milestone 11 lands each pass.
+- **wash-fps-rust.** `player_model_visual_settings.rs` registers and reads
+  the `cl_team_*` and `cl_player_*` cvars (tints, outlines, fullbright)
+  instead of fixed defaults; `fps_player_audio.rs` registers and reads
+  `cl_team_ally_sounds` and `cl_team_enemy_sounds`. `settings_model.rs`
+  gains `CvarChoice` with `currentChoice` and `applyChoice`, the video
+  presets, light shaft choices, section loads and frame costs, the team
+  colours with `sideColor`, `setSideColor` and the colour-blind swap, and
+  the outline, brightness and crosshair colour choices. The gameplay page
+  now has Who's who (side colour swatches, the other side's blocked, and
+  voices) and the crosshair swatches; the video page has the presets, the
+  five sections with their cost pips, and colour-blindness correction with
+  its team colour notice and undo. Not yet: the map previews, the
+  fullscreen switch, and `FfaColors`.
+- **Proof.** A unit test reads the presets, light shafts, section loads,
+  side colours and outline choice back from the cvars, and checks the
+  colour-blind swap and its reset. Screenshots of the gameplay page and
+  the video page's Effects section.
+
 ### Milestone 10, fifth slice: key bindings (November 2, 2026)
 
 - **shagger `a96f332`.** A new `input/` folder. `input_types.rs` and
