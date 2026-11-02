@@ -16,6 +16,7 @@ use shagger::physics::player_physics_constants::DEFAULT_VIEWHEIGHT;
 use shagger::physics::sweep_backend_adapter::SweepBackendAdapter;
 use shagger::physics::sweep_collision_backend::SweepCollisionBackend;
 use shagger::rendering::camera::Camera;
+use shagger::rendering::effect_quad_batch::EffectFrame;
 use shagger::rendering::glam::{DVec3, Mat4, Vec3};
 use shagger::rendering::gpu::Gpu;
 use shagger::rendering::model_renderer::{ImageProcessing, ModelDraw, ModelRenderer};
@@ -26,11 +27,15 @@ use shagger::rendering::world_culling::WorldCulling;
 use shagger::rendering::world_geometry::build_world_geometry;
 use shagger::rendering::world_renderer::{Rgba8Image, WorldRenderer};
 use shagger::shared::collision::shared_collision_world::SharedCollisionWorld;
+use shagger::shared::spread_utils::mulberry32;
 use shagger::weapon::explosion::explosion_batch_renderer::ExplosionBatchRenderer;
 use shagger::weapon::explosion_effect::explosion_for;
+use shagger::weapon::impact::impact_spark_renderer::{ImpactSparkBurst, ImpactSparkRenderer};
+use shagger::weapon::muzzle::muzzle_flash_renderer::{MuzzleFlashRenderer, MuzzleFlashSpawn, MuzzleFlashStyle};
 use shagger::weapon::projectile_manager::{
     MAX_TRAIL_POINTS, ProjectileModel, ProjectileTrail, load_projectile_model, projectile_matrix,
 };
+use shagger::weapon::tracer::streak_tracer_renderer::{StreakTracerRenderer, StreakTracerShot};
 use washoi::shared::entities::definitions::projectiles::projectile_def;
 
 use washoi::client::player_model_visual_settings::{PlayerTeamSlot, get_player_model_visual_style};
@@ -76,6 +81,7 @@ pub struct ViewOptions {
     pub players: Vec<PlayerView>,
     pub projectiles: Vec<ProjectileView>,
     pub explosions: Vec<ExplosionView>,
+    pub effects: Vec<EffectView>,
 }
 
 /// An explosion held at an age (`--explosion`).
@@ -89,16 +95,37 @@ pub struct ExplosionView {
     pub age: f64,
 }
 
-/// mulberry32, which `tools/parity` puts in place of `Math.random` while it
-/// spawns the same explosions; each explosion starts from seed 1.
-fn mulberry32(mut seed: u32) -> impl FnMut() -> f64 {
-    move || {
-        seed = seed.wrapping_add(0x6D2B_79F5);
-        let mut t = seed;
-        t = (t ^ (t >> 15)).wrapping_mul(t | 1);
-        t ^= t.wrapping_add((t ^ (t >> 7)).wrapping_mul(t | 61));
-        f64::from(t ^ (t >> 14)) / 4_294_967_296.0
-    }
+/// A bullet streak, muzzle flash or impact held at an age (`--tracer`,
+/// `--muzzle`, `--impact`), in Quake axes.
+#[derive(Debug, Clone, PartialEq)]
+pub enum EffectView {
+    Tracer {
+        start: [f64; 3],
+        end: [f64; 3],
+        color: [f32; 3],
+        age: f64,
+    },
+    Muzzle {
+        position: [f64; 3],
+        color: [f32; 3],
+        style: MuzzleFlashStyle,
+        scale: f64,
+        duration: f64,
+        age: f64,
+    },
+    Impact {
+        position: [f64; 3],
+        normal: [f64; 3],
+        incoming: [f64; 3],
+        color: [f32; 3],
+        heavy: bool,
+        age: f64,
+    },
+}
+
+/// A Quake point or direction in Babylon axes.
+fn babylon([x, y, z]: [f64; 3]) -> DVec3 {
+    DVec3::new(x, z, y)
 }
 
 /// A projectile held still on the map (`--projectile`).
@@ -170,6 +197,8 @@ pub struct LoadedMap {
     pub projectiles: Vec<ProjectileView>,
     /// Explosions to hold on the map.
     pub explosions: Vec<ExplosionView>,
+    /// Streaks, flashes and impacts to hold on the map.
+    pub effects: Vec<EffectView>,
 }
 
 /// Reads every package in `data` and the map's BSP from them.
@@ -222,6 +251,7 @@ pub fn load_map(data: &Path, map: &str) -> Result<LoadedMap, String> {
         players: Vec::new(),
         projectiles: Vec::new(),
         explosions: Vec::new(),
+        effects: Vec::new(),
     })
 }
 
@@ -244,6 +274,11 @@ pub struct MapRenderer {
     pub trails: Vec<(ProjectileTrail, Option<Vec3>)>,
     /// Held explosions, drawn at their ages (the clock stays at 0).
     pub explosions: ExplosionBatchRenderer,
+    /// Held bullet streaks, muzzle flashes and impact sparks, on the same
+    /// clock.
+    pub tracers: StreakTracerRenderer,
+    pub muzzle_flashes: MuzzleFlashRenderer,
+    pub impact_sparks: ImpactSparkRenderer,
     /// The joint palettes `model_draws` index.
     pub joints: Vec<Mat4>,
     pub sky: Option<SkyRenderer>,
@@ -254,7 +289,8 @@ pub struct MapRenderer {
 
 impl MapRenderer {
     /// Writes this frame's camera and culls for it.
-    pub fn prepare(&mut self, gpu: &Gpu, camera: &Camera, aspect: f32) {
+    pub fn prepare(&mut self, gpu: &Gpu, camera: &Camera, size: [f32; 2]) {
+        let aspect = size[0] / size[1];
         self.culling.update(camera, aspect);
         self.world.prepare(gpu, camera.view_projection(aspect), camera.position);
         self.frame_draws.clone_from(&self.model_draws);
@@ -279,6 +315,17 @@ impl MapRenderer {
         );
         self.explosions
             .prepare(gpu, camera.view_projection(aspect), camera.view(), 0.0);
+        let frame = EffectFrame {
+            view_proj: camera.view_projection(aspect),
+            view: camera.view(),
+            projection: camera.projection(aspect),
+            camera_position: camera.position,
+            viewport: size,
+            time: 0.0,
+        };
+        self.tracers.prepare(gpu, &frame);
+        self.muzzle_flashes.prepare(gpu, &frame);
+        self.impact_sparks.prepare(gpu, &frame);
         if let Some(sky) = &self.sky {
             sky.prepare(gpu, camera, aspect);
         }
@@ -293,7 +340,10 @@ impl MapRenderer {
         self.world.draw_visible_opaque(pass, visible);
         self.models.draw_opaque(pass);
         self.world.draw_visible_blended(pass, visible);
-        // Explosions' alpha indices (44 to 46) put them before the models'.
+        // The effects' alpha indices (41 to 46) put them before the models'.
+        self.tracers.draw(pass);
+        self.muzzle_flashes.draw(pass);
+        self.impact_sparks.draw(pass);
         self.explosions.draw(pass);
         self.models.draw_blended(pass);
     }
@@ -414,10 +464,69 @@ pub fn build_renderer(gpu: &Gpu, map: &mut LoadedMap, format: wgpu::TextureForma
         let position = DVec3::new(f64::from(x), f64::from(z), f64::from(y));
         explosions.spawn(-view.age, position, look, DVec3::Y, &mut mulberry32(1));
     }
+    let mut tracers = StreakTracerRenderer::new(gpu, format);
+    let mut muzzle_flashes = MuzzleFlashRenderer::new(gpu, format);
+    let mut impact_sparks = ImpactSparkRenderer::new(gpu, format);
+    for effect in &map.effects {
+        match effect {
+            EffectView::Tracer { start, end, color, age } => {
+                tracers.fire(
+                    -age,
+                    &StreakTracerShot {
+                        start: babylon(*start),
+                        end: babylon(*end),
+                        color: Vec3::from(*color),
+                        intensity: None,
+                    },
+                );
+            }
+            EffectView::Muzzle {
+                position,
+                color,
+                style,
+                scale,
+                duration,
+                age,
+            } => muzzle_flashes.spawn(
+                -age,
+                &MuzzleFlashSpawn {
+                    position: babylon(*position),
+                    color: Vec3::from(*color),
+                    style: *style,
+                    scale: Some(*scale),
+                    intensity: None,
+                    duration: Some(*duration),
+                },
+            ),
+            EffectView::Impact {
+                position,
+                normal,
+                incoming,
+                color,
+                heavy,
+                age,
+            } => impact_sparks.burst(
+                -age,
+                &ImpactSparkBurst {
+                    position: babylon(*position),
+                    normal: babylon(*normal),
+                    incoming: babylon(*incoming),
+                    color: Vec3::from(*color),
+                    count: None,
+                    heavy: *heavy,
+                    speed: None,
+                    intensity: None,
+                },
+            ),
+        }
+    }
     MapRenderer {
         projectiles,
         trails,
         explosions,
+        tracers,
+        muzzle_flashes,
+        impact_sparks,
         world: renderer,
         models,
         model_draws,
@@ -442,6 +551,7 @@ pub fn run(o: &ViewOptions) -> i32 {
     map.players.clone_from(&o.players);
     map.projectiles.clone_from(&o.projectiles);
     map.explosions.clone_from(&o.explosions);
+    map.effects.clone_from(&o.effects);
     let at = o.at.map(|[x, y, z, angle]| Camera::from_q3([x, y, z], angle));
     let Some(mut camera) = at.or_else(|| map.spawns.get(o.spawn).or(map.spawns.first()).copied()) else {
         eprintln!("{} has no spawn point", o.map);
@@ -470,7 +580,7 @@ pub fn run(o: &ViewOptions) -> i32 {
     // Shader animation as it stands `--time` seconds after the map loads.
     renderer.world.animate(&gpu, o.time);
     renderer.item_time = o.time;
-    renderer.prepare(&gpu, &camera, o.width as f32 / o.height as f32);
+    renderer.prepare(&gpu, &camera, [o.width as f32, o.height as f32]);
     match renderer.culling.pvs_stats() {
         Some(pvs) => println!(
             "culling: cluster {} sees {} of {} clusters; {} batches left out by the PVS, {} by the frustum",

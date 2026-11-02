@@ -148,10 +148,10 @@ impl App {
             }
         };
         let view = frame.texture.create_view(&wgpu::TextureViewDescriptor::default());
-        let aspect = s.config.width as f32 / s.config.height as f32;
         s.renderer.world.animate(&s.gpu, f64::from(dt));
         s.renderer.item_time += f64::from(dt);
-        s.renderer.prepare(&s.gpu, &self.camera, aspect);
+        s.renderer
+            .prepare(&s.gpu, &self.camera, [s.config.width as f32, s.config.height as f32]);
         let mut encoder = s
             .gpu
             .device

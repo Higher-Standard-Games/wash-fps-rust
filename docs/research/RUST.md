@@ -2578,6 +2578,41 @@ fit and did not count the parity harness.
 
 Newest first. Each entry names the commits and what proves them.
 
+### Milestone 6, thirteenth slice: bullet streaks, muzzle flashes and impact sparks (November 2, 2026)
+
+- **shagger `44a1a82`.**
+  - `weapon::tracer`, `weapon::muzzle` and `weapon::impact` port
+    `StreakTracerRenderer`, `MuzzleFlashRenderer` and
+    `ImpactSparkRenderer` with their materials' GLSL in WGSL: pooled
+    instances of one quad that the vertex shader animates from the spawn
+    time. The impact scatter draws from mulberry32 seed `0x5eed` as the
+    browser's does.
+  - `rendering::effect_quad_batch` is what Babylon does for those
+    thin-instanced quads: the quad, four vec4s per instance, the
+    `ShaderMaterial` uniforms (`effect_quad.wgsl`), premultiplied alpha, no
+    depth writes. `EffectSlots` is the shared slot machinery.
+  - `shared::spread_utils` ports `mulberry32`, golden against V8.
+- **wash-fps-rust.** `washoi view --tracer`, `--muzzle` and `--impact` hold
+  each effect at an age.
+- **Checked against the browser** with `tools/parity` (`EFFECTS=`), which
+  spawns the same effects through SHAG's `HitscanEffects` renderers on a
+  held clock. Every streak, flash and ember lands where the browser puts
+  it, and the view differs by 6 levels in 255. The browser's cores read
+  whiter. The browser runs `DefaultRenderingPipeline` in HDR with image
+  processing as a post-process (`applyByPostProcess`, contrast 1.05, no
+  bloom or tone mapping), so these shaders write linear colour above 1
+  that the post-process takes to display space. washoi view does image
+  processing inside each material, in display space, as section 21.10's
+  HDR target is not built yet. The explosions match because their shader
+  converts to linear in that mode.
+- **Not yet.** The flash anchor (flashes riding the barrel),
+  `HitscanEffects` (which weapon fires what), atmospheric fog, rail and
+  lightning beams.
+- **Next.** The HDR target with image processing as a post-process (21.10,
+  section 8's frame graph), so effects and materials blend in linear
+  colour as the browser's do. Then rail and lightning beams, then dynamic
+  lights.
+
 ### Milestone 6, twelfth slice: explosions (November 1, 2026)
 
 - **shagger `fbe4e72`.**

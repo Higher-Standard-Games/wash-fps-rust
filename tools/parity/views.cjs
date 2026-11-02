@@ -14,7 +14,7 @@ const { open, boot, waitForMap, sleep } = require('./lib.cjs');
 // for the camera.
 (async () => {
   setTimeout(() => process.exit(3), 1_500_000).unref();
-  const [demo, prefix, list, size = '1280x720', keepRe = '^(bsp|skybox)', players = '', itemTime = '', projectiles = '', explosions = ''] = process.argv.slice(2);
+  const [demo, prefix, list, size = '1280x720', keepRe = '^(bsp|skybox)', players = '', itemTime = '', projectiles = '', explosions = '', effects = ''] = process.argv.slice(2);
   const [w, h] = size.split('x').map(Number);
   const b = await open({ width: w, height: h });
   try {
@@ -23,12 +23,12 @@ const { open, boot, waitForMap, sleep } = require('./lib.cjs');
     b.command('demoplay');
     await waitForMap(b);
     await sleep(2000);
-    await b.ev(async ([keepRe, players, itemTime, projectiles, explosions]) => {
+    await b.ev(async ([keepRe, players, itemTime, projectiles, explosions, effects]) => {
       const { DemoService } = await import('/src/games/fps/client/DemoService.ts');
       DemoService.getInstance().activeDemoViewer?.pause();
       const scene = window.scene;
       const camera = scene.activeCameras?.[0] ?? scene.activeCamera;
-      const keep = new RegExp(`${keepRe}|^probe_player${itemTime ? '|^pp_' : ''}${projectiles ? '|^proj_\\d+_' : ''}${explosions ? '|^explosion_' : ''}`);
+      const keep = new RegExp(`${keepRe}|^probe_player${itemTime ? '|^pp_' : ''}${projectiles ? '|^proj_\\d+_' : ''}${explosions ? '|^explosion_' : ''}${effects ? '|^(tracer_streak|muzzle_flash|impact_spark)$' : ''}`);
       const frozen = [];
       if (projectiles) {
         const { Vector3 } = await import('/node_modules/@babylonjs/core/Maths/math.vector.js');
@@ -122,6 +122,44 @@ const { open, boot, waitForMap, sleep } = require('./lib.cjs');
         effect.clock = () => 0;
         effect.renderer.clock = effect.clock;
       }
+      if (effects) {
+        // Streaks, flashes and sparks through SHAG's own renderers, each
+        // spawned on a clock set back by its age, then held at 0. The
+        // impact scatter restarts from its seed, the flash and spark seeds
+        // from 1, and flashes stay where they were fired.
+        const { Vector3, Color3 } = { ...(await import('/node_modules/@babylonjs/core/Maths/math.vector.js')), ...(await import('/node_modules/@babylonjs/core/Maths/math.color.js')) };
+        const { getHitscanEffects } = await import('/src/engine/weapon/HitscanEffects.ts');
+        const { mulberry32 } = await import('/src/shared/SpreadUtils.ts');
+        const fx = getHitscanEffects();
+        const tracer = fx.streakRenderer;
+        const muzzle = fx.muzzleFlashRenderer;
+        const sparks = fx.impactSparkRenderer;
+        for (const r of [tracer, muzzle, sparks]) r.clear();
+        muzzle.anchorResolver = null;
+        muzzle.seedCounter = 0;
+        sparks.seedCounter = 0;
+        sparks.random = mulberry32(0x5eed);
+        const q = (a, i) => new Vector3(a[i], a[i + 2], a[i + 1]);
+        const c = (a, i) => new Color3(a[i], a[i + 1], a[i + 2]);
+        for (const e of effects.split(';')) {
+          const kind = e.slice(0, e.indexOf(':'));
+          const parts = e.slice(e.indexOf(':') + 1).split(',');
+          const n = parts.map(Number);
+          const age = n[n.length - 1];
+          const at = () => -age;
+          if (kind === 'tracer') {
+            tracer.clock = at;
+            tracer.fire({ start: q(n, 0), end: q(n, 3), color: c(n, 6) });
+          } else if (kind === 'muzzle') {
+            muzzle.clock = at;
+            muzzle.spawn({ position: q(n, 0), color: c(n, 3), style: parts[6], scale: n[7], duration: n[8] });
+          } else if (kind === 'impact') {
+            sparks.clock = at;
+            sparks.burst({ position: q(n, 0), normal: q(n, 3), incoming: q(n, 6), color: c(n, 9), heavy: n[12] !== 0 });
+          }
+        }
+        for (const r of [tracer, muzzle, sparks]) r.clock = () => 0;
+      }
       if (players) {
         const { PlayerModelManager } = await import('/src/engine/animation/PlayerModelManager.ts');
         const { getPlayerModelVisualStyle } = await import('/src/games/fps/client/PlayerModelVisualSettings.ts');
@@ -175,7 +213,7 @@ const { open, boot, waitForMap, sleep } = require('./lib.cjs');
       };
       scene.onBeforeCameraRenderObservable.add(place);
       for (const el of document.body.querySelectorAll('body > *')) if (!el.querySelector('canvas') && el.tagName !== 'CANVAS') el.style.visibility = 'hidden';
-    }, [keepRe, players, itemTime, projectiles, explosions]);
+    }, [keepRe, players, itemTime, projectiles, explosions, effects]);
     for (const [i, at] of list.split(';').entries()) {
       await b.ev((v) => { window.__probeView = v; }, at.split(',').map(Number));
       await sleep(5000);

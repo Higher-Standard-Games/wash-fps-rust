@@ -4,7 +4,7 @@
 //! prints the scoreboard.
 //!
 //! ```text
-//! washoi view <map> [--data DIR] [--spawn N] [--screenshot FILE.png] [--size WxH] [--time T] [--at X,Y,Z,YAW] [--pitch DEG] [--player X,Y,Z,YAW[,CLIP[,FRAME]]]... [--projectile ID,X,Y,Z,YAW[,PITCH]]... [--explosion ID,X,Y,Z,AGE]... [--no-cull] [--seconds N]
+//! washoi view <map> [--data DIR] [--spawn N] [--screenshot FILE.png] [--size WxH] [--time T] [--at X,Y,Z,YAW] [--pitch DEG] [--player X,Y,Z,YAW[,CLIP[,FRAME]]]... [--projectile ID,X,Y,Z,YAW[,PITCH]]... [--explosion ID,X,Y,Z,AGE]... [--tracer X,Y,Z,X2,Y2,Z2,R,G,B,AGE]... [--muzzle X,Y,Z,R,G,B,STYLE,SCALE,DURATION,AGE]... [--impact X,Y,Z,NX,NY,NZ,IX,IY,IZ,R,G,B,HEAVY,AGE]... [--tracer X,Y,Z,X2,Y2,Z2,R,G,B,AGE]... [--muzzle X,Y,Z,R,G,B,STYLE,SCALE,DURATION,AGE]... [--impact X,Y,Z,NX,NY,NZ,IX,IY,IZ,R,G,B,HEAVY,AGE]... [--no-cull] [--seconds N]
 //! washoi connect <ws://game-server> [--name NAME] [--ticket TICKET] [--seconds N] [--play]
 //! washoi lobby <ws://lobby> [--key-file FILE] list
 //! washoi lobby <ws://lobby> [--key-file FILE] spectate [--seconds N]
@@ -28,7 +28,11 @@
 //! `--projectile` holds a projectile (`rocket`, `grenade`, `plasma_bolt`,
 //! `blade_blast`) at a Quake origin, flying along a Quake yaw and pitch.
 //! Each `--explosion` holds that projectile's explosion at a Quake origin,
-//! `AGE` seconds after it went off against a floor.
+//! `AGE` seconds after it went off against a floor. `--tracer` holds a
+//! bullet streak from one Quake point to another, `--muzzle` a muzzle flash
+//! (`burst`, `plume` or `arcs`), and `--impact` an impact's sparks at a
+//! point, surface normal and shot direction (`HEAVY` 1 adds the hit star),
+//! each `AGE` seconds in.
 
 mod view;
 mod window;
@@ -43,6 +47,7 @@ use shagger::network::client::network_session::{NetworkSession, SessionConfig, S
 use shagger::shared::js::{js_cos, js_sin};
 use shagger::shared::json::Value;
 use shagger::shared::net::command::Command;
+use shagger::weapon::muzzle::muzzle_flash_renderer::MuzzleFlashStyle;
 use washoi::shared::net::snapshot_events::{SnapshotEvent, WashoiEvents};
 
 fn usage() -> ! {
@@ -78,6 +83,7 @@ struct Options {
     players: Vec<view::PlayerView>,
     projectiles: Vec<view::ProjectileView>,
     explosions: Vec<view::ExplosionView>,
+    effects: Vec<view::EffectView>,
     words: Vec<String>,
 }
 
@@ -146,6 +152,40 @@ fn parse_options(args: impl Iterator<Item = String>) -> Options {
                     age: parts.get(4).and_then(|p| p.parse().ok()).unwrap_or_else(|| usage()),
                 });
             }
+            flag @ ("--tracer" | "--muzzle" | "--impact") => {
+                let v = value();
+                let parts: Vec<&str> = v.split(',').map(str::trim).collect();
+                let n = |i: usize| -> f64 { parts.get(i).and_then(|p| p.parse().ok()).unwrap_or_else(|| usage()) };
+                let v3 = |i: usize| [n(i), n(i + 1), n(i + 2)];
+                let c3 = |i: usize| [n(i) as f32, n(i + 1) as f32, n(i + 2) as f32];
+                o.effects.push(match flag {
+                    "--tracer" => view::EffectView::Tracer {
+                        start: v3(0),
+                        end: v3(3),
+                        color: c3(6),
+                        age: n(9),
+                    },
+                    "--muzzle" => view::EffectView::Muzzle {
+                        position: v3(0),
+                        color: c3(3),
+                        style: parts
+                            .get(6)
+                            .and_then(|s| MuzzleFlashStyle::parse(s))
+                            .unwrap_or_else(|| usage()),
+                        scale: n(7),
+                        duration: n(8),
+                        age: n(9),
+                    },
+                    _ => view::EffectView::Impact {
+                        position: v3(0),
+                        normal: v3(3),
+                        incoming: v3(6),
+                        color: c3(9),
+                        heavy: n(12) != 0.0,
+                        age: n(13),
+                    },
+                });
+            }
             "--pitch" => o.pitch = value().trim().parse().unwrap_or_else(|_| usage()),
             "--time" => o.time = value().parse().unwrap_or_else(|_| usage()),
             "--spawn" => o.spawn = value().parse().unwrap_or_else(|_| usage()),
@@ -198,6 +238,7 @@ fn main() {
                 players: o.players.clone(),
                 projectiles: o.projectiles.clone(),
                 explosions: o.explosions.clone(),
+                effects: o.effects.clone(),
             })
         }
         _ => usage(),
