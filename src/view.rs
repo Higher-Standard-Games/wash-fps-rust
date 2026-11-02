@@ -38,18 +38,18 @@ use shagger::shared::entities::projectile_def::ProjectileDef;
 use shagger::shared::spread_utils::mulberry32;
 use shagger::weapon::explosion::explosion_batch_renderer::{ExplosionBatchRenderer, ExplosionLook};
 use shagger::weapon::explosion_effect::{explosion_flash, explosion_for};
-use shagger::weapon::impact::impact_spark_renderer::{ImpactSparkBurst, ImpactSparkRenderer};
-use shagger::weapon::muzzle::muzzle_flash_renderer::{MuzzleFlashRenderer, MuzzleFlashSpawn, MuzzleFlashStyle};
+use shagger::weapon::hitscan_effects::{HitscanEffects, ShotWorld};
+use shagger::weapon::impact::impact_spark_renderer::ImpactSparkBurst;
+use shagger::weapon::muzzle::muzzle_flash_renderer::{MuzzleFlashSpawn, MuzzleFlashStyle};
 use shagger::weapon::point_light_pool::{PointLightPool, PooledLight};
 use shagger::weapon::projectile_manager::{
     MAX_TRAIL_POINTS, ProjectileModel, ProjectileTrail, load_projectile_model, projectile_matrix,
 };
-use shagger::weapon::rail::rail_effect_renderer::RailEffectRenderer;
 use shagger::weapon::rail::rail_profiles::{RailEffectSample, RailImpactKind};
-use shagger::weapon::tracer::streak_tracer_renderer::{StreakTracerRenderer, StreakTracerShot};
-use shagger::weapon::voltaic::voltaic_effect_renderer::VoltaicEffectRenderer;
+use shagger::weapon::tracer::streak_tracer_renderer::StreakTracerShot;
 use shagger::weapon::weapon_view_manager::ViewModelInput;
 use washoi::client::demo_playback::{DemoPlayback, DemoView, LiveProjectile};
+use washoi::client::game_events::{EffectTargets, play_remote_shots};
 use washoi::client::live_watch::LiveWatch;
 use washoi::client::weapon_view::WeaponViewModel;
 use washoi::shared::entities::definitions::projectiles::{PROJECTILES, projectile_def};
@@ -303,6 +303,8 @@ pub struct LoadedMap {
     pub weapon: Option<String>,
     /// Load the player model for players that move (a demo or a match).
     pub remote_players: bool,
+    /// The map's brushes, for the shots of a demo or match to stop on.
+    pub shot_world: Option<SweepCollisionBackend>,
 }
 
 /// Reads every package in `data` and the map's BSP from them.
@@ -358,6 +360,9 @@ pub fn load_map(data: &Path, map: &str) -> Result<LoadedMap, String> {
         effects: Vec::new(),
         weapon: None,
         remote_players: false,
+        shot_world: Some(SweepCollisionBackend::new(
+            load_collision(&bytes).map_err(|e| format!("{path}: {e}"))?,
+        )),
     })
 }
 
@@ -380,13 +385,11 @@ pub struct MapRenderer {
     pub trails: Vec<(ProjectileTrail, Option<Vec3>)>,
     /// Held explosions, drawn at their ages (the clock stays at 0).
     pub explosions: ExplosionBatchRenderer,
-    /// Held bullet streaks, muzzle flashes and impact sparks, on the same
-    /// clock.
-    pub tracers: StreakTracerRenderer,
-    pub muzzle_flashes: MuzzleFlashRenderer,
-    pub impact_sparks: ImpactSparkRenderer,
-    pub rails: RailEffectRenderer,
-    pub lightning: VoltaicEffectRenderer,
+    /// Bullet streaks, pellets, rails, Voltaic beams, muzzle flashes and
+    /// impact sparks: held ones, and the shots of a demo or match.
+    pub hitscan: HitscanEffects,
+    /// What the shots of a demo or match stop on.
+    shot_world: Option<SweepCollisionBackend>,
     /// The joint palettes `model_draws` index, then the live players'.
     pub joints: Vec<Mat4>,
     /// How many of `joints` belong to `model_draws`.
@@ -545,65 +548,55 @@ impl MapRenderer {
 
     /// Advances the effects' clock by `dt` and starts the effects of the
     /// events that arrived (`GameEvents.ts`): a projectile's impact explodes
-    /// with its flash, an Electrobolt shot draws its rail.
-    pub fn play_effects(&mut self, events: &[SnapshotEvent], dt: f64) {
+    /// with its flash; other players' shots draw their streaks, pellets,
+    /// beams and rails.
+    pub fn play_effects(&mut self, events: &[SnapshotEvent], weapons: &HashMap<String, String>, dt: f64) {
         self.effect_time += dt;
         let now = self.effect_time;
         self.explosions.update(now);
         for event in events {
-            match event {
-                SnapshotEvent::ProjectileImpact { def_id, at, normal } => {
-                    // Older demos name the weapon; anything else is a rocket.
-                    let projectile = match def_id.as_str() {
-                        "glauncher" => "grenade",
-                        "plasmagun" => "plasma_bolt",
-                        "rlauncher" => "rocket",
-                        other => other,
-                    };
-                    let look = explosion_for(projectile)
-                        .unwrap_or_else(|| explosion_for("rocket").expect("the rocket explodes"));
-                    let position = DVec3::new(at.x, at.y, at.z);
-                    let normal = DVec3::new(normal.x, normal.y, normal.z);
-                    let mut random = mulberry32(self.live_flashes.len() as u32 + now.to_bits() as u32);
-                    self.explosions.spawn(now, position, look, normal, &mut random);
-                    if let Some((intensity, range)) = explosion_flash(look, 0.0) {
-                        let light = self.lights.acquire(
-                            self.live_light_clock,
-                            position.as_vec3(),
-                            look.outer_color,
-                            intensity,
-                            range,
-                        );
-                        self.live_flashes.push((light, look, now));
-                    }
+            if let SnapshotEvent::ProjectileImpact { def_id, at, normal } = event {
+                // Older demos name the weapon; anything else is a rocket.
+                let projectile = match def_id.as_str() {
+                    "glauncher" => "grenade",
+                    "plasmagun" => "plasma_bolt",
+                    "rlauncher" => "rocket",
+                    other => other,
+                };
+                let look =
+                    explosion_for(projectile).unwrap_or_else(|| explosion_for("rocket").expect("the rocket explodes"));
+                let position = DVec3::new(at.x, at.y, at.z);
+                let normal = DVec3::new(normal.x, normal.y, normal.z);
+                let mut random = mulberry32(self.live_flashes.len() as u32 + now.to_bits() as u32);
+                self.explosions.spawn(now, position, look, normal, &mut random);
+                if let Some((intensity, range)) = explosion_flash(look, 0.0) {
+                    let light = self.lights.acquire(
+                        self.live_light_clock,
+                        position.as_vec3(),
+                        look.outer_color,
+                        intensity,
+                        range,
+                    );
+                    self.live_flashes.push((light, look, now));
                 }
-                SnapshotEvent::Beam {
-                    electro_rail: true,
-                    origin,
-                    end,
-                    normal,
-                    impact_kind,
-                    ..
-                } => self.rails.fire_rail(
-                    now,
-                    &RailEffectSample {
-                        start: DVec3::new(origin.x, origin.y, origin.z),
-                        end: DVec3::new(end.x, end.y, end.z),
-                        // WEAPON_EFFECT_COLORS.electrobolt
-                        color: Vec3::new(0.3, 0.6, 1.0),
-                        impact_kind: match impact_kind {
-                            2 => RailImpactKind::Player,
-                            1 => RailImpactKind::World,
-                            _ => RailImpactKind::None,
-                        },
-                        impact_normal: Some(DVec3::new(normal.x, normal.y, normal.z)),
-                        intensity: None,
-                    },
-                    None,
-                ),
-                _ => {}
             }
         }
+        let mut no_world = ();
+        let world: &mut dyn ShotWorld = match &mut self.shot_world {
+            Some(world) => world,
+            None => &mut no_world,
+        };
+        play_remote_shots(
+            events,
+            &mut EffectTargets {
+                now,
+                hitscan: &mut self.hitscan,
+                world,
+                lights: &mut self.lights,
+            },
+            &|id| weapons.get(id).cloned(),
+        );
+        self.hitscan.update(now, &mut self.lights);
         // Fade the flashes, and give back the ones that are out.
         let lights = &mut self.lights;
         self.live_flashes
@@ -666,11 +659,11 @@ impl MapRenderer {
             viewport: size,
             time: self.effect_time,
         };
-        self.tracers.prepare(gpu, &frame);
-        self.muzzle_flashes.prepare(gpu, &frame);
-        self.impact_sparks.prepare(gpu, &frame);
-        self.rails.prepare(gpu, &frame);
-        self.lightning.prepare(gpu, &frame);
+        self.hitscan.streaks.prepare(gpu, &frame);
+        self.hitscan.muzzle_flashes.prepare(gpu, &frame);
+        self.hitscan.impact_sparks.prepare(gpu, &frame);
+        self.hitscan.rails.prepare(gpu, &frame);
+        self.hitscan.voltaic.prepare(gpu, &frame);
         if let Some(sky) = &self.sky {
             sky.prepare(gpu, camera, aspect);
         }
@@ -697,13 +690,13 @@ impl MapRenderer {
         self.models.draw_opaque(pass);
         self.world.draw_visible_blended(pass, visible);
         // The effects' alpha indices (40 to 46) put them before the models'.
-        self.lightning.draw_beams(pass);
-        self.rails.draw_beams(pass);
-        self.lightning.draw_impacts(pass);
-        self.rails.draw_impacts(pass);
-        self.tracers.draw(pass);
-        self.muzzle_flashes.draw(pass);
-        self.impact_sparks.draw(pass);
+        self.hitscan.voltaic.draw_beams(pass);
+        self.hitscan.rails.draw_beams(pass);
+        self.hitscan.voltaic.draw_impacts(pass);
+        self.hitscan.rails.draw_impacts(pass);
+        self.hitscan.streaks.draw(pass);
+        self.hitscan.muzzle_flashes.draw(pass);
+        self.hitscan.impact_sparks.draw(pass);
         self.explosions.draw(pass);
         self.models.draw_blended(pass);
     }
@@ -867,15 +860,11 @@ pub fn build_renderer(gpu: &Gpu, map: &mut LoadedMap, output_format: wgpu::Textu
             lights.acquire(acquired, position.as_vec3(), look.outer_color, intensity, range);
         }
     }
-    let mut tracers = StreakTracerRenderer::new(gpu, format);
-    let mut muzzle_flashes = MuzzleFlashRenderer::new(gpu, format);
-    let mut impact_sparks = ImpactSparkRenderer::new(gpu, format);
-    let mut rails = RailEffectRenderer::new(gpu, format);
-    let mut lightning = VoltaicEffectRenderer::new(gpu, format);
+    let mut hitscan = HitscanEffects::new(gpu, format);
     for effect in &map.effects {
         match effect {
             EffectView::Tracer { start, end, color, age } => {
-                tracers.fire(
+                hitscan.streaks.fire(
                     -age,
                     &StreakTracerShot {
                         start: babylon(*start),
@@ -892,7 +881,7 @@ pub fn build_renderer(gpu: &Gpu, map: &mut LoadedMap, output_format: wgpu::Textu
                 scale,
                 duration,
                 age,
-            } => muzzle_flashes.spawn(
+            } => hitscan.muzzle_flashes.spawn(
                 -age,
                 &MuzzleFlashSpawn {
                     position: babylon(*position),
@@ -910,7 +899,7 @@ pub fn build_renderer(gpu: &Gpu, map: &mut LoadedMap, output_format: wgpu::Textu
                 color,
                 heavy,
                 age,
-            } => impact_sparks.burst(
+            } => hitscan.impact_sparks.burst(
                 -age,
                 &ImpactSparkBurst {
                     position: babylon(*position),
@@ -941,13 +930,15 @@ pub fn build_renderer(gpu: &Gpu, map: &mut LoadedMap, output_format: wgpu::Textu
                 };
                 match mode {
                     // The held beam has no age; it is simply on.
-                    LightningMode::Hero => lightning.update_hero(&sample),
+                    LightningMode::Hero => hitscan.voltaic.update_hero(&sample),
                     LightningMode::Remote => {
-                        let key = format!("remote{}", lightning.debug_counts().0);
-                        lightning.update_remote(-age, &key, &sample, sample.end - sample.start);
+                        let key = format!("remote{}", hitscan.voltaic.debug_counts().0);
+                        hitscan
+                            .voltaic
+                            .update_remote(-age, &key, &sample, sample.end - sample.start);
                     }
                     // HitscanEffects.fireLightningArc's default duration.
-                    LightningMode::Chain => lightning.fire_chain_arc(-age, &sample, 0.14),
+                    LightningMode::Chain => hitscan.voltaic.fire_chain_arc(-age, &sample, 0.14),
                 }
             }
             EffectView::Rail {
@@ -957,7 +948,7 @@ pub fn build_renderer(gpu: &Gpu, map: &mut LoadedMap, output_format: wgpu::Textu
                 kind,
                 normal,
                 age,
-            } => rails.fire_rail(
+            } => hitscan.rails.fire_rail(
                 -age,
                 &RailEffectSample {
                     start: babylon(*start),
@@ -975,11 +966,8 @@ pub fn build_renderer(gpu: &Gpu, map: &mut LoadedMap, output_format: wgpu::Textu
         projectiles,
         trails,
         explosions,
-        tracers,
-        muzzle_flashes,
-        impact_sparks,
-        rails,
-        lightning,
+        hitscan,
+        shot_world: map.shot_world.take(),
         world: renderer,
         models,
         model_draws,
@@ -1112,21 +1100,33 @@ pub fn run(o: &ViewOptions) -> i32 {
             projectiles = view.projectiles;
             renderer.set_live_players(&players, 1.0 / 60.0);
             renderer.set_live_projectiles(&projectiles, 1.0 / 60.0);
-            renderer.play_effects(&view.effects, 1.0 / 60.0);
+            renderer.play_effects(&view.effects, &view.weapons, 1.0 / 60.0);
             for event in &view.effects {
-                if let SnapshotEvent::ProjectileImpact { def_id, at, .. } = event {
-                    println!(
+                match event {
+                    SnapshotEvent::ProjectileImpact { def_id, at, .. } => println!(
                         "  {:.2} s: {def_id} hits at {:.0},{:.0},{:.0}",
                         renderer.effect_time, at.x, at.z, at.y
-                    );
+                    ),
+                    SnapshotEvent::WeaponFire {
+                        entity_id,
+                        weapon_id,
+                        origin: at,
+                        ..
+                    } => println!(
+                        "  {:.2} s: {entity_id} fires {weapon_id} from {:.0},{:.0},{:.0}",
+                        renderer.effect_time, at.x, at.z, at.y
+                    ),
+                    _ => {}
                 }
             }
         }
+        let (streaks, sparks, flashes) = renderer.hitscan.debug_counts();
         println!(
-            "at {:.2} s: {} players, {} projectiles",
+            "at {:.2} s: {} players, {} projectiles, {streaks} streaks, {sparks} sparks, {flashes} impact lights, {} Voltaic beams",
             o.time,
             players.len(),
-            projectiles.len()
+            projectiles.len(),
+            renderer.hitscan.voltaic.debug_counts().0
         );
         if let Some(why) = feed.ended() {
             println!("  ({why})");

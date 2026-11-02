@@ -104,6 +104,7 @@ mod tests {
     fn plays_recorded_demos() {
         let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/golden/demos");
         let mut projectiles = 0;
+        let mut shots = 0;
         for file in std::fs::read_dir(&dir)
             .unwrap()
             .filter_map(Result::ok)
@@ -117,6 +118,11 @@ mod tests {
             while !demo.finished() {
                 let view = demo.advance(1.0 / 60.0);
                 projectiles += view.projectiles.len();
+                shots += view
+                    .effects
+                    .iter()
+                    .filter(|e| matches!(e, SnapshotEvent::WeaponFire { .. }))
+                    .count();
                 seen = seen.max(view.players.len());
                 if let Some((id, p)) = &first
                     && let Some((_, q)) = view.players.iter().find(|(i, _)| i == id)
@@ -132,5 +138,6 @@ mod tests {
             assert!(moved, "nobody moved in {}", file.display());
         }
         assert!(projectiles > 0, "no projectiles flew");
+        assert!(shots > 0, "nobody fired");
     }
 }

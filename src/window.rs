@@ -158,7 +158,7 @@ impl App {
                 }
             }
             s.renderer.set_live_projectiles(&view.projectiles, f64::from(dt));
-            s.renderer.play_effects(&view.effects, f64::from(dt));
+            s.renderer.play_effects(&view.effects, &view.weapons, f64::from(dt));
             if let Some(why) = feed.ended() {
                 // Hold the last frame; the title says so.
                 s.window.set_title(&format!("Washoi ({why})"));

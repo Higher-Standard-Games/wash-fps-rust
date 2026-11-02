@@ -2,6 +2,7 @@
 //! local first-person weapon so far).
 
 pub mod demo_playback;
+pub mod game_events;
 pub mod input_history;
 pub mod live_watch;
 pub mod player_model_visual_settings;

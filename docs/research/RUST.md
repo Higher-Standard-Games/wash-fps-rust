@@ -2580,6 +2580,38 @@ fit and did not count the parity harness.
 
 Newest first. Each entry names the commits and what proves them.
 
+### Milestone 7, fourth slice: other players' shots (November 2, 2026)
+
+- **shagger 13c4be2.** `weapon/hitscan_effects.rs` ports
+  `HitscanEffects.ts` as one owner of the streak, rail, Voltaic, muzzle
+  flash and impact spark renderers: `fire_tracer` (the streak, then the
+  impact light and sparks when it arrives), `fire_pellets`, `fire_rail`
+  with its sparks, the remote Voltaic beam and its traced fallback,
+  `update` and `clear`. TypeScript's singletons become arguments: shots
+  trace through a `ShotWorld` (implemented for `SweepCollisionBackend`,
+  SOLID with a point hull, NOIMPACT and NOMARKS honoured) and lights come
+  from the caller's `PointLightPool`. `spread_utils` gains
+  `generate_spread_directions`, `yaw_pitch_from_direction` and
+  `compute_spread_seed`, so the riot gun's pellets are rebuilt from the
+  event's seed. Only `sin` and `cos` go through fdlibm there, so a
+  rebuilt pellet may differ from the server's in the last bit; it is
+  drawn, not judged.
+- **wash-fps-rust.** `client/game_events.rs` ports `WEAPON_EFFECT_COLORS`,
+  `canonicalWeaponId` and `handleRemoteWeaponFire` (with the
+  `voltaic_beam` truth check), `handleVoltaicBeam` and `handleElectroRail`.
+  The snapshot feed now passes on `weapon_fire` and both beams, and tracks
+  each player's weapon from `weapon_state` for the beams' colours.
+  `MapRenderer` keeps the map's brushes for the shots to stop on.
+- **Proof.** The demo test now also needs a shot fired. In the amphi1
+  demo at 0.43 s, three machinegun streaks fly with 15 sparks and two
+  impact lights; in dm2 at 1.5 s a remote Voltaic beam is live. No golden
+  demo has a riot gun shot, so the pellets are proven only by the cone
+  test against V8.
+- **Differences.** A traveling pellet is a short streak, not a cone mesh;
+  wall marks, the rendered-mesh pick for a shot starting inside a brush,
+  and the blade's slash animation are not ported. Streaks start at the
+  shooter's eye until remote players hold weapons.
+
 ### Milestone 7, third slice: impacts and rails (November 2, 2026)
 
 - **wash-fps-rust.** The snapshot feed passes on the events with an
@@ -2598,7 +2630,8 @@ Newest first. Each entry names the commits and what proves them.
   far wall in green with their light, beside one still in flight.
 - **Not yet.** Hitscan tracers and muzzle flashes (`weapon_fire`, which
   needs `handleRemoteWeaponFire`'s trace), the Voltaic beam and chain,
-  impact sparks, pickups and the HUD.
+  impact sparks, pickups and the HUD. (Shots and beams came in the fourth
+  slice.)
 
 ### Milestone 7, second slice: watching a live match (November 2, 2026)
 
