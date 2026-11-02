@@ -397,6 +397,10 @@ pub struct MapRenderer {
     live_draws: Vec<ModelDraw>,
     /// Every projectile type's model, for projectiles that fly.
     live_projectile_models: Vec<(&'static ProjectileDef, ProjectileModel)>,
+    /// The flying projectiles' trails, by entity, and finished ones kept
+    /// for the next projectile of their type.
+    live_trails: HashMap<String, (&'static ProjectileDef, ProjectileTrail)>,
+    spare_trails: Vec<(&'static str, ProjectileTrail)>,
     /// The flying projectiles' pool lights, by entity.
     live_projectile_lights: HashMap<String, PooledLight>,
     /// The pool's clock for them.
@@ -473,6 +477,18 @@ impl MapRenderer {
                 self.lights.release(handle);
             }
         }
+        let ended: Vec<String> = self
+            .live_trails
+            .keys()
+            .filter(|id| !projectiles.iter().any(|p| &p.id == *id))
+            .cloned()
+            .collect();
+        for id in ended {
+            if let Some((def, mut trail)) = self.live_trails.remove(&id) {
+                trail.reset();
+                self.spare_trails.push((def.id, trail));
+            }
+        }
         for p in projectiles {
             let Some((def, model)) = self.live_projectile_models.iter().find(|(d, _)| d.id == p.def_id) else {
                 continue;
@@ -490,6 +506,22 @@ impl MapRenderer {
                 self.item_time,
                 &mut self.live_draws,
             );
+            if def.trail_effect.is_some() {
+                let def: &'static ProjectileDef = def;
+                let spare = &mut self.spare_trails;
+                let (_, trail) = self.live_trails.entry(p.id.clone()).or_insert_with(|| {
+                    let reused = spare
+                        .iter()
+                        .position(|(id, _)| *id == def.id)
+                        .map(|i| spare.swap_remove(i).1);
+                    (def, reused.unwrap_or_default())
+                });
+                trail.push(
+                    DVec3::from(p.position),
+                    DVec3::from(p.velocity).normalize_or_zero(),
+                    def.trail_length,
+                );
+            }
             if let Some(intensity) = def.light_intensity.filter(|i| *i > 0.0) {
                 match self.live_projectile_lights.get(&p.id) {
                     Some(&handle) => self.lights.set_position(handle, position),
@@ -610,6 +642,11 @@ impl MapRenderer {
         }
         for (trail, color) in &mut self.trails {
             trail.update(gpu, &mut self.models, Some(camera.position.as_dvec3()), *color);
+            trail.draws(&mut self.frame_draws);
+        }
+        for (def, trail) in self.live_trails.values_mut() {
+            let color = def.light_color.map(|c| Vec3::new(c.r as f32, c.g as f32, c.b as f32));
+            trail.update(gpu, &mut self.models, Some(camera.position.as_dvec3()), color);
             trail.draws(&mut self.frame_draws);
         }
         self.models.prepare(
@@ -955,6 +992,8 @@ pub fn build_renderer(gpu: &Gpu, map: &mut LoadedMap, output_format: wgpu::Textu
         live_draws: Vec::new(),
         live_projectile_models,
         live_projectile_lights: HashMap::new(),
+        live_trails: HashMap::new(),
+        spare_trails: Vec::new(),
         live_light_clock: 0.0,
         effect_time: 0.0,
         live_flashes: Vec::new(),
