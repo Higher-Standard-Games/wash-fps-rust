@@ -3,6 +3,7 @@
 //! writes a PNG; otherwise it opens a window with a free camera. Players
 //! given with `--player` stand on the map as the Vanguard model.
 
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
 use shagger::animation::player_model_manager::PlayerModelVisualStyle;
@@ -33,12 +34,13 @@ use shagger::rendering::world_culling::WorldCulling;
 use shagger::rendering::world_geometry::build_world_geometry;
 use shagger::rendering::world_renderer::{Rgba8Image, WorldRenderer};
 use shagger::shared::collision::shared_collision_world::SharedCollisionWorld;
+use shagger::shared::entities::projectile_def::ProjectileDef;
 use shagger::shared::spread_utils::mulberry32;
 use shagger::weapon::explosion::explosion_batch_renderer::ExplosionBatchRenderer;
 use shagger::weapon::explosion_effect::{explosion_flash, explosion_for};
 use shagger::weapon::impact::impact_spark_renderer::{ImpactSparkBurst, ImpactSparkRenderer};
 use shagger::weapon::muzzle::muzzle_flash_renderer::{MuzzleFlashRenderer, MuzzleFlashSpawn, MuzzleFlashStyle};
-use shagger::weapon::point_light_pool::PointLightPool;
+use shagger::weapon::point_light_pool::{PointLightPool, PooledLight};
 use shagger::weapon::projectile_manager::{
     MAX_TRAIL_POINTS, ProjectileModel, ProjectileTrail, load_projectile_model, projectile_matrix,
 };
@@ -47,9 +49,9 @@ use shagger::weapon::rail::rail_profiles::{RailEffectSample, RailImpactKind};
 use shagger::weapon::tracer::streak_tracer_renderer::{StreakTracerRenderer, StreakTracerShot};
 use shagger::weapon::voltaic::voltaic_effect_renderer::VoltaicEffectRenderer;
 use shagger::weapon::weapon_view_manager::ViewModelInput;
-use washoi::client::demo_playback::DemoPlayback;
+use washoi::client::demo_playback::{DemoPlayback, LiveProjectile};
 use washoi::client::weapon_view::WeaponViewModel;
-use washoi::shared::entities::definitions::projectiles::projectile_def;
+use washoi::shared::entities::definitions::projectiles::{PROJECTILES, projectile_def};
 
 use washoi::client::player_model_visual_settings::{PlayerTeamSlot, get_player_model_visual_style};
 use washoi::client::remote_player_renderer::{MODEL_SCALE, RemotePlayerRenderer};
@@ -350,8 +352,14 @@ pub struct MapRenderer {
     static_joints: usize,
     /// The player model, when players are drawn.
     pub remote_players: Option<RemotePlayerRenderer>,
-    /// This frame's live players (`set_live_players`).
+    /// This frame's live players and projectiles.
     live_draws: Vec<ModelDraw>,
+    /// Every projectile type's model, for projectiles that fly.
+    live_projectile_models: Vec<(&'static ProjectileDef, ProjectileModel)>,
+    /// The flying projectiles' pool lights, by entity.
+    live_projectile_lights: HashMap<String, PooledLight>,
+    /// The pool's clock for them.
+    live_light_clock: f64,
     pub sky: Option<SkyRenderer>,
     pub culling: WorldCulling,
     /// Off draws every batch (`--no-cull`), for comparing.
@@ -400,6 +408,60 @@ impl MapRenderer {
         for (id, interp, style) in players {
             renderer.update(id, interp, dt, 1.0, None);
             renderer.draws(id, interp, style, &mut self.joints, &mut self.live_draws);
+        }
+    }
+
+    /// Draws the projectiles in flight this frame, facing along their
+    /// velocity, each carrying its pool light; call after
+    /// [`Self::set_live_players`], which clears the frame's live draws.
+    pub fn set_live_projectiles(&mut self, projectiles: &[LiveProjectile], dt: f64) {
+        self.live_light_clock += dt;
+        let gone: Vec<String> = self
+            .live_projectile_lights
+            .keys()
+            .filter(|id| !projectiles.iter().any(|p| &p.id == *id))
+            .cloned()
+            .collect();
+        for id in gone {
+            if let Some(handle) = self.live_projectile_lights.remove(&id) {
+                self.lights.release(handle);
+            }
+        }
+        for p in projectiles {
+            let Some((def, model)) = self.live_projectile_models.iter().find(|(d, _)| d.id == p.def_id) else {
+                continue;
+            };
+            let position = DVec3::from(p.position).as_vec3();
+            let velocity = DVec3::from(p.velocity).as_vec3();
+            let direction = if velocity.length_squared() > 1e-6 {
+                velocity
+            } else {
+                Vec3::X
+            };
+            let scale = def.scale.unwrap_or(1.0) as f32;
+            model.draws(
+                projectile_matrix(position, direction, scale),
+                self.item_time,
+                &mut self.live_draws,
+            );
+            if let Some(intensity) = def.light_intensity.filter(|i| *i > 0.0) {
+                match self.live_projectile_lights.get(&p.id) {
+                    Some(&handle) => self.lights.set_position(handle, position),
+                    None => {
+                        let color = def
+                            .light_color
+                            .map_or(Vec3::ONE, |c| Vec3::new(c.r as f32, c.g as f32, c.b as f32));
+                        let handle = self.lights.acquire(
+                            self.live_light_clock,
+                            position,
+                            color,
+                            intensity as f32,
+                            def.light_range.unwrap_or(20.0) as f32,
+                        );
+                        self.live_projectile_lights.insert(p.id.clone(), handle);
+                    }
+                }
+            }
         }
     }
 
@@ -571,6 +633,18 @@ pub fn build_renderer(gpu: &Gpu, map: &mut LoadedMap, output_format: wgpu::Textu
     let mut projectiles = Vec::new();
     let mut trails = Vec::new();
     let mut lights = PointLightPool::new();
+    // A demo or a match: every projectile type, ready to fly.
+    let mut live_projectile_models = Vec::new();
+    if map.remote_players {
+        for def in PROJECTILES {
+            let Some(path) = def.model_path else { continue };
+            let light = def.light_color.map(|c| Vec3::new(c.r as f32, c.g as f32, c.b as f32));
+            match load_projectile_model(gpu, &mut models, &mut map.pk3, &map.shaders, def.id, path, light) {
+                Ok(model) => live_projectile_models.push((def, model)),
+                Err(why) => eprintln!("projectile model: {why}"),
+            }
+        }
+    }
     let mut acquired = 0.0;
     for view in &map.projectiles {
         let Some(def) = projectile_def(&view.id) else {
@@ -757,6 +831,9 @@ pub fn build_renderer(gpu: &Gpu, map: &mut LoadedMap, output_format: wgpu::Textu
         joints,
         remote_players,
         live_draws: Vec::new(),
+        live_projectile_models,
+        live_projectile_lights: HashMap::new(),
+        live_light_clock: 0.0,
         sky,
         culling,
         cull: true,
@@ -850,11 +927,24 @@ pub fn run(o: &ViewOptions) -> i32 {
         // Play the demo up to `--time` at 60 frames a second.
         let steps = (o.time * 60.0).round() as usize;
         let mut players = Vec::new();
+        let mut projectiles = Vec::new();
         for _ in 0..steps.max(1) {
-            players = styled_players(demo.advance(1.0 / 60.0));
+            let view = demo.advance(1.0 / 60.0);
+            players = styled_players(view.players);
+            projectiles = view.projectiles;
             renderer.set_live_players(&players, 1.0 / 60.0);
+            renderer.set_live_projectiles(&projectiles, 1.0 / 60.0);
         }
-        println!("demo at {:.2} s: {} players", demo.time(), players.len());
+        println!(
+            "demo at {:.2} s: {} players, {} projectiles",
+            demo.time(),
+            players.len(),
+            projectiles.len()
+        );
+        for p in &projectiles {
+            let [x, y, z] = p.position;
+            println!("  {} ({}) at {x:.0},{z:.0},{y:.0}", p.id, p.def_id);
+        }
         for (id, p, _) in &players {
             // Quake axes, as --at takes them.
             println!("  {id} at {:.0},{:.0},{:.0} yaw {:.2}", p.x, p.z, p.y, p.yaw);

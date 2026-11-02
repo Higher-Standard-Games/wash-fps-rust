@@ -146,8 +146,10 @@ impl App {
         s.renderer.world.animate(&s.gpu, f64::from(dt));
         s.renderer.item_time += f64::from(dt);
         if let Some(demo) = &mut self.demo {
-            let players = styled_players(demo.advance(f64::from(dt)));
+            let view = demo.advance(f64::from(dt));
+            let players = styled_players(view.players);
             s.renderer.set_live_players(&players, f64::from(dt));
+            s.renderer.set_live_projectiles(&view.projectiles, f64::from(dt));
             if demo.finished() && self.seconds.is_none() {
                 // Hold the last frame; the title says so.
                 s.window.set_title("Washoi (demo ended)");

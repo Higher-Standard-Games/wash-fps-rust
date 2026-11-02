@@ -2594,15 +2594,20 @@ Newest first. Each entry names the commits and what proves them.
     frame on top of the static draws (their joint palettes after the static
     ones), styled as a spectator sees them (the FFA slot; per-player FFA
     colours are not ported).
+  - Projectiles fly too: `projectile_spawn` names each `proj_` entity's
+    type, a second buffer interpolates them (`processProjectileEntities`),
+    and `MapRenderer::set_live_projectiles` draws every type's MD3 facing
+    along its velocity with its pool light. Trails are not drawn yet.
   - `washoi demo <file.shagdemo>` plays the match on its map in the window
     with the free camera, or with `--screenshot` draws it `--time` seconds
     in and prints where each player is (Quake axes, for `--at`).
 - **Proof.** The dm2 deathmatch demo (3 players, 15,885 frames, 254 s)
   plays through; at 20 s a bot is drawn mid-jump with its outline and tint
-  where the recording puts it. A test plays a recorded bot demo end to end
-  and checks the players move.
-- **Not yet.** Projectiles, beams, hitscan, explosions and pickups from the
-  demo's events, following a player's view, the HUD, and watching a live
+  where the recording puts it, a plasma bolt in flight beside it. A test
+  plays the recorded bot demos end to end and checks the players move and
+  projectiles fly.
+- **Not yet.** Projectile trails, beams, hitscan, explosions and pickups
+  from the demo's events, following a player's view, the HUD, and watching a live
   match in the window (`washoi lobby … spectate` still runs headless).
 - **Next.** Demo events (projectiles and effects) and live spectating.
 

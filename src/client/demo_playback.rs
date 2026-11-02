@@ -11,11 +11,29 @@
 use std::collections::HashMap;
 use std::path::Path;
 
-use shagger::network::client::snapshot_buffer::{InterpolatedEntity, SnapshotBuffer};
+use shagger::network::client::snapshot_buffer::{EntitySnapshot, InterpolatedEntity, SnapshotBuffer};
 use shagger::shared::demo::demo_reader::{DemoFrame, DemoHeader, DemoReader};
+use shagger::shared::net::game_state::GameState;
 
 use crate::client::remote_player_logic::{apply_roster, extract_entities};
 use crate::shared::net::snapshot_events::{SnapshotEvent, WashoiEvents};
+
+/// A projectile in flight, interpolated, in Babylon axes.
+#[derive(Debug, Clone, PartialEq)]
+pub struct LiveProjectile {
+    pub id: String,
+    /// From its `projectile_spawn` event.
+    pub def_id: String,
+    pub position: [f64; 3],
+    pub velocity: [f64; 3],
+}
+
+/// What a frame shows.
+#[derive(Debug, Clone, Default)]
+pub struct DemoView {
+    pub players: Vec<(String, InterpolatedEntity)>,
+    pub projectiles: Vec<LiveProjectile>,
+}
 
 pub struct DemoPlayback {
     pub header: DemoHeader,
@@ -25,6 +43,10 @@ pub struct DemoPlayback {
     /// Demo time in ms since the first frame.
     clock_ms: f64,
     buffer: SnapshotBuffer,
+    /// The projectiles' own buffer (`processProjectileEntities`).
+    projectile_buffer: SnapshotBuffer,
+    /// `proj_` entity → its definition, from `projectile_spawn` events.
+    def_ids: HashMap<String, String>,
     /// Each player's team from the roster ("ffa" for none).
     pub teams: HashMap<String, String>,
 }
@@ -50,6 +72,8 @@ impl DemoPlayback {
             next: 0,
             clock_ms: 0.0,
             buffer: SnapshotBuffer::new(),
+            projectile_buffer: SnapshotBuffer::new(),
+            def_ids: HashMap::new(),
             teams: HashMap::new(),
         })
     }
@@ -84,8 +108,8 @@ impl DemoPlayback {
     }
 
     /// Advances the demo clock by `dt` seconds, delivers the frames recorded
-    /// by then, and samples every player in the newest one.
-    pub fn advance(&mut self, dt: f64) -> Vec<(String, InterpolatedEntity)> {
+    /// by then, and samples every player and projectile in the newest one.
+    pub fn advance(&mut self, dt: f64) -> DemoView {
         self.clock_ms += dt * 1000.0;
         while self.next < self.frames.len() && self.frame_time(self.next) <= self.clock_ms {
             let at = self.frame_time(self.next);
@@ -93,51 +117,107 @@ impl DemoPlayback {
             apply_roster(&mut self.teams, &frame.state, "");
             let entities = extract_entities(&frame.state, "");
             self.buffer.push(at, frame.tick, entities, None);
+            for event in &frame.state.events {
+                if let SnapshotEvent::ProjectileSpawn { entity_id, def_id } = event {
+                    self.def_ids.insert(entity_id.clone(), def_id.clone());
+                }
+            }
+            let projectiles = extract_projectiles(&frame.state);
+            self.projectile_buffer.push(at, frame.tick, projectiles, None);
             self.next += 1;
         }
-        self.buffer.begin_frame(self.clock_ms);
-        let mut ids: Vec<&str> = self.buffer.latest_entity_ids().into_iter().collect();
-        ids.sort_unstable();
-        ids.into_iter()
-            .filter_map(|id| self.buffer.sample_in_frame(id).map(|e| (id.to_owned(), e)))
-            .collect()
+        let players = sample_all(&mut self.buffer, self.clock_ms);
+        let projectiles = sample_all(&mut self.projectile_buffer, self.clock_ms)
+            .into_iter()
+            .filter_map(|(id, e)| {
+                let def_id = self.def_ids.get(&id)?.clone();
+                Some(LiveProjectile {
+                    id,
+                    def_id,
+                    position: [e.x, e.y, e.z],
+                    velocity: [e.vx, e.vy, e.vz],
+                })
+            })
+            .collect();
+        DemoView { players, projectiles }
     }
+}
+
+/// Every entity in the newest snapshot, sampled at `now`, by id.
+fn sample_all(buffer: &mut SnapshotBuffer, now: f64) -> Vec<(String, InterpolatedEntity)> {
+    buffer.begin_frame(now);
+    let mut ids: Vec<&str> = buffer.latest_entity_ids().into_iter().collect();
+    ids.sort_unstable();
+    ids.into_iter()
+        .filter_map(|id| buffer.sample_in_frame(id).map(|e| (id.to_owned(), e)))
+        .collect()
+}
+
+/// `processProjectileEntities`' extraction: each `proj_` entity's position
+/// and velocity.
+fn extract_projectiles(state: &GameState<SnapshotEvent>) -> HashMap<String, EntitySnapshot> {
+    let mut out = HashMap::new();
+    for (id, entity) in state.entities.iter() {
+        if !id.starts_with("proj_") {
+            continue;
+        }
+        let Some(position) = entity.position else {
+            continue;
+        };
+        let velocity = entity.velocity.map(|v| v.linear).unwrap_or_default();
+        out.insert(
+            id.to_owned(),
+            EntitySnapshot {
+                x: position.x,
+                y: position.y,
+                z: position.z,
+                vx: velocity.x,
+                vy: velocity.y,
+                vz: velocity.z,
+                ..EntitySnapshot::default()
+            },
+        );
+    }
+    out
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    /// The recorded bot demos play through, and players move between frames.
+    /// The recorded bot demos play through: players move between frames,
+    /// and projectiles fly in at least one of them.
     #[test]
-    fn plays_a_recorded_demo() {
+    fn plays_recorded_demos() {
         let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/golden/demos");
-        let Some(file) = std::fs::read_dir(&dir)
+        let mut projectiles = 0;
+        for file in std::fs::read_dir(&dir)
             .unwrap()
             .filter_map(Result::ok)
             .map(|e| e.path())
-            .find(|p| p.extension().is_some_and(|e| e == "shagdemo"))
-        else {
-            return;
-        };
-        let mut demo = DemoPlayback::load(&file).unwrap();
-        let mut seen = 0;
-        let mut first: Option<(String, InterpolatedEntity)> = None;
-        let mut moved = false;
-        while !demo.finished() {
-            let players = demo.advance(1.0 / 60.0);
-            seen = seen.max(players.len());
-            if let Some((id, p)) = &first
-                && let Some((_, q)) = players.iter().find(|(i, _)| i == id)
-                && (q.x - p.x).abs() + (q.z - p.z).abs() > 1.0
-            {
-                moved = true;
+            .filter(|p| p.extension().is_some_and(|e| e == "shagdemo"))
+        {
+            let mut demo = DemoPlayback::load(&file).unwrap();
+            let mut seen = 0;
+            let mut first: Option<(String, InterpolatedEntity)> = None;
+            let mut moved = false;
+            while !demo.finished() {
+                let view = demo.advance(1.0 / 60.0);
+                projectiles += view.projectiles.len();
+                seen = seen.max(view.players.len());
+                if let Some((id, p)) = &first
+                    && let Some((_, q)) = view.players.iter().find(|(i, _)| i == id)
+                    && (q.x - p.x).abs() + (q.z - p.z).abs() > 1.0
+                {
+                    moved = true;
+                }
+                if first.is_none() {
+                    first = view.players.into_iter().next();
+                }
             }
-            if first.is_none() {
-                first = players.into_iter().next();
-            }
+            assert!(seen > 0, "no players in {}", file.display());
+            assert!(moved, "nobody moved in {}", file.display());
         }
-        assert!(seen > 0, "no players in {}", file.display());
-        assert!(moved);
+        assert!(projectiles > 0, "no projectiles flew");
     }
 }
