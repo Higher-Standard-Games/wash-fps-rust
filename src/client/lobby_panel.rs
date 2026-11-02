@@ -19,8 +19,10 @@ use shagger::ui::egui_layer::egui;
 
 use crate::client::hud::washiki;
 use crate::client::leaderboard_view::LeaderboardView;
+use crate::client::lobby_welcome_guide::LobbyWelcomeGuide;
 use crate::client::profile_view::ProfileView;
 use crate::client::settings::fps_settings_view::FpsSettingsView;
+use crate::client::settings::settings_model::SettingsPageId;
 use shagger::core::cvar::with_cvars;
 use shagger::lobby::settings_sync::SettingsSync;
 
@@ -212,6 +214,8 @@ pub struct LobbyPanel {
     pub console_pressed: bool,
     /// The connection ended; why.
     pub closed: Option<String>,
+    /// The first-run welcome guide.
+    pub guide: LobbyWelcomeGuide,
 }
 
 impl LobbyPanel {
@@ -250,6 +254,7 @@ impl LobbyPanel {
             profile: ProfileView::default(),
             settings_sync: None,
             closed: None,
+            guide: LobbyWelcomeGuide::new(crate::config_dir()),
         }
     }
 
@@ -337,6 +342,7 @@ impl LobbyPanel {
                 self.online = w.online_players.len();
                 self.chat_log = w.chat_history.iter().cloned().collect();
                 self.trim_chat();
+                self.guide.set_authenticated(true);
                 // `startSettingsSync`.
                 if let Some(dir) = crate::config_dir() {
                     self.settings_sync = with_cvars(|c| SettingsSync::start(&mut self.client, &w, c, &dir));
@@ -461,6 +467,10 @@ impl LobbyPanel {
 
     /// Draws the page.
     pub fn ui(&mut self, ui: &mut egui::Ui) {
+        // "Go to keyboard setup" from the guide.
+        if self.guide.ui(ui.ctx(), hsl(46.0, 100.0, 57.0)) {
+            self.settings = Some(FpsSettingsView::open(SettingsPageId::Controls));
+        }
         egui::Panel::left("lobby_rail")
             .exact_size(240.0)
             .show(ui, |ui| self.rail(ui));
@@ -538,6 +548,10 @@ impl LobbyPanel {
         if let Some(settings) = &mut self.settings {
             ui.label(egui::RichText::new("Settings").strong());
             settings.page_nav(ui);
+            if self.guide.suspended && ui.button("« Back to welcome").clicked() {
+                self.settings = None;
+                self.guide.resume();
+            }
         } else {
             ui.label(format!("{} online", self.online));
         }
@@ -553,6 +567,9 @@ impl LobbyPanel {
                 }
                 if ui.button("Console").clicked() {
                     self.console_pressed = true;
+                }
+                if ui.button("?").on_hover_text("Welcome & tips").clicked() {
+                    self.guide.open_help();
                 }
             });
             let meta = if !self.connected {

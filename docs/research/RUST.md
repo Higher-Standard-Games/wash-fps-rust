@@ -2582,6 +2582,26 @@ fit and did not count the parity harness.
 
 Newest first. Each entry names the commits and what proves them.
 
+### Milestone 10, seventh slice: the welcome guide (November 2, 2026)
+
+- **wash-fps-rust.** `client/credits/markdown_lite.rs` ports
+  `MarkdownLite.ts` (headings, paragraphs, one level of nested lists,
+  rules; bold, italic, code and safe links) as blocks egui draws.
+  `client/lobby_welcome_dialog.rs` and `client/lobby_welcome_guide.rs` port
+  the first-run guide: the terms (`assets/docs/TERMS.md`, wash-fps's own)
+  to agree to before anything else, the keys page from the player's
+  bindings, the tips with their keys, "don't show this again", "Go to
+  keyboard setup" with the way back, and the `?` in the rail. Its two
+  local storage entries live in the same storage file as the bindings;
+  only synced keys leave the machine. Not yet: the keyboard picture on
+  the keys page.
+- **Proof.** Unit tests for the inline marks, the blocks, the terms file,
+  the terms gate on hiding the guide, and the guide's open, hide and `?`
+  states. A screenshot with a fresh config directory opens on the terms.
+- **Next.** The Demos tab needs demo downloads over HTTPS, which comes
+  with milestone 12 (demo playback, highlight reels); milestone 10 is
+  otherwise complete.
+
 ### Milestone 10, sixth slice: team colours, voices and the video page (November 2, 2026)
 
 - **shagger `0079a47`, `c06a960`.** `rendering/render_vars.rs` ports

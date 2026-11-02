@@ -2,6 +2,7 @@
 //! local first-person weapon so far).
 
 pub mod ammo_status;
+pub mod credits;
 pub mod crosshair;
 pub mod demo_playback;
 pub mod fps_actions;
@@ -21,6 +22,8 @@ pub mod leaderboard_view;
 pub mod live_play;
 pub mod live_watch;
 pub mod lobby_panel;
+pub mod lobby_welcome_dialog;
+pub mod lobby_welcome_guide;
 pub mod match_state_manager;
 pub mod player_model_visual_settings;
 pub mod prediction;
