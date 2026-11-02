@@ -10,9 +10,9 @@
 //! washoi play <ws://game-server> [--name NAME] [--ticket TICKET] [--data DIR] [--screenshot FILE.png] [--time T] [--say TEXT] [--seconds N]
 //! washoi connect <ws://game-server> [--name NAME] [--ticket TICKET] [--seconds N] [--play]
 //! washoi lobby <ws://lobby> [--key-file FILE] list
-//! washoi lobby <ws://lobby> [--key-file FILE] spectate [--seconds N]
-//! washoi lobby <ws://lobby> [--key-file FILE] queue <gametype> [--seconds N] [--play]
-//! washoi lobby <ws://lobby> [--key-file FILE] bot [gametype] [difficulty] [--seconds N] [--play]
+//! washoi lobby <ws://lobby> [--key-file FILE] spectate [--window] [--seconds N]
+//! washoi lobby <ws://lobby> [--key-file FILE] queue <gametype> [--seconds N] [--play | --window]
+//! washoi lobby <ws://lobby> [--key-file FILE] bot [gametype] [difficulty] [--seconds N] [--play | --window]
 //! ```
 //!
 //! `--key-file` keeps the account key: it is read when the file exists, and a
@@ -84,9 +84,9 @@ fn usage() -> ! {
          \x20      washoi play <ws://game-server> [--name NAME] [--ticket TICKET] [--data DIR] [--screenshot FILE.png] [--time T] [--say TEXT] [--seconds N]\n\
          \x20      washoi connect <ws://game-server> [--name NAME] [--ticket TICKET] [--seconds N] [--play]\n\
          \x20      washoi lobby <ws://lobby> [--key-file FILE] list\n\
-         \x20      washoi lobby <ws://lobby> [--key-file FILE] spectate [--seconds N]\n\
-         \x20      washoi lobby <ws://lobby> [--key-file FILE] queue <gametype> [--seconds N] [--play]\n\
-         \x20      washoi lobby <ws://lobby> [--key-file FILE] bot [gametype] [difficulty] [--seconds N] [--play]",
+         \x20      washoi lobby <ws://lobby> [--key-file FILE] spectate [--window] [--seconds N]\n\
+         \x20      washoi lobby <ws://lobby> [--key-file FILE] queue <gametype> [--seconds N] [--play | --window]\n\
+         \x20      washoi lobby <ws://lobby> [--key-file FILE] bot [gametype] [difficulty] [--seconds N] [--play | --window]",
         washoi::VERSION
     );
     std::process::exit(2);
@@ -115,6 +115,8 @@ struct Options {
     audio_out: Option<PathBuf>,
     scoreboard: bool,
     say: Option<String>,
+    /// From the lobby into the window rather than headless (`--window`).
+    window: bool,
     players: Vec<view::PlayerView>,
     projectiles: Vec<view::ProjectileView>,
     explosions: Vec<view::ExplosionView>,
@@ -147,6 +149,7 @@ fn parse_options(args: impl Iterator<Item = String>) -> Options {
             "--audio-out" => o.audio_out = Some(PathBuf::from(value())),
             "--scoreboard" => o.scoreboard = true,
             "--say" => o.say = Some(value()),
+            "--window" => o.window = true,
             "--player" => {
                 let v = value();
                 let parts: Vec<&str> = v.split(',').map(str::trim).collect();
@@ -292,7 +295,6 @@ fn main() {
         ),
         "lobby" => lobby(&url, &o),
         "view" | "demo" | "watch" | "play" => {
-            let (width, height) = o.size.unwrap_or((1280, 720));
             let demo = (mode == "demo").then(|| PathBuf::from(&url));
             let watch = (mode == "watch" || mode == "play").then(|| {
                 let fallback = if mode == "play" { "RustPlayer" } else { "RustSpectator" };
@@ -302,40 +304,49 @@ fn main() {
                     o.ticket.clone(),
                 )
             });
-            view::run(&view::ViewOptions {
-                seconds: o.seconds,
-                map: url,
-                data: o
-                    .data
-                    .clone()
-                    .unwrap_or_else(|| PathBuf::from("target/washoi-maps/pk3")),
-                screenshot: o.screenshot.clone(),
-                spawn: o.spawn,
-                width,
-                height,
-                time: o.time,
-                at: o.at,
-                pitch: o.pitch,
-                no_cull: o.no_cull,
-                no_lights: o.no_lights,
-                players: o.players.clone(),
-                projectiles: o.projectiles.clone(),
-                explosions: o.explosions.clone(),
-                effects: o.effects.clone(),
-                weapon: o.weapon.clone(),
-                aim: o.aim,
-                demo,
-                watch,
-                follow: o.follow,
-                audio_out: o.audio_out.clone(),
-                scoreboard: o.scoreboard,
-                join: mode == "play",
-                say: o.say.clone(),
-            })
+            view::run(&view_options(&o, url, demo, watch, mode == "play"))
         }
         _ => usage(),
     };
     std::process::exit(code);
+}
+
+/// The window's options from the command line.
+fn view_options(
+    o: &Options,
+    map: String,
+    demo: Option<PathBuf>,
+    watch: Option<(String, String, Option<String>)>,
+    join: bool,
+) -> view::ViewOptions {
+    let (width, height) = o.size.unwrap_or((1280, 720));
+    view::ViewOptions {
+        seconds: o.seconds,
+        map,
+        data: data_dir(o),
+        screenshot: o.screenshot.clone(),
+        spawn: o.spawn,
+        width,
+        height,
+        time: o.time,
+        at: o.at,
+        pitch: o.pitch,
+        no_cull: o.no_cull,
+        no_lights: o.no_lights,
+        players: o.players.clone(),
+        projectiles: o.projectiles.clone(),
+        explosions: o.explosions.clone(),
+        effects: o.effects.clone(),
+        weapon: o.weapon.clone(),
+        aim: o.aim,
+        demo,
+        watch,
+        follow: o.follow,
+        audio_out: o.audio_out.clone(),
+        scoreboard: o.scoreboard,
+        join,
+        say: o.say.clone(),
+    }
 }
 
 // ── Lobby ──────────────────────────────────────────────────────────────────
@@ -419,6 +430,10 @@ fn lobby(url: &str, o: &Options) -> i32 {
                             return 0;
                         };
                         client.disconnect();
+                        if o.window {
+                            let watch = Some((server.clone(), name.clone(), None));
+                            return view::run(&view_options(o, server, None, watch, false));
+                        }
                         return play_match(&server, &name, None, o.seconds.unwrap_or(15.0), false, &data_dir(o));
                     }
                     Some("bot") => {
@@ -479,6 +494,11 @@ fn lobby(url: &str, o: &Options) -> i32 {
                 // The browser keeps the lobby open during the match; this
                 // client does not need it until the next one.
                 client.disconnect();
+                if o.window {
+                    // Into the window, playing (or watching, for a spectator's seat).
+                    let watch = Some((server_url.clone(), name.clone(), admission_ticket));
+                    return view::run(&view_options(o, server_url, None, watch, true));
+                }
                 return play_match(
                     &server_url,
                     &name,

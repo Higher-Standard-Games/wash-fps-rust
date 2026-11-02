@@ -2582,6 +2582,26 @@ fit and did not count the parity harness.
 
 Newest first. Each entry names the commits and what proves them.
 
+### Milestone 9, fifth slice: from the lobby into the window (November 2, 2026)
+
+- **wash-fps-rust.** `washoi lobby <url> queue|bot ... --window` logs in,
+  queues or makes a bot room, readies, and on `lobby:connect` opens the
+  play window on the server it names with the admission ticket;
+  `spectate --window` watches the first live match there. The window's
+  options come from one `view_options` for every mode.
+- **Proof, against a local lobby, bot server and spawned game server**
+  (wash-fps's `lobby-server` and `bot-server` from the SHAG checkout): a
+  private duel against the hard bot "Ramen" on `washoi_dm5`; the client
+  joins, is fragged ("Ramen [BULLET] fragged Player_8611"), comes back, and
+  its `--say` line and the bot's taunt show in the chat over the warmup.
+  Production's game ports are still out of reach from this sandbox
+  (section 23, Milestone 2).
+- **Milestone 9 stands** at: a player can queue, play, see the HUD, chat
+  and come back from a death in the window. Still missing for parity with
+  the browser's MVP: a lobby screen in the window (it is the command line
+  for now), weapon slots, the ammo warning, pickups, damage indicators and
+  the death screen.
+
 ### Milestone 9, fourth slice: chat (November 2, 2026)
 
 - **wash-fps-rust.** `client/hud/widgets/chat.rs` ports `Chat.ts`: the
