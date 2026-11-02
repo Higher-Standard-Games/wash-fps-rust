@@ -1,0 +1,141 @@
+//! The HUD of a player who was just fragged: the death screen's veil and
+//! card, the damage overlay, the vitals and weapon slots draw over a plain
+//! frame. Writes the frame to `HUD_PNG` when that is set, to look at.
+//!
+//! Needs a GPU adapter, software ones included; it reports a skip without.
+
+use shagger::babylon::post_processes::image_processing_post_process::{
+    ImageProcessingConfiguration, ImageProcessingPostProcess,
+};
+use shagger::rendering::gpu::Gpu;
+use shagger::rendering::offscreen::{OFFSCREEN_FORMAT, render_hdr_with_ui_to_rgba};
+use shagger::rendering::wgpu;
+use shagger::shared::json;
+use shagger::shared::net::game_state::PlayerState;
+use washoi::client::fps_hud::{FpsHud, WatchFrame};
+use washoi::client::match_state_manager::MatchStateManager;
+use washoi::shared::net::snapshot_events::{Point, SnapshotEvent};
+
+const ZERO: Point = Point { x: 0.0, y: 0.0, z: 0.0 };
+
+#[test]
+fn a_fragged_player_sees_the_death_screen() {
+    let Ok(gpu) = Gpu::headless() else {
+        eprintln!("skipped: no GPU adapter");
+        return;
+    };
+    let (width, height) = (1280u32, 720u32);
+    let mut hud = FpsHud::new(&gpu, OFFSCREEN_FORMAT).unwrap();
+    let roster = vec![
+        (
+            "player_1".to_owned(),
+            PlayerState {
+                entity_id: "player_1".into(),
+                name: "Washiki!".into(),
+                ..PlayerState::default()
+            },
+        ),
+        (
+            "player_2".to_owned(),
+            PlayerState {
+                entity_id: "player_2".into(),
+                name: "Ramen".into(),
+                score: 3,
+                ..PlayerState::default()
+            },
+        ),
+    ];
+    let match_state = MatchStateManager::new();
+    let positions = vec![
+        ("player_1".to_owned(), [0.0, 0.0, 0.0]),
+        ("player_2".to_owned(), [300.0, 0.0, 0.0]),
+    ];
+    let events = vec![
+        SnapshotEvent::WeaponState {
+            entity_id: "player_1".into(),
+            current_weapon: "rlauncher".into(),
+            weapons: json::parse(r#"["blade","rlauncher","machinegun"]"#).unwrap(),
+            ammo: json::parse(r#"{"rlauncher":0,"machinegun":{"clip":4,"reserve":60}}"#).unwrap(),
+            reloading: false,
+            last_fire_tick: 0,
+        },
+        SnapshotEvent::Damage {
+            entity_id: "player_1".into(),
+            attacker_id: "player_2".into(),
+            damage: 60,
+            weapon_id: "rlauncher".into(),
+            at: ZERO,
+            hit_location: None,
+            pain_tier: None,
+        },
+        SnapshotEvent::CombatState {
+            entity_id: "player_1".into(),
+            health: 0,
+            armor: 25,
+            dead: true,
+        },
+        SnapshotEvent::Death {
+            entity_id: "player_1".into(),
+            killer_id: "player_2".into(),
+            weapon_id: "rlauncher".into(),
+            damage_type: "explosion".into(),
+            final_damage: 60,
+            at: ZERO,
+            vel: ZERO,
+            kb_dir: ZERO,
+        },
+    ];
+    let mut frame = WatchFrame {
+        roster: &roster,
+        match_state: &match_state,
+        events: &events,
+        view_entity: Some("player_1"),
+        playback: false,
+        playing: true,
+        speed: 0.0,
+        positions: &positions,
+        yaw: 0.0,
+        dt: 1.0 / 60.0,
+    };
+    hud.update_watching(&frame, width as f32, height as f32);
+    // A second in: the countdown is on, the overlay still fading.
+    frame.events = &[];
+    for _ in 0..60 {
+        hud.update_watching(&frame, width as f32, height as f32);
+    }
+    hud.prepare(&gpu);
+    let post = ImageProcessingPostProcess::new(&gpu, OFFSCREEN_FORMAT);
+    let grey = wgpu::Color {
+        r: 0.3,
+        g: 0.3,
+        b: 0.3,
+        a: 1.0,
+    };
+    let pixels = render_hdr_with_ui_to_rgba(
+        &gpu,
+        width,
+        height,
+        grey,
+        &post,
+        &ImageProcessingConfiguration::default(),
+        |_| {},
+        |_| {},
+        |pass| hud.draw(pass),
+    );
+    if let Some(path) = std::env::var_os("HUD_PNG") {
+        image::save_buffer(path, &pixels, width, height, image::ExtendedColorType::Rgba8).unwrap();
+    }
+    let at = |x: u32, y: u32| {
+        let i = ((y * width + x) * 4) as usize;
+        [pixels[i], pixels[i + 1], pixels[i + 2]]
+    };
+    // The corner is under the red veil: redder than it is green.
+    let corner = at(4, 4);
+    assert!(corner[0] > corner[1] + 10, "corner {corner:?}");
+    // The stamp's red slab crosses the middle above the centre.
+    let red = (0..width).filter(|&x| {
+        let p = at(x, height / 2 - 60);
+        p[0] > 150 && p[1] < 90
+    });
+    assert!(red.count() > 200);
+}

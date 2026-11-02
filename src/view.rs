@@ -162,6 +162,7 @@ pub fn update_watch_hud(
     feed: &Feed,
     players: &[(String, InterpolatedEntity, PlayerModelVisualStyle)],
     follow: Option<usize>,
+    yaw: f64,
     events: &[SnapshotEvent],
     dt: f64,
     width: f32,
@@ -178,9 +179,18 @@ pub fn update_watch_hud(
             .and_then(|i| players.get(i))
             .map_or(0.0, |(_, e, _)| e.vx.hypot(e.vz)),
     };
+    let mut positions: Vec<(String, [f64; 3])> =
+        players.iter().map(|(id, e, _)| (id.clone(), [e.x, e.y, e.z])).collect();
+    if let Feed::Play(p, _) = feed
+        && let Some(eye) = p.eye()
+    {
+        positions.push((p.entity_id.clone(), [eye.x, eye.y, eye.z]));
+    }
     hud.update_watching(
         &WatchFrame {
             playing: local.is_some(),
+            positions: &positions,
+            yaw,
             roster: feed.roster(),
             match_state: feed.match_state(),
             events,
@@ -1372,15 +1382,16 @@ pub fn run(o: &ViewOptions) -> i32 {
             }
         };
         let mut said = o.say.as_deref();
-        for _ in 0..steps.max(1) {
+        for step in 0..steps.max(1) {
             if live {
                 std::thread::sleep(std::time::Duration::from_micros(16_667));
             }
             if let Feed::Play(_, input) = feed {
-                // Headless play: run forward and fire, looking where the camera looks.
+                // Headless play: run forward looking where the camera looks,
+                // firing through the first half (which also asks to respawn).
                 *input = PlayInput {
                     forward: true,
-                    fire: true,
+                    fire: step < steps / 2,
                     yaw: f64::from(camera.yaw),
                     pitch: f64::from(camera.pitch),
                     ..PlayInput::default()
@@ -1414,6 +1425,7 @@ pub fn run(o: &ViewOptions) -> i32 {
                     feed,
                     &players,
                     o.follow,
+                    f64::from(camera.yaw),
                     &view.effects,
                     1.0 / 60.0,
                     o.width as f32,

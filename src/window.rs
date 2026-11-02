@@ -208,7 +208,12 @@ impl App {
             use_key: key(KeyCode::KeyE),
             yaw: f64::from(self.camera.yaw),
             pitch: f64::from(self.camera.pitch),
-            weapon_slot: SLOTS.iter().position(|&k| key(k)).map_or(0, |i| i as u8 + 1),
+            // `fps_weapon_1` is also on Q.
+            weapon_slot: if key(KeyCode::KeyQ) {
+                1
+            } else {
+                SLOTS.iter().position(|&k| key(k)).map_or(0, |i| i as u8 + 1)
+            },
         }
     }
 
@@ -304,6 +309,7 @@ impl App {
                     feed,
                     &players,
                     self.follow,
+                    f64::from(self.camera.yaw),
                     &view.effects,
                     f64::from(dt),
                     s.config.width as f32,

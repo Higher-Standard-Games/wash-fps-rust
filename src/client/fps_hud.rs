@@ -9,6 +9,7 @@
 use shagger::rendering::gpu::Gpu;
 use shagger::rendering::hud_2d_renderer::Hud2dRenderer;
 use shagger::rendering::wgpu;
+use shagger::ui::hud::damage_overlay::DamageOverlay;
 use shagger::ui::hud_2d::Hud2d;
 
 use crate::client::ammo_status::get_ammo_status;
@@ -16,15 +17,19 @@ use crate::client::crosshair::{Crosshair, CrosshairFrame};
 use crate::client::hud::hud_widget::{FpsHudWidget, HudFrame};
 use crate::client::hud::washiki::{Fonts, UI_SCALE};
 use crate::client::hud::widgets::ammo_counter::AmmoCounter;
+use crate::client::hud::widgets::ammo_warning::AmmoWarning;
 use crate::client::hud::widgets::chat::Chat;
+use crate::client::hud::widgets::death_screen::DeathScreen;
 use crate::client::hud::widgets::event_feed::EventFeed;
 use crate::client::hud::widgets::frag_counter::FragCounter;
 use crate::client::hud::widgets::frag_message::FragMessage;
 use crate::client::hud::widgets::gametype_badge::GametypeBadge;
 use crate::client::hud::widgets::phase_message::PhaseMessage;
+use crate::client::hud::widgets::pickup_toast::PickupToast;
 use crate::client::hud::widgets::scoreboard::Scoreboard;
 use crate::client::hud::widgets::timer::Timer;
 use crate::client::hud::widgets::vitals_block::VitalsBlock;
+use crate::client::hud::widgets::weapon_slots::WeaponSlots;
 use crate::client::hud_state::{DeathParties, HudState};
 use crate::client::match_state_manager::MatchStateManager;
 use crate::shared::net::snapshot_events::SnapshotEvent;
@@ -45,6 +50,11 @@ pub struct FpsHud {
     vitals: VitalsBlock,
     ammo: AmmoCounter,
     crosshair: Crosshair,
+    weapon_slots: WeaponSlots,
+    ammo_warning: AmmoWarning,
+    pickup: PickupToast,
+    death: DeathScreen,
+    damage: DamageOverlay,
     pub chat: Chat,
     /// The reticle this frame, when someone's eyes are on screen.
     reticle: Option<(String, f64, bool)>,
@@ -67,6 +77,11 @@ pub struct WatchFrame<'a> {
     pub playing: bool,
     /// The view entity's horizontal speed, units a second.
     pub speed: f64,
+    /// Where the players are (entity id, position), for which way damage
+    /// came from.
+    pub positions: &'a [(String, [f64; 3])],
+    /// The camera's yaw, radians.
+    pub yaw: f64,
     pub dt: f64,
 }
 
@@ -89,6 +104,11 @@ impl FpsHud {
             vitals: VitalsBlock::default(),
             ammo: AmmoCounter::default(),
             crosshair: Crosshair::default(),
+            weapon_slots: WeaponSlots::default(),
+            ammo_warning: AmmoWarning::default(),
+            pickup: PickupToast::default(),
+            death: DeathScreen::default(),
+            damage: DamageOverlay::default(),
             chat: Chat::default(),
             reticle: None,
             state: HudState::default(),
@@ -141,10 +161,26 @@ impl FpsHud {
                 SnapshotEvent::Damage {
                     entity_id,
                     attacker_id,
+                    damage,
                     hit_location,
                     ..
-                } if !view.is_empty() && attacker_id == view && entity_id != view => {
-                    self.crosshair.notify_hit(hit_location.is_some_and(|l| l == "head"));
+                } if !view.is_empty() => {
+                    if entity_id == view && *damage > 0 {
+                        // Incoming: the overlay, from the attacker's side.
+                        let at = |id: &str| frame.positions.iter().find(|(e, _)| e == id).map(|(_, p)| *p);
+                        let angle = match (at(attacker_id), at(view)) {
+                            (Some(a), Some(v)) if attacker_id != view => (a[2] - v[2]).atan2(a[0] - v[0]) - frame.yaw,
+                            // `Math.random() * Math.PI * 2`: any side.
+                            _ => (state.now * 7.31).fract() * std::f64::consts::TAU,
+                        };
+                        self.damage.show(f64::from(*damage), angle as f32);
+                    }
+                    if attacker_id == view && entity_id != view {
+                        self.crosshair.notify_hit(hit_location.is_some_and(|l| l == "head"));
+                    }
+                }
+                SnapshotEvent::PickupNotify { entity_id, label } if entity_id == view => {
+                    self.pickup.show_pickup(label);
                 }
                 _ => {}
             }
@@ -237,8 +273,14 @@ impl FpsHud {
             let [_, vitals_h] = self.vitals.size(&self.hud, &fonts);
             self.vitals.draw(&mut self.hud, &fonts, 28.0 * s, bottom - vitals_h);
             let [ammo_w, ammo_h] = self.ammo.size(&self.hud, &fonts);
-            self.ammo
-                .draw(&mut self.hud, &fonts, vw - 28.0 * s - ammo_w, bottom - ammo_h);
+            let ammo_x = vw - 28.0 * s - ammo_w;
+            self.ammo.draw(&mut self.hud, &fonts, ammo_x, bottom - ammo_h);
+            // The slots before the ammo, which tucks 8 px under them.
+            let [slots_w, slots_h] = self.weapon_slots.size(&self.hud, &fonts);
+            self.weapon_slots
+                .draw(&mut self.hud, &fonts, ammo_x + 8.0 * s - slots_w, bottom - slots_h);
+            // `.fps-toast-container`, over the bottom centre.
+            self.pickup.draw(&mut self.hud, &fonts, vw / 2.0, bottom);
         }
         self.scoreboard.draw(&mut self.hud, &fonts, 0.0, 0.0);
         // `.fps-chat`: clear of the bottom bar, over the scoreboard's veil.
@@ -251,6 +293,13 @@ impl FpsHud {
         );
         // `.fps-event-feed` sits over the scoreboard's veil.
         self.event_feed.draw(&mut self.hud, &fonts, 24.0 * s, 64.0 * s);
+        // Then the death screen (z 800), the damage overlay (900), the
+        // ammo warning (950) and the crosshair (1000).
+        self.death.draw(&mut self.hud, &fonts, 0.0, 0.0);
+        self.damage.draw(&mut self.hud, frame.dt, vw, vh);
+        if subject {
+            self.ammo_warning.draw(&mut self.hud, &fonts, vw / 2.0, vh * 0.83);
+        }
         if let Some((weapon, speed, out_of_ammo)) = &self.reticle
             && !self.scoreboard.held
         {
@@ -268,8 +317,12 @@ impl FpsHud {
         }
     }
 
-    fn widgets_mut(&mut self) -> [&mut dyn FpsHudWidget; 9] {
+    fn widgets_mut(&mut self) -> [&mut dyn FpsHudWidget; 13] {
         [
+            &mut self.weapon_slots,
+            &mut self.ammo_warning,
+            &mut self.pickup,
+            &mut self.death,
             &mut self.vitals,
             &mut self.ammo,
             &mut self.frag_message,

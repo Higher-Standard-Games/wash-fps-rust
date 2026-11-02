@@ -2582,6 +2582,28 @@ fit and did not count the parity harness.
 
 Newest first. Each entry names the commits and what proves them.
 
+### Milestone 9, sixth slice: the rest of the player's HUD (November 2, 2026)
+
+- **shagger `aa96611`.** `ui/hud/damage_overlay.rs` ports SHAG's
+  `DamageOverlay.ts`: the red vignette, the bloom on the side the damage
+  came from, and the blood triangles along the edges weighted to it, more
+  and longer the harder the hit. `Hud2d::radial_gradient` draws canvas
+  radial gradients as rings.
+- **wash-fps-rust.** New widgets: `WeaponSlots` (blade, then two picked-up
+  weapons in their colours, the one in hand larger), `AmmoWarning` ("OUT
+  OF AMMO" or "RELOAD [R]", pulsing), `PickupToast` (`pickup_notify` on a
+  gold plate that slams in and tumbles away) and `DeathScreen` (the red
+  veil, "YOU GOT FRAGGED", the card with the obituary and the three-second
+  respawn countdown, then "PRESS MOUSE1 TO RESPAWN", or out until the next
+  round). Incoming damage turns into the overlay with the angle
+  `GameEvents.ts` computes from the attacker's position and the camera's
+  yaw. Q also picks weapon 1.
+- **Proof.** `tests/hud_render.rs` renders a just-fragged player's HUD
+  offscreen (a rocket from the right: the veil, the stamp, "Blown up by
+  Ramen", 2.0 s to respawn, the triangles to the right, the slots BL RL MG)
+  and checks the veil and the stamp's pixels; `HUD_PNG` writes the frame.
+  Unit test for the obituary wording.
+
 ### Milestone 9, fifth slice: from the lobby into the window (November 2, 2026)
 
 - **wash-fps-rust.** `washoi lobby <url> queue|bot ... --window` logs in,
