@@ -19,7 +19,6 @@ use shagger::rendering::offscreen::{begin_main_pass, begin_overlay_pass, begin_u
 use shagger::rendering::wgpu;
 use shagger::weapon::weapon_view_manager::ViewModelInput;
 use washoi::client::fps_hud::FpsHud;
-use washoi::client::hud::hud_widget::HudFrame;
 use winit::application::ApplicationHandler;
 use winit::dpi::PhysicalSize;
 use winit::event::{DeviceEvent, DeviceId, ElementState, MouseButton, WindowEvent};
@@ -29,7 +28,7 @@ use winit::window::{CursorGrabMode, Window, WindowId};
 
 use crate::view::{
     CLEAR, DemoViewSounds, Feed, LoadedMap, MapRenderer, build_renderer, chase_camera, play_view_sounds,
-    styled_players, watch_hud_state,
+    styled_players, update_watch_hud,
 };
 use washoi::client::game_events::GameAudio;
 
@@ -195,14 +194,14 @@ impl App {
                 );
             }
             if let Some(hud) = &mut s.hud {
-                let state = watch_hud_state(feed, &players, self.follow);
                 hud.scoreboard.held = self.held.contains(&KeyCode::Tab);
-                hud.update(
-                    &HudFrame {
-                        state: &state,
-                        match_state: feed.match_state(),
-                        dt: f64::from(dt),
-                    },
+                update_watch_hud(
+                    hud,
+                    feed,
+                    &players,
+                    self.follow,
+                    &view.effects,
+                    f64::from(dt),
                     s.config.width as f32,
                     s.config.height as f32,
                 );

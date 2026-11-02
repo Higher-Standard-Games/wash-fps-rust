@@ -28,6 +28,36 @@ pub fn client_key_display_id(key: &str) -> &str {
     key.strip_prefix(CLIENT_KEY_PREFIX).unwrap_or(key)
 }
 
+/// `KillFeedEntry`.
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct KillFeedEntry {
+    pub victim_id: String,
+    pub killer_id: String,
+    pub victim_name: String,
+    pub killer_name: String,
+    pub weapon_id: String,
+    pub by_local: bool,
+    pub of_local: bool,
+    pub by_viewed: bool,
+    pub of_viewed: bool,
+    /// Counts every death seen, so a reader can tell which are new.
+    pub seq: u64,
+    /// Seconds on the HUD's clock when it came.
+    pub timestamp: f64,
+}
+
+/// `DeathParties`.
+#[derive(Debug, Clone, Default)]
+pub struct DeathParties<'a> {
+    pub killer_name: &'a str,
+    pub victim_name: &'a str,
+    pub local_entity_id: Option<&'a str>,
+    pub view_entity_id: Option<&'a str>,
+}
+
+const KILL_FEED_EXPIRE: f64 = 5.0;
+const KILL_FEED_MAX: usize = 5;
+
 /// `HUDState`'s scoreboard and match half.
 #[derive(Debug, Clone, Default)]
 pub struct HudState {
@@ -43,6 +73,10 @@ pub struct HudState {
     pub team_based: bool,
     pub team_scores: BTreeMap<String, f64>,
     pub team_names: BTreeMap<String, String>,
+    pub kill_feed: Vec<KillFeedEntry>,
+    death_seq: u64,
+    /// The HUD's clock in seconds (`performance.now()`).
+    pub now: f64,
 }
 
 impl HudState {
@@ -126,6 +160,44 @@ impl HudState {
         }
     }
 
+    /// `processDeath`.
+    pub fn process_death(&mut self, victim_id: &str, killer_id: &str, weapon_id: &str, parties: &DeathParties<'_>) {
+        let is = |id: Option<&str>, who: &str| id.is_some_and(|id| !id.is_empty() && id == who);
+        self.death_seq += 1;
+        self.kill_feed.push(KillFeedEntry {
+            victim_id: victim_id.to_owned(),
+            killer_id: killer_id.to_owned(),
+            victim_name: parties.victim_name.to_owned(),
+            killer_name: parties.killer_name.to_owned(),
+            weapon_id: weapon_id.to_owned(),
+            by_local: is(parties.local_entity_id, killer_id),
+            of_local: is(parties.local_entity_id, victim_id),
+            by_viewed: is(parties.view_entity_id, killer_id),
+            of_viewed: is(parties.view_entity_id, victim_id),
+            seq: self.death_seq,
+            timestamp: self.now,
+        });
+        if self.kill_feed.len() > KILL_FEED_MAX {
+            self.kill_feed.remove(0);
+        }
+    }
+
+    /// `expireTransients`, with the clock moved on by `dt` seconds.
+    pub fn expire_transients(&mut self, dt: f64) {
+        self.now += dt;
+        let now = self.now;
+        self.kill_feed.retain(|k| now - k.timestamp < KILL_FEED_EXPIRE);
+    }
+
+    /// `resolvePlayerName`: a player's name from their entity id.
+    #[must_use]
+    pub fn resolve_player_name(players: &[(String, PlayerState)], entity_id: &str) -> String {
+        players
+            .iter()
+            .find(|(_, p)| p.entity_id == entity_id)
+            .map_or_else(|| entity_id.replace("player_", "Player "), |(_, p)| p.name.clone())
+    }
+
     /// The scoreboard row of the player whose entity is `entity_id`.
     #[must_use]
     pub fn entry_for_entity(&self, entity_id: &str) -> Option<&ScoreboardEntry> {
@@ -159,5 +231,23 @@ mod tests {
         assert_eq!(names, ["B", "A", "C"]);
         assert_eq!(hud.entry_for_entity("e3").unwrap().player_id, "player_c");
         assert_eq!(client_key_display_id("player_x"), "x");
+    }
+
+    #[test]
+    fn the_kill_feed_caps_and_expires() {
+        let mut hud = HudState::default();
+        let parties = DeathParties {
+            view_entity_id: Some("e1"),
+            ..DeathParties::default()
+        };
+        for i in 0..7 {
+            hud.process_death(&format!("v{i}"), "e1", "rail", &parties);
+        }
+        assert_eq!(hud.kill_feed.len(), 5);
+        assert_eq!(hud.kill_feed[0].seq, 3);
+        assert!(hud.kill_feed[0].by_viewed && !hud.kill_feed[0].of_viewed);
+        hud.expire_transients(5.0);
+        assert!(hud.kill_feed.is_empty());
+        assert_eq!(HudState::resolve_player_name(&[], "player_3"), "Player 3");
     }
 }

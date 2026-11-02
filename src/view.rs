@@ -52,10 +52,8 @@ use shagger::weapon::rail::rail_profiles::{RailEffectSample, RailImpactKind};
 use shagger::weapon::tracer::streak_tracer_renderer::StreakTracerShot;
 use shagger::weapon::weapon_view_manager::ViewModelInput;
 use washoi::client::demo_playback::{DemoPlayback, DemoView, LiveProjectile};
-use washoi::client::fps_hud::FpsHud;
+use washoi::client::fps_hud::{FpsHud, WatchFrame};
 use washoi::client::game_events::{EffectTargets, GameAudio, play_remote_shots};
-use washoi::client::hud::hud_widget::HudFrame;
-use washoi::client::hud_state::HudState;
 use washoi::client::live_watch::LiveWatch;
 use washoi::client::match_state_manager::MatchStateManager;
 use washoi::client::weapon_view::WeaponViewModel;
@@ -151,25 +149,32 @@ pub struct ViewOptions {
     pub scoreboard: bool,
 }
 
-/// The HUD's state for a frame of a demo or a match being watched: the
-/// feed's roster and match, behind the followed player (if any).
-#[must_use]
-pub fn watch_hud_state(
+/// The HUD's frame of a demo or a match being watched, behind the
+/// followed player (if any).
+#[allow(clippy::too_many_arguments)]
+pub fn update_watch_hud(
+    hud: &mut FpsHud,
     feed: &Feed,
     players: &[(String, InterpolatedEntity, PlayerModelVisualStyle)],
     follow: Option<usize>,
-) -> HudState {
-    let mut state = HudState {
-        watcher: true,
-        playback: matches!(feed, Feed::Demo(_)),
-        spectating: follow
-            .and_then(|i| players.get(i))
-            .map(|(id, _, _)| id.clone())
-            .unwrap_or_default(),
-        ..HudState::default()
-    };
-    state.update_from_game_state(feed.roster(), feed.match_state());
-    state
+    events: &[SnapshotEvent],
+    dt: f64,
+    width: f32,
+    height: f32,
+) {
+    let view_entity = follow.and_then(|i| players.get(i)).map(|(id, _, _)| id.as_str());
+    hud.update_watching(
+        &WatchFrame {
+            roster: feed.roster(),
+            match_state: feed.match_state(),
+            events,
+            view_entity,
+            playback: matches!(feed, Feed::Demo(_)),
+            dt,
+        },
+        width,
+        height,
+    );
 }
 
 /// A chase camera behind a player: 150 units back and 40 up along the
@@ -1282,14 +1287,14 @@ pub fn run(o: &ViewOptions) -> i32 {
             renderer.set_live_projectiles(&projectiles, 1.0 / 60.0);
             renderer.play_effects(&view.effects, &view.weapons, 1.0 / 60.0);
             if let Some(hud) = &mut hud {
-                let state = watch_hud_state(feed, &players, o.follow);
                 hud.scoreboard.held = o.scoreboard;
-                hud.update(
-                    &HudFrame {
-                        state: &state,
-                        match_state: feed.match_state(),
-                        dt: 1.0 / 60.0,
-                    },
+                update_watch_hud(
+                    hud,
+                    feed,
+                    &players,
+                    o.follow,
+                    &view.effects,
+                    1.0 / 60.0,
                     o.width as f32,
                     o.height as f32,
                 );

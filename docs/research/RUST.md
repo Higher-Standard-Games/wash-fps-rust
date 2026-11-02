@@ -2607,9 +2607,16 @@ Newest first. Each entry names the commits and what proves them.
 - **Proof.** Unit tests (CSS `hsla` and gradient angles, the atlas
   packing, the scoreboard's order); screenshots of the dm14 demo show the
   frag wing, clock and gametype tab, and the scoreboard over the match.
+- **Then.** `HUDState`'s kill feed (`processDeath`, five entries for five
+  seconds, names resolved from the roster), SHAG's `EventFeed` at the top
+  left ("killer [weapon] fragged victim", six for six seconds and a
+  one-second fade; Washoi's styles, so it lives in wash-fps-rust) and
+  `FragMessage` ("FRAGGED name" floating up at the centre when the
+  followed player scores). `FpsHud` keeps the state across frames.
 - **Left out.** Scanline overlays, perspective tilts and blurred glows;
-  the post-game stage and the duel's versus card; vitals, ammo, the
-  crosshair and the kill feed come next.
+  the post-game stage and the duel's versus card. Vitals, ammo and the
+  crosshair belong to a player in play, which the window does not have
+  yet.
 
 ### Milestone 8, fifth slice: the bomb's sounds (November 2, 2026)
 
