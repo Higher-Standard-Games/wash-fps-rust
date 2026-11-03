@@ -30,9 +30,11 @@ use shagger::rendering::hdr_target::HDR_FORMAT;
 use shagger::rendering::model_renderer::{ModelDraw, ModelRenderer};
 use shagger::rendering::offscreen::{OFFSCREEN_FORMAT, render_hdr_with_ui_to_rgba};
 
+use shagger::loader::bsp::world_fog::parse_world_fog;
 use shagger::rendering::sky_renderer::{SkyRenderer, apply_skybox};
 use shagger::rendering::wgpu;
 use shagger::rendering::world_culling::WorldCulling;
+use shagger::rendering::world_fog_controller::WorldFogController;
 use shagger::rendering::world_geometry::build_world_geometry;
 use shagger::rendering::world_renderer::{Rgba8Image, WorldRenderer};
 use shagger::shared::collision::shared_collision_world::SharedCollisionWorld;
@@ -676,6 +678,11 @@ pub struct MapRenderer {
     /// Explosion flashes from events: their lights, looks and start times.
     live_flashes: Vec<(PooledLight, &'static ExplosionLook, f64)>,
     pub sky: Option<SkyRenderer>,
+    /// The map's world fog and the `r_fog` cvars over it (MapLoader's
+    /// `WorldFogController.setMap`).
+    pub fog: WorldFogController,
+    /// The cvars' serial the fog was last resolved at.
+    fog_serial: Option<u64>,
     pub culling: WorldCulling,
     /// Off draws every batch (`--no-cull`), for comparing.
     pub cull: bool,
@@ -941,6 +948,21 @@ impl MapRenderer {
         };
         self.models.set_dynamic_lights(&lights);
         self.world.set_dynamic_lights(&lights);
+        let serial = shagger::core::cvar::with_cvars(|c| {
+            let serial = c.serial();
+            if self.fog_serial != Some(serial) {
+                self.fog.refresh(c);
+            }
+            serial
+        });
+        if self.fog_serial != Some(serial) {
+            self.fog_serial = Some(serial);
+            let uniforms = self.fog.uniforms();
+            self.world.set_fog(uniforms);
+            if let Some(sky) = &mut self.sky {
+                sky.set_fog(uniforms);
+            }
+        }
         self.world.prepare(gpu, camera.view_projection(aspect), camera.position);
         self.frame_draws.clone_from(&self.model_draws);
         self.frame_draws.extend_from_slice(&self.live_draws);
@@ -1068,6 +1090,30 @@ pub fn build_renderer(gpu: &Gpu, map: &mut LoadedMap, output_format: wgpu::Textu
             None
         }
     };
+    // World fog from worldspawn; the sky stands at its shader's height for it.
+    let world_fog = map
+        .bsp
+        .entities
+        .iter()
+        .find(|e| e.classname == "worldspawn")
+        .and_then(|w| parse_world_fog(&w.properties.iter().collect::<Vec<_>>()));
+    let sky_height = geometry
+        .sky_shaders
+        .iter()
+        .find_map(|s| s.sky_parms.as_ref())
+        .map_or(0.0, |p| p.sky_height);
+    if let Some(f) = &world_fog {
+        println!(
+            "fog: {:.0} units to 95%, colour {:?}, from {}{}",
+            3.0 / f.density,
+            f.color,
+            f.min_dist,
+            f.height
+                .map(|h| format!(", clear at {} and full at {}", h.clear, h.full))
+                .unwrap_or_default()
+        );
+    }
+    let fog = WorldFogController::new(world_fog, sky_height);
     let culling = WorldCulling::new(&map.bsp, &geometry);
     let mut models = ModelRenderer::new(gpu, format);
     // SHAG's lights for a BSP map, with r_bsp_pbr at its default.
@@ -1317,6 +1363,8 @@ pub fn build_renderer(gpu: &Gpu, map: &mut LoadedMap, output_format: wgpu::Textu
         effect_time: 0.0,
         live_flashes: Vec::new(),
         sky,
+        fog,
+        fog_serial: None,
         culling,
         cull: true,
         lights,

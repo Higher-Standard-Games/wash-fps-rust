@@ -12,6 +12,7 @@ use shagger::input::input_types::{InputBinding, MouseButton, ScrollDirection};
 use shagger::movement::movement_vars::register_movement_vars;
 
 use shagger::rendering::render_vars::register_render_vars;
+use shagger::rendering::world_fog_controller::register_fog_cvars;
 
 use crate::client::crosshair::register_crosshair_cvars;
 use crate::client::fps_actions::fps;
@@ -1000,6 +1001,8 @@ pub fn register_client_cvars(cvars: &mut Cvars) {
     register_audio_cvars(cvars);
     // shagger: RenderVars.ts and PostProcessingManager.ts.
     register_render_vars(cvars);
+    // WorldFogController.ts (MapLoader registers them at startup).
+    register_fog_cvars(cvars);
     // Crosshair.ts.
     register_crosshair_cvars(cvars);
     // PlayerModelVisualSettings.ts, FPSPlayerAudio.ts.
