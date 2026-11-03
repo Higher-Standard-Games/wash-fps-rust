@@ -2584,7 +2584,7 @@ Newest first. Each entry names the commits and what proves them.
 
 ### Milestone 11, second slice: water (November 3, 2026)
 
-- **shagger `ce7b320`.** `loader/bsp/liquid_classifier.rs` ports
+- **shagger `ce7b320` and `a09e145`.** `loader/bsp/liquid_classifier.rs` ports
   `LiquidClassifier.ts` (content flags, then `surfaceparm`, then
   overrides). `rendering/water/water_noise.rs` ports `WaterNoise.ts`;
   `unified_water_material.rs` ports `UnifiedWaterMaterial.ts`, its three
@@ -2599,6 +2599,11 @@ Newest first. Each entry names the commits and what proves them.
   water here draws after the opaque pass and reads copies of the HDR
   target's depth and colour taken between the two passes
   (`render_hdr_scene_with_ui_to_rgba`, `begin_continue_pass`).
+  `water_probe_cache.rs` ports `WaterProbeCache.ts`: flat connected pools
+  as patches, merged across batches, a probe point where no back face is
+  seen, and the room's bounds by rays (picked against the static world's
+  triangles). Each room is captured once at load into a 256-pixel HDR cube
+  and bound per surface.
 - **wash-fps-rust.** The map renderer claims the liquids at load unless
   `r_water` is 0, and draws opaque, copy, then water and the blended rest,
   in the window and in screenshots.
@@ -2606,9 +2611,9 @@ Newest first. Each entry names the commits and what proves them.
   128 by 128 normal map agree with V8. The five maps with liquids claim
   them (washoi_dm11 three pools, washoi_dm7 lava and oil as slime,
   washoi_amphi1 water and slime). A screenshot of washoi_dm11's canal at
-  quality 2 and 3: the sky in the ripples, the floor through the water.
-- **Not yet.** The cached room probes (`WaterProbeCache`; until then every
-  pool reflects the map's sky), static light highlights
+  quality 2 and 3, then with its room capture (`r_water_debug 4` shows the
+  canal's walls and sky in the cube). washoi_dm11 captures its three pools.
+- **Not yet.** Static light highlights
   (`WaterSurfaceLighting`), the actor reflection pass, ripples from bodies
   (`WaterDisturbances`), per-liquid environment cubemaps from the shaders,
   and the underwater view.

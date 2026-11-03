@@ -1129,7 +1129,11 @@ fn claim_liquid_surfaces(
                 .find_map(|stage| stage.cube_map.clone())
         },
     );
-    let water = LiquidSurfaceSystem::new(gpu, geometry, &liquids, sky.map(SkyRenderer::cube), format)?;
+    let probe_lift = shagger::core::cvar::with_cvars(|c| match c.get("r_water_probe_height") {
+        Some(_) => c.get_number("r_water_probe_height"),
+        None => 64.0,
+    });
+    let water = LiquidSurfaceSystem::new(gpu, geometry, &liquids, sky.map(SkyRenderer::cube), format, probe_lift)?;
     let kinds: Vec<String> = liquids
         .iter()
         .filter(|l| l.drawn)
@@ -1184,7 +1188,7 @@ pub fn build_renderer(gpu: &Gpu, map: &mut LoadedMap, output_format: wgpu::Textu
     if !renderer.missing_images().is_empty() {
         println!("  no image found: {}", renderer.missing_images().join(", "));
     }
-    let sky = match apply_skybox(&mut map.pk3, &geometry.sky_shaders) {
+    let mut sky = match apply_skybox(&mut map.pk3, &geometry.sky_shaders) {
         Some((faces, base)) => {
             println!("sky: {base} ({}x{} faces)", faces.size, faces.size);
             Some(SkyRenderer::new(gpu, &faces, format))
@@ -1218,10 +1222,27 @@ pub fn build_renderer(gpu: &Gpu, map: &mut LoadedMap, output_format: wgpu::Textu
                 .unwrap_or_default()
         );
     }
-    let fog = WorldFogController::new(world_fog, sky_height);
-    let water = claim_liquid_surfaces(gpu, map, &geometry, sky.as_ref(), format);
-    if let Some(water) = &water {
+    let mut fog = WorldFogController::new(world_fog, sky_height);
+    // The fog the water's room captures draw with.
+    shagger::core::cvar::with_cvars(|c| fog.refresh(c));
+    renderer.set_fog(fog.uniforms());
+    if let Some(sky) = &mut sky {
+        sky.set_fog(fog.uniforms());
+    }
+    let mut water = claim_liquid_surfaces(gpu, map, &geometry, sky.as_ref(), format);
+    if let Some(water) = &mut water {
         renderer.set_hidden_batches(water.hidden_batches());
+        let camera = Camera::default();
+        let captured = water.capture_reflections(gpu, &geometry, &renderer, sky.as_ref(), camera.near, camera.far);
+        println!(
+            "water: {captured} room captures of {} pools, at {}",
+            water.probe_cache().patches.len(),
+            water
+                .probe_positions()
+                .map(|p| format!("({:.0} {:.0} {:.0})", p.x, p.y, p.z))
+                .collect::<Vec<_>>()
+                .join(", ")
+        );
     }
     let culling = WorldCulling::new(&map.bsp, &geometry);
     let mut models = ModelRenderer::new(gpu, format);
