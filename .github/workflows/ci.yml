@@ -16,8 +16,6 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Allow reading shagger
-        run: git config --global url."https://x-access-token:${{ secrets.SHAGGER_READ_TOKEN }}@github.com/Higher-Standard-Games/shagger".insteadOf "https://github.com/Higher-Standard-Games/shagger"
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt, clippy
@@ -38,7 +36,6 @@ jobs:
       - uses: actions/checkout@v4
         with:
           repository: Higher-Standard-Games/shagger
-          token: ${{ secrets.SHAGGER_READ_TOKEN }}
           path: shagger-main
       - name: Use the checked-out engine
         run: |
@@ -61,8 +58,6 @@ jobs:
     continue-on-error: true
     steps:
       - uses: actions/checkout@v4
-      - name: Allow reading shagger
-        run: git config --global url."https://x-access-token:${{ secrets.SHAGGER_READ_TOKEN }}@github.com/Higher-Standard-Games/shagger".insteadOf "https://github.com/Higher-Standard-Games/shagger"
       - uses: dtolnay/rust-toolchain@stable
       # cpal's ALSA backend (RUST.md 22.7) links libasound.
       - run: sudo apt-get update && sudo apt-get install -y libasound2-dev
@@ -80,6 +75,4 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Allow reading shagger
-        run: git config --global url."https://x-access-token:${{ secrets.SHAGGER_READ_TOKEN }}@github.com/Higher-Standard-Games/shagger".insteadOf "https://github.com/Higher-Standard-Games/shagger"
       - uses: EmbarkStudios/cargo-deny-action@v2

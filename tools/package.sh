@@ -49,6 +49,11 @@ the game data (about 350 MB); later starts fetch only what changed.
 Settings live in the config folder (~/.config/washoi on Linux,
 ~/Library/Application Support/Washoi on macOS, %APPDATA%\\Washoi on
 Windows); a crash leaves a report in its crashes folder.
+
+If this build is not signed, the first start needs one extra step:
+  macOS    open Washoi.app once, then System Settings > Privacy & Security
+           > "Open Anyway" (or: xattr -dr com.apple.quarantine Washoi.app)
+  Windows  "Windows protected your PC": More info > Run anyway
 TXT
 }
 

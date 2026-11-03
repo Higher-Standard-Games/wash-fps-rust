@@ -2643,6 +2643,23 @@ fit and did not count the parity harness.
 
 Newest first. Each entry names the commits and what proves them.
 
+### Open repositories and unsigned builds (November 3, 2026)
+
+shagger and wash-fps-rust are public. Their history was searched first
+(every diff, for keys, tokens, private keys, credential files, hosts and
+addresses): nothing private. CI and the release workflow fetch shagger
+without a token, and `SHAGGER_READ_TOKEN` is gone.
+
+**Unsigned builds.** Signing costs money every year (Apple's programme,
+and a Windows certificate now kept in hardware or a cloud service), so
+releases ship unsigned until that is worth it. A tag build no longer
+refuses to release without the secrets; the repository variable
+`REQUIRE_SIGNED=true` brings the refusal back. Unsigned builds run after
+one step on first start, written in the package's README.txt: macOS
+Privacy & Security "Open Anyway" (the app is ad-hoc signed, which Apple
+silicon needs to run it at all), Windows SmartScreen "More info, Run
+anyway". Linux needs nothing.
+
 ### Update check at washoi.net/client/ (November 3, 2026)
 
 The game now tells players when a newer version is out. washoi.net hosts

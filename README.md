@@ -39,5 +39,4 @@ cargo test
 cargo deny check
 ```
 
-CI needs a repository secret `SHAGGER_READ_TOKEN`: a fine-grained token with
-read access to the contents of `Higher-Standard-Games/shagger`.
+shagger is public, so CI and release builds need no token to fetch it.

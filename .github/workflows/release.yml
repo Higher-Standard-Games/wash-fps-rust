@@ -10,9 +10,10 @@ name: Release
 #            MACOS_SIGN_IDENTITY ("Developer ID Application: ..."), and for
 #            notarizing APPLE_ID, APPLE_TEAM_ID, APPLE_APP_PASSWORD
 #   Windows  WINDOWS_CERTIFICATE (base64 .pfx), WINDOWS_CERTIFICATE_PASSWORD
-# Without them the macOS app is ad-hoc signed and the Windows exe unsigned;
-# a tag build then fails unless the repository variable ALLOW_UNSIGNED is
-# "true", so an unsigned build is never released by accident.
+# Without them the macOS app is ad-hoc signed and the Windows exe unsigned,
+# which testers can still run (docs/research/RUST.md, "Unsigned builds").
+# Set the repository variable REQUIRE_SIGNED to "true" to make a tag build
+# fail without them.
 
 on:
   push:
@@ -55,13 +56,9 @@ jobs:
             echo "::error::tag $GITHUB_REF_NAME but Cargo.toml says $cargo_version"
             exit 1
           fi
-      # The token is in git's config only while the sources are fetched;
-      # the build (and every crate's build script) runs without it.
+      # shagger is public: the sources come without a token.
       - name: Fetch the sources
-        run: |
-          git config --global url."https://x-access-token:${{ secrets.SHAGGER_READ_TOKEN }}@github.com/Higher-Standard-Games/shagger".insteadOf "https://github.com/Higher-Standard-Games/shagger"
-          cargo fetch --locked
-          git config --global --unset-all url."https://x-access-token:${{ secrets.SHAGGER_READ_TOKEN }}@github.com/Higher-Standard-Games/shagger".insteadOf
+        run: cargo fetch --locked
       # cpal's ALSA backend (RUST.md 22.7) links libasound.
       - if: runner.os == 'Linux'
         run: sudo apt-get update && sudo apt-get install -y libasound2-dev
@@ -79,14 +76,14 @@ jobs:
           echo "notarize=$([ -n "$APPLE_ID" ] && echo true || echo false)" >> "$GITHUB_OUTPUT"
           echo "win_cert=$([ -n "$WINDOWS_CERTIFICATE" ] && echo true || echo false)" >> "$GITHUB_OUTPUT"
       - name: Refuse an unsigned release
-        if: startsWith(github.ref, 'refs/tags/v') && vars.ALLOW_UNSIGNED != 'true'
+        if: startsWith(github.ref, 'refs/tags/v') && vars.REQUIRE_SIGNED == 'true'
         run: |
           missing=""
           if [ "$RUNNER_OS" = macOS ] && [ "${{ steps.secrets.outputs.mac_cert }}" != true ]; then missing="MACOS_CERTIFICATE"; fi
           if [ "$RUNNER_OS" = macOS ] && [ "${{ steps.secrets.outputs.notarize }}" != true ]; then missing="$missing APPLE_ID"; fi
           if [ "$RUNNER_OS" = Windows ] && [ "${{ steps.secrets.outputs.win_cert }}" != true ]; then missing="WINDOWS_CERTIFICATE"; fi
           if [ -n "$missing" ]; then
-            echo "::error::a release needs the signing secrets ($missing), or the variable ALLOW_UNSIGNED=true"
+            echo "::error::a release needs the signing secrets ($missing), or unset the variable REQUIRE_SIGNED"
             exit 1
           fi
       # macOS keeps debug info in the object files unless packed into a
