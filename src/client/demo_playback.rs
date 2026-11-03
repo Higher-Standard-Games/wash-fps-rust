@@ -12,10 +12,27 @@
 use std::path::Path;
 
 use shagger::shared::demo::demo_reader::{DemoFrame, DemoHeader, DemoReader};
+use shagger::shared::js::js_round;
 
 use crate::client::snapshot_feed::SnapshotFeed;
 pub use crate::client::snapshot_feed::{DemoView, LiveProjectile};
 use crate::shared::net::snapshot_events::{SnapshotEvent, WashoiEvents};
+
+/// `SPEED_OPTIONS`.
+pub const SPEED_OPTIONS: [f64; 5] = [0.25, 0.5, 1.0, 2.0, 4.0];
+
+/// `DemoDeath`: a death on the timeline.
+#[derive(Debug, Clone, PartialEq)]
+pub struct DemoDeath {
+    pub tick: f64,
+    /// Where it sits on the timeline (0 to 1).
+    pub progress: f64,
+    pub victim_id: String,
+    /// None for a suicide or the world.
+    pub killer_id: Option<String>,
+    pub victim_name: String,
+    pub killer_name: Option<String>,
+}
 
 pub struct DemoPlayback {
     pub header: DemoHeader,
@@ -123,6 +140,110 @@ impl DemoPlayback {
     fn frame_time(&self, i: usize) -> f64 {
         let first = f64::from(self.frames[0].tick);
         (f64::from(self.frames[i].tick) - first) * 1000.0 / self.tick_rate()
+    }
+
+    /// Whether the clock is held.
+    pub fn paused(&self) -> bool {
+        self.paused
+    }
+
+    /// `togglePlayPause`: an ended demo plays again from the start.
+    pub fn toggle_play_pause(&mut self) {
+        if self.paused {
+            if self.finished() && self.clock_ms >= self.frame_time(self.frames.len() - 1) {
+                self.seek_to_tick(f64::from(self.frames[0].tick));
+            }
+            self.paused = false;
+        } else {
+            self.paused = true;
+        }
+    }
+
+    /// `stepSpeed`: the next of [`SPEED_OPTIONS`] from the nearest one.
+    pub fn step_speed(&mut self, step: i8) -> f64 {
+        let nearest = SPEED_OPTIONS
+            .iter()
+            .enumerate()
+            .min_by(|a, b| (a.1 - self.speed).abs().total_cmp(&(b.1 - self.speed).abs()))
+            .map_or(2, |(i, _)| i);
+        let index = (nearest as isize + isize::from(step)).clamp(0, SPEED_OPTIONS.len() as isize - 1);
+        self.speed = SPEED_OPTIONS[index as usize];
+        self.speed
+    }
+
+    /// `currentFrame`: the newest frame delivered (0 before any).
+    pub fn current_frame(&self) -> usize {
+        self.next.saturating_sub(1)
+    }
+
+    /// `seekToFrame`, clamped to the demo.
+    pub fn seek_to_frame(&mut self, frame: isize) {
+        let i = frame.clamp(0, self.frames.len() as isize - 1) as usize;
+        self.seek_to_tick(f64::from(self.frames[i].tick));
+    }
+
+    /// The first and last frames' ticks.
+    pub fn tick_span(&self) -> (f64, f64) {
+        (
+            f64::from(self.frames[0].tick),
+            f64::from(self.frames[self.frames.len() - 1].tick),
+        )
+    }
+
+    /// `progressOfTick`: where a tick falls on the timeline (0 to 1).
+    pub fn progress_of_tick(&self, tick: f64) -> f64 {
+        let (first, last) = self.tick_span();
+        ((tick - first) / (last - first).max(1.0)).clamp(0.0, 1.0)
+    }
+
+    /// `seekToProgress`: the frame nearest that point of the timeline.
+    pub fn seek_to_progress(&mut self, progress: f64) {
+        let (first, last) = self.tick_span();
+        let target = js_round(first + (last - first) * progress.clamp(0.0, 1.0));
+        let frame = self.frames.partition_point(|f| f64::from(f.tick) < target);
+        self.seek_to_frame(frame as isize);
+    }
+
+    /// `scanDeaths`: every death in the demo, with whose frag it was.
+    pub fn scan_deaths(&self) -> Vec<DemoDeath> {
+        let (first, last) = self.tick_span();
+        let span = (last - first).max(1.0);
+        let mut deaths = Vec::new();
+        for frame in &self.frames {
+            for event in &frame.state.events {
+                let SnapshotEvent::Death {
+                    entity_id, killer_id, ..
+                } = event
+                else {
+                    continue;
+                };
+                if entity_id.is_empty() {
+                    continue;
+                }
+                let killer = (!killer_id.is_empty() && killer_id != entity_id).then(|| killer_id.clone());
+                let name = |id: &str| {
+                    frame.state.players.values().find(|p| p.entity_id == id).map_or_else(
+                        || id.to_owned(),
+                        |p| {
+                            if p.name.is_empty() {
+                                id.to_owned()
+                            } else {
+                                p.name.clone()
+                            }
+                        },
+                    )
+                };
+                deaths.push(DemoDeath {
+                    tick: f64::from(frame.tick),
+                    progress: (f64::from(frame.tick) - first) / span,
+                    victim_name: name(entity_id),
+                    killer_name: killer.as_deref().map(name),
+                    victim_id: entity_id.clone(),
+                    killer_id: killer,
+                });
+            }
+        }
+        deaths
     }
 
     /// Demo time in seconds.

@@ -2521,6 +2521,8 @@ pub fn run(o: &ViewOptions) -> i32 {
     renderer.item_time = o.time;
     let mut hud: Option<FpsHud> = None;
     let mut overlay = crate::reel_overlay::ReelOverlay::default();
+    // Whom a demo's transport bar says the view follows.
+    let mut followed: Option<String> = None;
     if let Some(feed) = &mut feed {
         // Play up to `--time` at 60 frames a second (live: in real time).
         let steps = (o.time * 60.0).round() as usize;
@@ -2732,6 +2734,7 @@ pub fn run(o: &ViewOptions) -> i32 {
                 Some((id, p, _)) => {
                     chase_camera(&mut camera, p);
                     println!("  following {id}");
+                    followed = Some(id.clone());
                 }
                 None => println!("  no player {i} to follow"),
             }
@@ -2814,8 +2817,25 @@ pub fn run(o: &ViewOptions) -> i32 {
             }
         },
     );
-    if let (Some(reel), Some(Feed::Demo(demo))) = (&reel, &feed) {
-        composite_reel_overlay(&gpu, &mut pixels, o.width, o.height, &overlay, reel, demo);
+    match (&reel, &feed) {
+        (Some(reel), Some(Feed::Demo(demo))) => {
+            composite_ui(&gpu, &mut pixels, o.width, o.height, |ctx| overlay.ui(ctx, reel, demo));
+        }
+        // A whole demo: its transport bar, as it stands on a pause.
+        (None, Some(Feed::Demo(demo))) => {
+            let bar = crate::demo_overlay::DemoOverlay::new(demo);
+            let name = followed.as_deref().map(|id| {
+                demo.roster()
+                    .iter()
+                    .find(|(pid, _)| pid == id)
+                    .map_or(id, |(_, p)| p.name.as_str())
+            });
+            let who = followed.as_deref().zip(name);
+            composite_ui(&gpu, &mut pixels, o.width, o.height, |ctx| {
+                bar.ui(ctx, demo, who);
+            });
+        }
+        _ => {}
     }
     match image::save_buffer(path, &pixels, o.width, o.height, image::ExtendedColorType::Rgba8) {
         Ok(()) => {
@@ -2854,16 +2874,9 @@ fn print_reel(reel: &CinematicDemoPlayer) {
     }
 }
 
-/// Draws the reel's overlay offscreen and lays it over `pixels`.
-fn composite_reel_overlay(
-    gpu: &Gpu,
-    pixels: &mut [u8],
-    width: u32,
-    height: u32,
-    overlay: &crate::reel_overlay::ReelOverlay,
-    reel: &CinematicDemoPlayer,
-    demo: &DemoPlayback,
-) {
+/// Draws an egui overlay (the reel's cards, a demo's bar) offscreen and
+/// lays it over `pixels`.
+fn composite_ui(gpu: &Gpu, pixels: &mut [u8], width: u32, height: u32, draw: impl Fn(&egui::Context)) {
     use shagger::ui::egui_layer::EguiLayer;
     let mut layer = EguiLayer::offscreen(gpu, OFFSCREEN_FORMAT);
     washoi::client::lobby_panel::install_style(&layer.ctx);
@@ -2879,7 +2892,7 @@ fn composite_reel_overlay(
     let clear = wgpu::Color::TRANSPARENT;
     let mut ui = Vec::new();
     for _ in 0..2 {
-        let frame = layer.run_input(input(), |ui| overlay.ui(ui.ctx(), reel, demo));
+        let frame = layer.run_input(input(), |ui| draw(ui.ctx()));
         ui = shagger::rendering::offscreen::render_encoded_to_rgba(gpu, width, height, clear, |encoder, view| {
             layer.paint(gpu, encoder, view, [width, height], frame);
         });

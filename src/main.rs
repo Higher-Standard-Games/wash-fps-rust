@@ -69,6 +69,7 @@
 //! id such as `plasmagun`), at the hip or, with `--aim`, down its sights; `--quad` puts the quad
 //! outline on it.
 
+mod demo_overlay;
 mod menu;
 mod reel_overlay;
 mod view;

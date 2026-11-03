@@ -12,10 +12,30 @@ use shagger::debug::debug_console::DebugConsole;
 use shagger::ui::egui_layer::egui;
 
 /// What a command asks of the game, which acts on it after the frame.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum ConsoleRequest {
-    Say { text: String, team: bool },
+    Say {
+        text: String,
+        team: bool,
+    },
     Disconnect,
+    /// `demoplay`: the demo from its start, without a reel.
+    DemoPlay,
+    /// `demoplay cinematic`: a highlight reel of the demo.
+    DemoCinematic {
+        minutes: f64,
+    },
+    /// `demoplay analyze`: the highlights, printed to the console.
+    DemoAnalyze,
+    /// `demoplay stop`.
+    DemoStop,
+}
+
+/// The demo playing, as `demoplay` sees it (`DemoService`'s playback).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct DemoConsole {
+    /// `setDemoOverlayVisible`: the transport bar and the reel's cards.
+    pub hud_visible: bool,
 }
 
 /// The game as the commands see it (`Game.getInstance()`).
@@ -25,10 +45,13 @@ pub struct ConsoleContext {
     /// The game server, while connected.
     pub server: Option<String>,
     pub requests: Vec<ConsoleRequest>,
+    /// A demo, while one plays.
+    pub demo: Option<DemoConsole>,
 }
 
 /// `registerFpsCommands`.
 pub fn register_fps_commands(registry: &mut CommandRegistry<ConsoleContext>) {
+    registry.register(Box::new(commands::demo_play_command::DemoPlayCommand::default()));
     registry.register(Box::new(commands::disconnect_command::DisconnectCommand::default()));
     registry.register(Box::new(commands::say_team_command::SayTeamCommand::default()));
 }

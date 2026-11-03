@@ -10,6 +10,8 @@ pub mod damage_numbers;
 pub mod death_camera;
 pub mod demo_download;
 pub mod demo_playback;
+pub mod demo_playback_keys;
+pub mod demo_service;
 pub mod demos_view;
 pub mod fps_actions;
 pub mod fps_announcer;

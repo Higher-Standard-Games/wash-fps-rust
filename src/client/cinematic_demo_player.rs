@@ -68,6 +68,22 @@ pub trait ReelWorld {
     fn blocked_at(&mut self, from: Vec3, to: Vec3) -> Option<Vec3>;
 }
 
+/// `new DemoAnalyzer(groundClearanceIn(world)).analyze(...)`: the demo's
+/// highlights, its airborne frags told by a probe of the map below the
+/// killer's feet.
+pub fn analyze_demo(demo: &DemoPlayback, world: &mut dyn ReelWorld) -> DemoAnalysis {
+    let world = RefCell::new(world);
+    // `groundClearanceIn`: feet height above the map below the origin.
+    let clearance = |origin: Vec3| {
+        let below = Vec3::new(origin.x, origin.y - GROUND_PROBE_DEPTH, origin.z);
+        world
+            .borrow_mut()
+            .blocked_at(origin, below)
+            .map(|floor| (origin.y - floor.y - PLAYER_ORIGIN_HEIGHT).max(0.0))
+    };
+    DemoAnalyzer::new(Some(&clearance)).analyze(demo.frames(), &demo.header, demo.duration_ms)
+}
+
 /// `NO_WORLD`.
 pub struct NoWorld;
 
@@ -158,16 +174,7 @@ impl CinematicDemoPlayer {
     /// `loadAndPlay`: analyze, build the reel and its paths, start the first shot.
     pub fn load_and_play(&mut self, demo: &mut DemoPlayback, world: &mut dyn ReelWorld, duration_minutes: f64) {
         let header = demo.header.clone();
-        let world = RefCell::new(world);
-        // `groundClearanceIn`: feet height above the map below the origin.
-        let clearance = |origin: Vec3| {
-            let below = Vec3::new(origin.x, origin.y - GROUND_PROBE_DEPTH, origin.z);
-            world
-                .borrow_mut()
-                .blocked_at(origin, below)
-                .map(|floor| (origin.y - floor.y - PLAYER_ORIGIN_HEIGHT).max(0.0))
-        };
-        let analysis = DemoAnalyzer::new(Some(&clearance)).analyze(demo.frames(), &header, demo.duration_ms);
+        let analysis = analyze_demo(demo, world);
         // The TypeScript keeps the header's rate, which a demo may leave at 0.
         self.tick_rate = demo.tick_rate();
         let reel = sequence_builder::build(&analysis, duration_minutes, f64::from(header.tick_rate));
@@ -188,7 +195,6 @@ impl CinematicDemoPlayer {
         self.header = Some(header);
         self.analysis = Some(analysis);
         self.reel = Some(reel);
-        let world = world.into_inner();
         self.start_playback(demo, world);
     }
 

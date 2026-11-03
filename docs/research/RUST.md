@@ -2582,6 +2582,46 @@ fit and did not count the parity harness.
 
 Newest first. Each entry names the commits and what proves them.
 
+### Milestone 12, second slice: the demo player's own controls (November 3, 2026)
+
+- **wash-fps-rust.** `client/demo_playback_keys.rs` ports
+  `DemoPlaybackKeys.ts`'s demo mode: Space pauses, Left and Right seek five
+  seconds, comma and period step a frame (pausing), Up and Down change the
+  speed through `SPEED_OPTIONS`, N and P jump to a couple of seconds before
+  the next or previous frag (`fragSeekTick`), Tab and Shift+Tab cycle whose
+  eyes to watch and 1 to 9 pick one; flying free, Space and the arrows stay
+  the camera's. `DemoPlayback` gains `toggle_play_pause`, `step_speed`,
+  frame stepping, `progress_of_tick`, `seek_to_progress` (with `js_round`
+  as `Math.round`) and `scan_deaths`. `demo_overlay.rs` draws
+  `DemoViewerHUD`'s demo bar in egui: the timeline with every death marked
+  from the followed player's side (their frags gold, their deaths red, the
+  rest cream), a hover naming who fragged whom, a click seeking there (on a
+  mark, two seconds before it), play or pause, the time, the status, whom
+  the view follows and the speed keys; it fades after 2.5 seconds
+  untouched and stays while paused. Clicks the bar takes do not reach the
+  game. Minimizing the bar, the exit plate and the clean view (H) are left
+  out.
+- **The console.** `console/commands/demo_play_command.rs` ports
+  `DemoPlayCommand.ts`: `demoplay` plays the demo from its start without
+  a reel, `demoplay cinematic N` cuts a reel of at most three minutes and
+  plays it, `demoplay analyze` prints `analyzeLoadedDemo`'s table
+  (`client/demo_service.rs`, with `toFixed`'s tie rounding), `demoplay hud
+  on|off|toggle` shows or hides the bar and the reel's cards, and `demoplay
+  stop` leaves. The HUD is now built for every feed and skipped while a
+  reel plays, so a reel can be left for plain playback. The analysis is
+  `cinematic_demo_player::analyze_demo`, shared with the reel.
+- **Weather.** SHAG's weather (`WeatherSystem`) is reached only through the
+  debug `window.weather` object; no map, cvar or command turns it on, so it
+  is left out with the fog volumes and sky portals of the twenty-first
+  slice.
+- **Proof.** Unit tests of the key map (modifiers, the reel and free camera
+  contexts, the digits), of the frag seek, of the mark colours and time
+  format, of `demoplay` with and without a demo, and of the analysis
+  report over every recorded golden demo. A screenshot of dm14's demo
+  following Ramen at seven seconds with the bar
+  (`rust-port/demo-transport-dm14.png`); `washoi demo` screenshots now
+  draw the bar when no reel is asked for.
+
 ### Milestone 11, twenty-first slice: colour-blindness correction (November 3, 2026)
 
 - **shagger e3b30ec.** `effects/color_correction_post_process.rs` ports

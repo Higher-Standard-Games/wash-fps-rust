@@ -39,21 +39,25 @@ use winit::keyboard::{KeyCode, PhysicalKey};
 use winit::platform::run_on_demand::EventLoopExtRunOnDemand;
 use winit::window::{CursorGrabMode, Window, WindowId};
 
+use crate::demo_overlay::{DemoOverlay, DemoOverlayAction};
 use crate::reel_overlay::ReelOverlay;
 use crate::view::{
     CLEAR, DeathFollow, DemoViewSounds, Feed, LoadedMap, MapRenderer, SceneReelWorld, apply_reel_camera,
     build_renderer, chase_camera, play_view_sounds, styled_players, update_watch_hud, view_entity,
 };
 use shagger::animation::player_model_manager::PlayerModelVisualStyle;
+use shagger::debug::debug_console::LogType;
 use shagger::network::client::snapshot_buffer::InterpolatedEntity;
 use shagger::ui::egui_layer::EguiLayer;
-use washoi::client::cinematic_demo_player::CinematicDemoPlayer;
+use washoi::client::cinematic_demo_player::{CinematicDemoPlayer, REEL_TITLE_MS, analyze_demo};
 use washoi::client::death_camera::{DeathCamera, look_angles};
+use washoi::client::demo_playback_keys::{DemoKeyAction, DemoKeyContext, Modifiers, demo_key_action, frag_seek_tick};
+use washoi::client::demo_service::analysis_report;
 use washoi::client::game_events::GameAudio;
 use washoi::client::lobby_panel::install_style;
 use washoi::client::teleport_effect::TeamColor;
 use washoi::client::weapon_view::quad_view_weapon_outline;
-use washoi::console::{ConsoleRequest, GameConsole};
+use washoi::console::{ConsoleRequest, DemoConsole, GameConsole};
 
 /// Units per second (Q3's run speed is 320).
 const SPEED: f32 = 320.0;
@@ -111,6 +115,8 @@ struct App {
     /// A demo's highlight reel, driving the demo and the camera.
     reel: Option<CinematicDemoPlayer>,
     overlay: ReelOverlay,
+    /// A whole demo's transport bar (`DemoViewerHUD`), when no reel drives it.
+    demo_hud: Option<DemoOverlay>,
     /// The players as drawn last frame, for the reel to aim at.
     drawn: Vec<(String, InterpolatedEntity, PlayerModelVisualStyle)>,
 }
@@ -126,18 +132,15 @@ impl App {
         let map = self.map.as_mut().expect("the map is loaded before the window opens");
         let renderer = build_renderer(&gpu, map, config.format);
         let hdr = HdrTarget::new(&gpu, config.width, config.height);
-        // A reel is in movie mode: its own cards, no HUD.
-        let hud =
-            self.feed
-                .as_ref()
-                .filter(|_| self.reel.is_none())
-                .and_then(|_| match FpsHud::new(&gpu, config.format) {
-                    Ok(hud) => Some(hud),
-                    Err(why) => {
-                        println!("no HUD: {why}");
-                        None
-                    }
-                });
+        // A reel is in movie mode: its own cards, no HUD (it is kept for
+        // `demoplay`, which leaves the reel).
+        let hud = self.feed.as_ref().and_then(|_| match FpsHud::new(&gpu, config.format) {
+            Ok(hud) => Some(hud),
+            Err(why) => {
+                println!("no HUD: {why}");
+                None
+            }
+        });
         let egui = EguiLayer::new(&gpu, &window, config.format);
         install_style(&egui.ctx);
         self.surface = Some(Surface {
@@ -172,6 +175,10 @@ impl App {
         }
         let Some(s) = &mut self.surface else { return false };
         let used = s.egui.on_window_event(&s.window, event);
+        // A click the demo bar took is not a click on the game.
+        if used && !self.captured && self.demo_hud.is_some() && matches!(event, WindowEvent::MouseInput { .. }) {
+            return true;
+        }
         self.console.console.open
             && (used
                 || matches!(
@@ -320,6 +327,13 @@ impl App {
                 );
                 self.overlay.update(reel, f64::from(dt));
             }
+            if matches!(feed, Feed::Demo(_)) && self.console.ctx.demo.is_none() {
+                self.console.ctx.demo = Some(DemoConsole { hud_visible: true });
+            }
+            if let (None, Feed::Demo(demo)) = (&self.reel, &*feed) {
+                let hud = self.demo_hud.get_or_insert_with(|| DemoOverlay::new(demo));
+                hud.update(f64::from(dt), demo.paused());
+            }
             let view = feed.advance(f64::from(dt));
             if let Feed::Play(p, _) = feed {
                 // First person: the eye where prediction puts it.
@@ -448,7 +462,7 @@ impl App {
             if let Some(view_model) = &mut s.renderer.view_model {
                 view_model.powerup_outline = outline;
             }
-            if let Some(hud) = &mut s.hud {
+            if let (Some(hud), None) = (&mut s.hud, &self.reel) {
                 hud.scoreboard.held = self.held.contains(&KeyCode::Tab);
                 update_watch_hud(
                     hud,
@@ -511,15 +525,31 @@ impl App {
             &s.renderer.image_processing,
             &view,
         );
-        if let Some(hud) = &s.hud {
+        if let (Some(hud), None) = (&s.hud, &self.reel) {
             let mut pass = begin_ui_pass(&mut encoder, &view);
             hud.draw(&mut pass);
         }
+        let cards = self.console.ctx.demo.is_none_or(|d| d.hud_visible);
         let console = &mut self.console;
         let (overlay, reel, feed) = (&self.overlay, &self.reel, &self.feed);
+        let followed = self
+            .follow
+            .and_then(|i| self.drawn.get(i))
+            .map(|(id, _, _)| id.as_str());
+        let mut demo_action = None;
+        let demo_hud = self.demo_hud.as_ref().filter(|_| cards);
         let ui = s.egui.run(&s.window, |ui| {
-            if let (Some(reel), Some(Feed::Demo(demo))) = (reel, feed) {
+            if let (Some(reel), Some(Feed::Demo(demo)), true) = (reel, feed, cards) {
                 overlay.ui(ui.ctx(), reel, demo);
+            }
+            if let (None, Some(Feed::Demo(demo)), Some(hud)) = (reel, feed, demo_hud) {
+                let name = followed.and_then(|id| {
+                    demo.roster()
+                        .iter()
+                        .find(|(pid, _)| pid == id)
+                        .map(|(_, p)| p.name.as_str())
+                });
+                demo_action = hud.ui(ui.ctx(), demo, followed.map(|id| (id, name.unwrap_or(id))));
             }
             console.ui(ui.ctx());
         });
@@ -529,7 +559,79 @@ impl App {
         s.window.pre_present_notify();
         s.gpu.queue.present(frame);
         self.frames += 1;
+        if let (Some(action), Some(Feed::Demo(demo))) = (demo_action, &mut self.feed) {
+            match action {
+                DemoOverlayAction::TogglePause => demo.toggle_play_pause(),
+                DemoOverlayAction::Seek(progress) => demo.seek_to_progress(progress),
+                DemoOverlayAction::Speed(step) => {
+                    demo.step_speed(step);
+                }
+            }
+            if let Some(hud) = &mut self.demo_hud {
+                hud.wake();
+            }
+        }
         self.serve_console();
+    }
+
+    /// A whole demo's keys (`DemoPlaybackKeys` outside a reel): Space
+    /// pauses, the arrows seek and change speed, comma and period step a
+    /// frame, N and P jump between frags, Tab and the digits pick whose
+    /// eyes to watch through. Flying free, Space and the arrows move.
+    fn demo_key(&mut self, code: KeyCode, repeat: bool) -> bool {
+        let (None, Some(Feed::Demo(demo)), Some(hud)) = (&self.reel, &mut self.feed, &mut self.demo_hud) else {
+            return false;
+        };
+        let held = |k| self.held.contains(&k);
+        let modifiers = Modifiers {
+            shift: held(KeyCode::ShiftLeft) || held(KeyCode::ShiftRight),
+            alt: held(KeyCode::AltLeft) || held(KeyCode::AltRight),
+            ctrl: held(KeyCode::ControlLeft) || held(KeyCode::ControlRight),
+            meta: held(KeyCode::SuperLeft) || held(KeyCode::SuperRight),
+        };
+        let context = DemoKeyContext {
+            reel: false,
+            free_camera: self.follow.is_none(),
+        };
+        let Some(action) = demo_key_action(&dom_code(code), modifiers, context) else {
+            return false;
+        };
+        let repeats = matches!(action, DemoKeyAction::Seek { .. } | DemoKeyAction::Frame { .. });
+        if repeat && !repeats {
+            return true;
+        }
+        hud.wake();
+        let rate = demo.tick_rate();
+        let players = self.drawn.len();
+        match action {
+            DemoKeyAction::TogglePause => demo.toggle_play_pause(),
+            DemoKeyAction::Seek { seconds } => demo.seek_to_tick(demo.playhead_tick() + seconds * rate),
+            DemoKeyAction::Frame { step } => {
+                demo.pause();
+                demo.seek_to_frame(demo.current_frame() as isize + isize::from(step));
+            }
+            DemoKeyAction::Speed { step } => {
+                demo.step_speed(step);
+            }
+            DemoKeyAction::Frag { step } => {
+                if let Some(tick) = frag_seek_tick(&hud.frag_ticks(), demo.playhead_tick(), step, rate) {
+                    demo.seek_to_tick(tick);
+                }
+            }
+            DemoKeyAction::Player { step } => {
+                if players > 0 {
+                    let at = self.follow.unwrap_or(if step > 0 { players - 1 } else { 0 });
+                    self.follow = Some((at as isize + isize::from(step)).rem_euclid(players as isize) as usize);
+                }
+            }
+            DemoKeyAction::PlayerAt { index } => {
+                if index < players {
+                    self.follow = Some(index);
+                }
+            }
+            DemoKeyAction::Shot { .. } => return false,
+        }
+        true
     }
 
     /// The reel's keys (`DemoPlaybackKeys` in reel mode): Space pauses,
@@ -562,7 +664,43 @@ impl App {
                         p.say(&text, team);
                     }
                 }
-                ConsoleRequest::Disconnect => self.leave = true,
+                ConsoleRequest::Disconnect | ConsoleRequest::DemoStop => self.leave = true,
+                ConsoleRequest::DemoPlay => {
+                    if let Some(Feed::Demo(demo)) = &mut self.feed {
+                        self.reel = None;
+                        demo.set_speed(1.0);
+                        demo.seek_to_frame(0);
+                        demo.play();
+                    }
+                }
+                ConsoleRequest::DemoCinematic { minutes } => {
+                    if let Some(Feed::Demo(demo)) = &mut self.feed {
+                        let mut reel = CinematicDemoPlayer::new(REEL_TITLE_MS);
+                        reel.load_and_play(
+                            demo,
+                            &mut SceneReelWorld {
+                                shots: self.surface.as_mut().and_then(|s| s.renderer.shot_world_mut()),
+                                players: &self.drawn,
+                            },
+                            minutes,
+                        );
+                        self.follow = None;
+                        self.reel = Some(reel);
+                    }
+                }
+                ConsoleRequest::DemoAnalyze => {
+                    if let Some(Feed::Demo(demo)) = &self.feed {
+                        let analysis = analyze_demo(
+                            demo,
+                            &mut SceneReelWorld {
+                                shots: self.surface.as_mut().and_then(|s| s.renderer.shot_world_mut()),
+                                players: &self.drawn,
+                            },
+                        );
+                        let report = analysis_report(&analysis, &demo.header.map, demo.duration_ms);
+                        self.console.console.log(LogType::Result, &report);
+                    }
+                }
             }
         }
         if self.console.ctx.quit {
@@ -636,6 +774,7 @@ impl ApplicationHandler for App {
                         }
                     }
                     ElementState::Pressed if self.reel_key(code) && !event.repeat => {}
+                    ElementState::Pressed if self.demo_key(code, event.repeat) => {}
                     ElementState::Pressed if code == KeyCode::KeyF && !event.repeat => {
                         // Chase the next player, then back to the free camera.
                         self.follow = match self.follow {
@@ -814,6 +953,7 @@ pub fn run(
         leave: false,
         reel,
         overlay: ReelOverlay::default(),
+        demo_hud: None,
         drawn: Vec::new(),
     };
     let ran = run_on_event_loop(&mut app);
