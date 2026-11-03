@@ -12,6 +12,7 @@ use std::path::{Path, PathBuf};
 use washoi::client::cartoon_hit_effect::{CartoonHitEffect, CartoonHitRenderer};
 use washoi::client::damage_numbers::{DamageNumberRenderer, DamageNumbers};
 use washoi::client::fps_liquid_audio::play_liquid_crossing;
+use washoi::client::gib_system::{GibRenderer, GibSystem};
 use washoi::client::remote_player_renderer::update_powerup_glow;
 use washoi::client::teleport_effect::{TeamColor, TeleportEffect, TeleportRenderer, legacy_team_color, play_tele_in};
 use washoi::liquid::client::liquid_interaction_system::{LiquidInteractionSystem, WaterRipples};
@@ -157,6 +158,7 @@ pub struct ViewOptions {
     pub effects: Vec<EffectView>,
     pub hits: Vec<HitView>,
     pub teleports: Vec<TeleportView>,
+    pub gibs: Vec<GibView>,
     /// The first-person weapon to hold (`--weapon`), and whether it is
     /// aimed down its sights (`--aim`).
     pub weapon: Option<String>,
@@ -468,6 +470,15 @@ pub struct TeleportView {
     pub age: f64,
 }
 
+/// A body broken into shards, held at an age (`--gib`).
+#[derive(Debug, Clone, PartialEq)]
+pub struct GibView {
+    /// The death's Quake origin.
+    pub origin: [f64; 3],
+    /// Seconds since it happened.
+    pub age: f64,
+}
+
 /// A hit the player on screen dealt, held at an age (`--hit`): its damage
 /// number and, for a hard one, its cartoon sprite.
 #[derive(Debug, Clone, PartialEq)]
@@ -627,6 +638,8 @@ pub struct LoadedMap {
     pub hits: Vec<HitView>,
     /// Teleports to hold on the map.
     pub teleports: Vec<TeleportView>,
+    /// Gibs to hold on the map.
+    pub gibs: Vec<GibView>,
     /// The first-person weapon, if any.
     pub weapon: Option<String>,
     /// Load the player model for players that move (a demo or a match).
@@ -690,6 +703,7 @@ pub fn load_map(data: &Path, map: &str) -> Result<LoadedMap, String> {
         explosions: Vec::new(),
         hits: Vec::new(),
         teleports: Vec::new(),
+        gibs: Vec::new(),
         effects: Vec::new(),
         weapon: None,
         remote_players: false,
@@ -770,6 +784,11 @@ pub struct MapRenderer {
     teleport_renderer: TeleportRenderer,
     /// Each live player's last origin and yaw, for spotting a teleport.
     teleport_last: HashMap<String, (DVec3, f64)>,
+    /// Bodies breaking into shards on a gib death.
+    pub gibs: GibSystem,
+    gib_renderer: GibRenderer,
+    /// Each live player's tint, for the colour their shards take.
+    live_tints: HashMap<String, Vec3>,
     /// Numbers floating over the players the one on screen hurts.
     pub damage_numbers: DamageNumbers,
     damage_number_renderer: DamageNumberRenderer,
@@ -860,7 +879,11 @@ impl MapRenderer {
             return;
         };
         renderer.retain(|id| players.iter().any(|(p, _, _)| p == id));
+        self.live_tints.clear();
         for (id, interp, style) in players {
+            if let Some(tint) = style.tint_color {
+                self.live_tints.insert(id.clone(), tint);
+            }
             renderer.update(id, interp, dt, 1.0, None);
             let first = self.live_draws.len();
             renderer.draws(id, interp, style, &mut self.joints, &mut self.live_draws);
@@ -1106,6 +1129,67 @@ impl MapRenderer {
         }
     }
 
+    /// The shards fly on, and GameEvents' `handleDeathEvent` breaks a body
+    /// up when the death gibs: a rail, the bomb, or an explosion of 50 or
+    /// more. The shards take the colour the body was drawn in.
+    pub fn play_gibs(&mut self, events: &[SnapshotEvent], dt: f64) {
+        use shagger::physics::collision_backend::TraceOptions;
+        use shagger::physics::content_flags::masks;
+        {
+            let shot_world = self.shot_world.as_mut();
+            let mut trace = shot_world.map(|w| {
+                move |from: DVec3, to: DVec3| {
+                    let v = |p: DVec3| shagger::babylon::maths::math_vector::Vector3::new(p.x, p.y, p.z);
+                    let hit = w.trace(
+                        v(from),
+                        v(to),
+                        TraceOptions {
+                            radius: Some(0.0),
+                            height: Some(0.0),
+                            content_mask: Some(masks::SHOT),
+                        },
+                    );
+                    if hit.start_solid || hit.fraction >= 1.0 {
+                        return None;
+                    }
+                    let n = hit.normal?;
+                    Some((
+                        DVec3::new(hit.end_pos.x, hit.end_pos.y, hit.end_pos.z),
+                        DVec3::new(n.x, n.y, n.z),
+                    ))
+                }
+            });
+            self.gibs.update(
+                dt,
+                trace
+                    .as_mut()
+                    .map(|t| t as &mut dyn FnMut(DVec3, DVec3) -> Option<(DVec3, DVec3)>),
+            );
+        }
+        for event in events {
+            if let SnapshotEvent::Death {
+                entity_id,
+                weapon_id,
+                damage_type,
+                final_damage,
+                at,
+                vel,
+                ..
+            } = event
+            {
+                let kind = if damage_type.is_empty() { weapon_id } else { damage_type };
+                let gib = kind == "rail" || kind == "bomb" || (kind == "explosion" && *final_damage >= 50);
+                if gib {
+                    self.gibs.spawn(
+                        DVec3::new(at.x, at.y, at.z),
+                        DVec3::new(vel.x, vel.y, vel.z),
+                        self.live_tints.get(entity_id).copied(),
+                    );
+                }
+            }
+        }
+    }
+
     pub fn play_effects(&mut self, events: &[SnapshotEvent], weapons: &HashMap<String, String>, dt: f64) {
         self.effect_time += dt;
         let now = self.effect_time;
@@ -1230,6 +1314,7 @@ impl MapRenderer {
         self.world.prepare(gpu, camera.view_projection(aspect), camera.position);
         self.frame_draws.clone_from(&self.model_draws);
         self.frame_draws.extend_from_slice(&self.live_draws);
+        self.gib_renderer.draws(&self.gibs, &mut self.frame_draws);
         self.items.draws(
             self.item_time,
             camera_rotation(camera.view().as_dmat4()),
@@ -1581,6 +1666,7 @@ pub fn build_renderer(gpu: &Gpu, map: &mut LoadedMap, output_format: wgpu::Textu
             Err(why) => eprintln!("player model: {why}"),
         }
     }
+    let gib_renderer = GibRenderer::new(gpu, &mut models);
     let mut teleport_renderer = TeleportRenderer::new(
         gpu,
         format,
@@ -1823,7 +1909,7 @@ pub fn build_renderer(gpu: &Gpu, map: &mut LoadedMap, output_format: wgpu::Textu
         damage_numbers.update(age);
         cartoon_hits.update(age);
     }
-    MapRenderer {
+    let mut renderer = MapRenderer {
         projectiles,
         trails,
         explosions,
@@ -1857,6 +1943,9 @@ pub fn build_renderer(gpu: &Gpu, map: &mut LoadedMap, output_format: wgpu::Textu
         teleports,
         teleport_renderer,
         teleport_last: HashMap::new(),
+        gibs: GibSystem::default(),
+        gib_renderer,
+        live_tints: HashMap::new(),
         damage_numbers,
         damage_number_renderer: DamageNumberRenderer::new(gpu, format, &damage_font),
         cartoon_hits,
@@ -1872,7 +1961,17 @@ pub fn build_renderer(gpu: &Gpu, map: &mut LoadedMap, output_format: wgpu::Textu
         image_processing: shag_image_processing(),
         view_model,
         holster,
+    };
+    // Held gibs (`--gib`): broken up, then flown on to their age.
+    for held in &map.gibs {
+        renderer.gibs.spawn(babylon(held.origin), DVec3::ZERO, None);
     }
+    if let Some(age) = map.gibs.iter().map(|g| g.age).reduce(f64::min) {
+        for _ in 0..(age * 60.0).round() as usize {
+            renderer.play_gibs(&[], 1.0 / 60.0);
+        }
+    }
+    renderer
 }
 
 /// The players a demo or a match shows, styled as a spectator sees them:
@@ -1947,6 +2046,7 @@ pub fn run(o: &ViewOptions) -> i32 {
     map.effects.clone_from(&o.effects);
     map.hits.clone_from(&o.hits);
     map.teleports.clone_from(&o.teleports);
+    map.gibs.clone_from(&o.gibs);
     map.weapon.clone_from(&o.weapon);
     map.remote_players = feed.is_some();
     // The highlight reel: analyzed and cut before the first frame, its
@@ -2114,6 +2214,7 @@ pub fn run(o: &ViewOptions) -> i32 {
             renderer.set_live_players(&drawn, 1.0 / 60.0);
             renderer.set_live_projectiles(&projectiles, 1.0 / 60.0);
             renderer.play_effects(&view.effects, &view.weapons, 1.0 / 60.0);
+            renderer.play_gibs(&view.effects, 1.0 / 60.0);
             renderer.play_hit_feedback(
                 &view.effects,
                 view_entity(feed.local_entity(), &players, o.follow),

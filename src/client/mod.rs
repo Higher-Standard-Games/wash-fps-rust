@@ -21,6 +21,7 @@ pub mod fps_pickup_audio;
 pub mod fps_player_audio;
 pub mod fps_reload_audio;
 pub mod game_events;
+pub mod gib_system;
 pub mod hud;
 pub mod hud_state;
 pub mod input_history;

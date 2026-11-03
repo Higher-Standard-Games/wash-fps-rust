@@ -2582,6 +2582,26 @@ fit and did not count the parity harness.
 
 Newest first. Each entry names the commits and what proves them.
 
+### Milestone 11, eleventh slice: gibs (November 3, 2026)
+
+- **wash-fps-rust.** `client/gib_system.rs` ports `GibSystem.ts`: on a
+  death that gibs (`handleDeathEvent`'s rule: a rail, the bomb, or an
+  explosion of 50 or more) the body breaks into twenty flying shards and
+  eight body-part drops in its own colour (`gibPalette` over the tint it
+  was drawn with) or the pink, teal and grey default. Gravity, one bounce
+  (the five hero shards trace the map's brushes with the shot mask after
+  0.15 s, the rest bounce off the death height), drag, tumble, and a fade
+  from 6.5 to 8 s; 200 live shards at most. Each shard is a draw of one
+  tetrahedron uploaded twice (opaque and blended for the fade), with its
+  shade as the StandardMaterial's diffuse and emissive.
+  `MapRenderer::play_gibs` runs per frame in the window and headless
+  views; `washoi view --gib` holds one.
+- **Not yet.** The death camera on the shards' centroid, and ragdolls for
+  the other deaths (`RagdollSystem.ts`, planned on rapier3d).
+- **Proof.** Unit tests: the burst's makeup, the floor bounce and fade,
+  the hero shards bouncing off a traced ceiling, the palette and the cap.
+  A screenshot of two bursts on washoi_amphi1.
+
 ### Milestone 11, tenth slice: the powerup timer (November 3, 2026)
 
 - **wash-fps-rust.** `client/local_powerup_state.rs` ports

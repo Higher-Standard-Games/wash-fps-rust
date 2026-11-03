@@ -4,7 +4,7 @@
 //! prints the scoreboard.
 //!
 //! ```text
-//! washoi view <map> [--data DIR] [--spawn N] [--screenshot FILE.png] [--size WxH] [--time T] [--at X,Y,Z,YAW] [--pitch DEG] [--player X,Y,Z,YAW[,CLIP[,FRAME[,quad]]]]... [--projectile ID,X,Y,Z,YAW[,PITCH]]... [--explosion ID,X,Y,Z,AGE]... [--tracer X,Y,Z,X2,Y2,Z2,R,G,B,AGE]... [--muzzle X,Y,Z,R,G,B,STYLE,SCALE,DURATION,AGE]... [--impact X,Y,Z,NX,NY,NZ,IX,IY,IZ,R,G,B,HEAVY,AGE]... [--rail X,Y,Z,X2,Y2,Z2,R,G,B,KIND,NX,NY,NZ,AGE]... [--lightning MODE,X,Y,Z,X2,Y2,Z2,R,G,B,KIND,AGE]... [--hit X,Y,Z,DAMAGE,AGE[,head]]... [--teleport X,Y,Z,X2,Y2,Z2,YAW,AGE]... [--weapon ID [--aim]] [--no-cull] [--no-lights] [--seconds N]
+//! washoi view <map> [--data DIR] [--spawn N] [--screenshot FILE.png] [--size WxH] [--time T] [--at X,Y,Z,YAW] [--pitch DEG] [--player X,Y,Z,YAW[,CLIP[,FRAME[,quad]]]]... [--projectile ID,X,Y,Z,YAW[,PITCH]]... [--explosion ID,X,Y,Z,AGE]... [--tracer X,Y,Z,X2,Y2,Z2,R,G,B,AGE]... [--muzzle X,Y,Z,R,G,B,STYLE,SCALE,DURATION,AGE]... [--impact X,Y,Z,NX,NY,NZ,IX,IY,IZ,R,G,B,HEAVY,AGE]... [--rail X,Y,Z,X2,Y2,Z2,R,G,B,KIND,NX,NY,NZ,AGE]... [--lightning MODE,X,Y,Z,X2,Y2,Z2,R,G,B,KIND,AGE]... [--hit X,Y,Z,DAMAGE,AGE[,head]]... [--teleport X,Y,Z,X2,Y2,Z2,YAW,AGE]... [--gib X,Y,Z,AGE]... [--weapon ID [--aim]] [--no-cull] [--no-lights] [--seconds N]
 //! washoi demo <file.shagdemo> [--data DIR] [--screenshot FILE.png] [--size WxH] [--time T] [--at X,Y,Z,YAW] [--pitch DEG] [--follow N] [--reel MINUTES] [--audio-out FILE.wav] [--scoreboard] [--seconds N]
 //! washoi watch <ws://game-server> [--name NAME] [--ticket TICKET] [--data DIR] [--screenshot FILE.png] [--time T] [--at X,Y,Z,YAW] [--follow N] [--seconds N]
 //! washoi play <ws://game-server> [--name NAME] [--ticket TICKET] [--data DIR] [--screenshot FILE.png] [--time T] [--say TEXT] [--seconds N]
@@ -61,7 +61,8 @@
 //! a Quake origin, `AGE` seconds in: its damage number (orange with `head`)
 //! and, from 75 damage, its cartoon sprite. `--teleport` holds a player's
 //! teleport from one Quake origin to another (ghosts facing `YAW` degrees
-//! and the bursts). `--weapon` holds a first-person weapon (a definition
+//! and the bursts). `--gib` holds a body broken into shards at a Quake
+//! origin, `AGE` seconds on. `--weapon` holds a first-person weapon (a definition
 //! id such as `plasmagun`), at the hip or, with `--aim`, down its sights.
 
 mod menu;
@@ -147,6 +148,7 @@ struct Options {
     effects: Vec<view::EffectView>,
     hits: Vec<view::HitView>,
     teleports: Vec<view::TeleportView>,
+    gibs: Vec<view::GibView>,
     words: Vec<String>,
 }
 
@@ -228,6 +230,15 @@ fn parse_options(args: impl Iterator<Item = String>) -> Options {
                     id: parts.first().map_or_else(|| usage(), |s| (*s).to_owned()),
                     origin: [n(1), n(2), n(3)],
                     age: parts.get(4).and_then(|p| p.parse().ok()).unwrap_or_else(|| usage()),
+                });
+            }
+            "--gib" => {
+                let v = value();
+                let parts: Vec<&str> = v.split(',').map(str::trim).collect();
+                let n = |i: usize| -> f64 { parts.get(i).and_then(|p| p.parse().ok()).unwrap_or_else(|| usage()) };
+                o.gibs.push(view::GibView {
+                    origin: [n(0), n(1), n(2)],
+                    age: n(3),
                 });
             }
             "--teleport" => {
@@ -476,6 +487,7 @@ fn view_options(
         effects: o.effects.clone(),
         hits: o.hits.clone(),
         teleports: o.teleports.clone(),
+        gibs: o.gibs.clone(),
         weapon: o.weapon.clone(),
         aim: o.aim,
         demo,

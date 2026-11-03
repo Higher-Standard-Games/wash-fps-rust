@@ -382,6 +382,7 @@ impl App {
             }
             s.renderer.set_live_projectiles(&view.projectiles, f64::from(dt));
             s.renderer.play_effects(&view.effects, &view.weapons, f64::from(dt));
+            s.renderer.play_gibs(&view.effects, f64::from(dt));
             s.renderer.play_hit_feedback(
                 &view.effects,
                 view_entity(feed.local_entity(), &players, self.follow),
