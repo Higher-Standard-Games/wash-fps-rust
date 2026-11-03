@@ -143,21 +143,23 @@ pub const VOLTAIC: WeaponModel = WeaponModel {
 /// `WEAPONS[id]`, with `lasergun` the compatibility id of the voltaic.
 #[must_use]
 pub fn weapon_model(id: &str) -> Option<&'static WeaponModel> {
-    const ALL: [&WeaponModel; 8] = [
-        &MACHINEGUN,
-        &RIOTGUN,
-        &GRENADE_LAUNCHER,
-        &ROCKET_LAUNCHER,
-        &PLASMAGUN,
-        &VOLTAIC,
-        &ELECTROBOLT,
-        &BLADE,
-    ];
     if id == "lasergun" {
         return Some(&VOLTAIC);
     }
-    ALL.into_iter().find(|w| w.id == id)
+    WEAPON_MODELS.into_iter().find(|w| w.id == id)
 }
+
+/// Every weapon with a model.
+pub const WEAPON_MODELS: [&WeaponModel; 8] = [
+    &MACHINEGUN,
+    &RIOTGUN,
+    &GRENADE_LAUNCHER,
+    &ROCKET_LAUNCHER,
+    &PLASMAGUN,
+    &VOLTAIC,
+    &ELECTROBOLT,
+    &BLADE,
+];
 
 /// `WEAPONS[id]?.speedBonus ?? 0`: the weapon's run speed bonus, which the
 /// server applies per entity and prediction must match (blade +10, riot gun

@@ -4,7 +4,7 @@
 //! prints the scoreboard.
 //!
 //! ```text
-//! washoi view <map> [--data DIR] [--spawn N] [--screenshot FILE.png] [--size WxH] [--time T] [--at X,Y,Z,YAW] [--pitch DEG] [--player X,Y,Z,YAW[,CLIP[,FRAME[,quad]]]]... [--projectile ID,X,Y,Z,YAW[,PITCH]]... [--explosion ID,X,Y,Z,AGE]... [--tracer X,Y,Z,X2,Y2,Z2,R,G,B,AGE]... [--muzzle X,Y,Z,R,G,B,STYLE,SCALE,DURATION,AGE]... [--impact X,Y,Z,NX,NY,NZ,IX,IY,IZ,R,G,B,HEAVY,AGE]... [--rail X,Y,Z,X2,Y2,Z2,R,G,B,KIND,NX,NY,NZ,AGE]... [--lightning MODE,X,Y,Z,X2,Y2,Z2,R,G,B,KIND,AGE]... [--hit X,Y,Z,DAMAGE,AGE[,head]]... [--teleport X,Y,Z,X2,Y2,Z2,YAW,AGE]... [--gib X,Y,Z,AGE]... [--ragdoll X,Y,Z,YAW,DX,DY,DZ,AGE]... [--weapon ID [--aim] [--quad]] [--no-cull] [--no-lights] [--seconds N]
+//! washoi view <map> [--data DIR] [--spawn N] [--screenshot FILE.png] [--size WxH] [--time T] [--at X,Y,Z,YAW] [--pitch DEG] [--player X,Y,Z,YAW[,CLIP[,FRAME[,quad][,WEAPON]]]]... [--projectile ID,X,Y,Z,YAW[,PITCH]]... [--explosion ID,X,Y,Z,AGE]... [--tracer X,Y,Z,X2,Y2,Z2,R,G,B,AGE]... [--muzzle X,Y,Z,R,G,B,STYLE,SCALE,DURATION,AGE]... [--impact X,Y,Z,NX,NY,NZ,IX,IY,IZ,R,G,B,HEAVY,AGE]... [--rail X,Y,Z,X2,Y2,Z2,R,G,B,KIND,NX,NY,NZ,AGE]... [--lightning MODE,X,Y,Z,X2,Y2,Z2,R,G,B,KIND,AGE]... [--hit X,Y,Z,DAMAGE,AGE[,head]]... [--teleport X,Y,Z,X2,Y2,Z2,YAW,AGE]... [--gib X,Y,Z,AGE]... [--ragdoll X,Y,Z,YAW,DX,DY,DZ,AGE]... [--weapon ID [--aim] [--quad]] [--no-cull] [--no-lights] [--seconds N]
 //! washoi demo <file.shagdemo> [--data DIR] [--screenshot FILE.png] [--size WxH] [--time T] [--at X,Y,Z,YAW] [--pitch DEG] [--follow N] [--reel MINUTES] [--audio-out FILE.wav] [--scoreboard] [--seconds N]
 //! washoi watch <ws://game-server> [--name NAME] [--ticket TICKET] [--data DIR] [--screenshot FILE.png] [--time T] [--at X,Y,Z,YAW] [--follow N] [--seconds N]
 //! washoi play <ws://game-server> [--name NAME] [--ticket TICKET] [--data DIR] [--screenshot FILE.png] [--time T] [--say TEXT] [--seconds N]
@@ -45,7 +45,8 @@
 //! leaving out what the PVS and the frustum hide. Each `--player` stands a
 //! player model at a Quake origin and angle, playing a clip (idle by
 //! default) held at a frame (0 by default), drawn in the FFA style (with
-//! `quad`, glowing as a Quad Damage carrier). Each
+//! `quad`, glowing as a Quad Damage carrier; with a weapon id, holding that
+//! weapon in the right hand). Each
 //! `--projectile` holds a projectile (`rocket`, `grenade`, `plasma_bolt`,
 //! `blade_blast`) at a Quake origin, flying along a Quake yaw and pitch.
 //! Each `--explosion` holds that projectile's explosion at a Quake origin,
@@ -94,7 +95,7 @@ use washoi::shared::net::snapshot_events::{SnapshotEvent, WashoiEvents};
 fn usage() -> ! {
     eprintln!(
         "washoi {}\n\
-         usage: washoi view <map> [--data DIR] [--spawn N] [--screenshot FILE.png] [--size WxH] [--time T] [--at X,Y,Z,YAW] [--pitch DEG] [--player X,Y,Z,YAW[,CLIP[,FRAME[,quad]]]]... [--projectile ID,X,Y,Z,YAW[,PITCH]]... [--explosion ID,X,Y,Z,AGE]... [--weapon ID [--aim] [--quad]] [--no-cull] [--no-lights] [--seconds N]\n\
+         usage: washoi view <map> [--data DIR] [--spawn N] [--screenshot FILE.png] [--size WxH] [--time T] [--at X,Y,Z,YAW] [--pitch DEG] [--player X,Y,Z,YAW[,CLIP[,FRAME[,quad][,WEAPON]]]]... [--projectile ID,X,Y,Z,YAW[,PITCH]]... [--explosion ID,X,Y,Z,AGE]... [--weapon ID [--aim] [--quad]] [--no-cull] [--no-lights] [--seconds N]\n\
          \x20      washoi demo <file.shagdemo> [--data DIR] [--screenshot FILE.png] [--size WxH] [--time T] [--at X,Y,Z,YAW] [--pitch DEG] [--follow N] [--reel MINUTES] [--audio-out FILE.wav] [--scoreboard] [--seconds N]\n\
          \x20      washoi watch <ws://game-server> [--name NAME] [--ticket TICKET] [--data DIR] [--screenshot FILE.png] [--time T] [--at X,Y,Z,YAW] [--follow N] [--seconds N]\n\
          \x20      washoi play <ws://game-server> [--name NAME] [--ticket TICKET] [--data DIR] [--screenshot FILE.png] [--time T] [--say TEXT] [--seconds N]\n\
@@ -204,7 +205,11 @@ fn parse_options(args: impl Iterator<Item = String>) -> Options {
                     angle: n(3),
                     clip: parts.get(4).map_or_else(|| "idle".to_owned(), |c| (*c).to_owned()),
                     frame: parts.get(5).map_or(0.0, |f| f.parse().unwrap_or_else(|_| usage())),
-                    quad: parts.get(6) == Some(&"quad"),
+                    quad: parts.get(6..).is_some_and(|rest| rest.contains(&"quad")),
+                    weapon: parts
+                        .get(6..)
+                        .and_then(|rest| rest.iter().find(|p| **p != "quad"))
+                        .map(|w| (*w).to_owned()),
                 });
             }
             "--projectile" => {
@@ -249,6 +254,7 @@ fn parse_options(args: impl Iterator<Item = String>) -> Options {
                         clip: "idle".to_owned(),
                         frame: 0.0,
                         quad: false,
+                        weapon: None,
                     },
                     dir: [n(4), n(5), n(6)],
                     age: n(7),

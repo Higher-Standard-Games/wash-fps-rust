@@ -378,6 +378,7 @@ impl App {
                 .filter(|(id, _, _)| Some(id) != eyes.as_ref())
                 .cloned()
                 .collect();
+            s.renderer.set_live_weapons(&view.weapons);
             s.renderer.set_live_players(&drawn, f64::from(dt));
             if let Some(i) = self.follow {
                 match players.get(i) {

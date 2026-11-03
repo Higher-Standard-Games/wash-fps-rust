@@ -39,7 +39,8 @@ pub fn package_path(path: &str) -> String {
 }
 
 /// A model's directory, with its trailing slash.
-fn directory(path: &str) -> &str {
+#[must_use]
+pub fn directory(path: &str) -> &str {
     path.rfind('/').map_or("", |i| &path[..=i])
 }
 

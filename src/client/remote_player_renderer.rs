@@ -5,25 +5,35 @@
 //! Ported so far: the body's placement (an anchor at the feet, turned by
 //! the yaw, the model scaled [`MODEL_SCALE`]), the clip choice and its
 //! speed ratio (`updateModel`), and the visual style (team tint and
-//! outline), and the quad carrier's glow (`updatePowerupGlow`). Teleport
-//! effects live in `teleport_effect`. Not yet: the hitbox, the weapon in
-//! hand, one-shot clips, PVS and animation LOD.
+//! outline), the quad carrier's glow (`updatePowerupGlow`), and the weapon
+//! in hand (`updateWeaponModel`, [`HandWeapons`]). Teleport effects live in
+//! `teleport_effect`. Not yet: the hitbox, one-shot clips, PVS and
+//! animation LOD.
 
 use std::collections::HashMap;
 
 use shagger::animation::player_model_assets::{VANGUARD_ANIMATIONS, VANGUARD_MODEL, VANGUARD_ROOT};
 use shagger::animation::player_model_manager::{PlayerModel, PlayerModelInstance, PlayerModelVisualStyle};
 use shagger::loader::model::glb::GlbError;
+use shagger::loader::model::gltf_model::GltfModel;
+use shagger::loader::model::tags_loader::parse_tags;
+use shagger::loader::pk3::pk3_loader::Pk3Loader;
 use shagger::network::client::snapshot_buffer::InterpolatedEntity;
-use shagger::rendering::glam::{Mat4, Quat, Vec3};
+use shagger::rendering::glam::{EulerRot, Mat4, Quat, Vec3};
 use shagger::rendering::gpu::Gpu;
 use shagger::rendering::model_renderer::{ModelDraw, ModelHandle, ModelMaterialMode, ModelRenderer, Outline};
+use shagger::weapon::weapon_barrels::{
+    BarrelDef, barrel_material_mode, barrel_root_matrix, find_barrel_mount, world_weapon_material_mode,
+};
+use shagger::world::pickup::flattened_pickup_matrices;
 
 use super::quad_damage_visual::{
     QUAD_DAMAGE_COLOR, QUAD_EMISSIVE_MIN, QUAD_EMISSIVE_RANGE, QUAD_PLAYER_OUTLINE_MIN, QUAD_PLAYER_OUTLINE_RANGE,
-    get_quad_damage_pulse, mask_has_quad,
+    QUAD_WORLD_WEAPON_OUTLINE_MIN, QUAD_WORLD_WEAPON_OUTLINE_RANGE, get_quad_damage_pulse, mask_has_quad,
 };
 use super::remote_player_logic::{IDLE_SPEED_THRESHOLD, derive_animation};
+use crate::shared::entities::definitions::weapons::weapons_table::{WEAPON_MODELS, WeaponModel, weapon_model};
+use crate::world::fps_pickup::{directory, package_path};
 
 /// Mixamo metres to Quake units.
 pub const MODEL_SCALE: f32 = 36.0;
@@ -210,6 +220,17 @@ impl RemotePlayerRenderer {
         self.instances.remove(id);
     }
 
+    /// A player's right hand in the world (`mixamorig:RightHand` under the
+    /// body), as `attachToBone` follows it.
+    #[must_use]
+    pub fn hand_world(&self, id: &str, interp: &InterpolatedEntity) -> Option<Mat4> {
+        let instance = self.instances.get(id)?;
+        let skeleton = &self.model.model.skeleton;
+        let hand = skeleton.find(RIGHT_HAND)?;
+        let globals = skeleton.global_matrices(&instance.locals);
+        Some(body_matrix(interp) * *globals.get(hand)?)
+    }
+
     /// One player's draws, appending its joint palettes to `joints`.
     pub fn draws(
         &self,
@@ -244,6 +265,161 @@ impl RemotePlayerRenderer {
     }
 }
 
+/// The bone a gun is held by.
+pub const RIGHT_HAND: &str = "mixamorig:RightHand";
+
+/// One weapon loaded for players' hands, with its barrels hung on its
+/// mount (relative to the leader).
+struct HandWeapon {
+    def: &'static WeaponModel,
+    handle: ModelHandle,
+    model: GltfModel,
+    barrels: Vec<(ModelHandle, GltfModel, Mat4)>,
+}
+
+/// `updateWeaponModel`'s weapons: every gun's world model, loaded once
+/// (wash-fps imports each on first use and clones it per player), and
+/// drawn in a player's right hand.
+#[derive(Default)]
+pub struct HandWeapons {
+    weapons: Vec<HandWeapon>,
+}
+
+/// The hand-attached leader's local matrix (`attachToBone`, then position
+/// zero, `rotation.set(PI, 0, -PI / 2)` and the third-person scale): the
+/// view model's scale over the body's 36, halved. The blade
+/// (`attachBladeToPlayer`) keeps its whole node tree under a grip turned
+/// the other way and moved so its handle sits in the hand.
+#[must_use]
+pub fn hand_weapon_local(def: &WeaponModel) -> Mat4 {
+    let visual_scale = def.view.scale as f32;
+    if def.id == "blade" {
+        // The right-handed branch: shagger's glTF models are not mirrored.
+        Mat4::from_quat(Quat::from_euler(
+            EulerRot::YXZ,
+            0.0,
+            std::f32::consts::PI,
+            -std::f32::consts::FRAC_PI_2,
+        )) * Mat4::from_scale(Vec3::splat(visual_scale / MODEL_SCALE))
+            * Mat4::from_translation(Vec3::new(0.45, 0.0, 0.0))
+    } else {
+        Mat4::from_quat(Quat::from_euler(
+            EulerRot::YXZ,
+            0.0,
+            std::f32::consts::PI,
+            -std::f32::consts::FRAC_PI_2,
+        )) * Mat4::from_scale(Vec3::splat(visual_scale / MODEL_SCALE * 0.5))
+    }
+}
+
+/// The largest axis scale of a world matrix (`absoluteScaling`).
+fn absolute_scale(m: Mat4) -> f32 {
+    m.x_axis
+        .truncate()
+        .length()
+        .max(m.y_axis.truncate().length())
+        .max(m.z_axis.truncate().length())
+        .max(0.001)
+}
+
+impl HandWeapons {
+    /// Loads every weapon's world model and barrels from the packages; a
+    /// model that fails is left out (its holders' hands stay empty).
+    pub fn load(gpu: &Gpu, models: &mut ModelRenderer, pk3: &mut Pk3Loader) -> Self {
+        let mut weapons = Vec::new();
+        for def in WEAPON_MODELS {
+            let path = package_path(def.model_path);
+            let Some(Ok(model)) = pk3.get_file(&path).map(|bytes| GltfModel::from_glb(&bytes)) else {
+                eprintln!("[RemoteWeapon] Failed to load {}: {path}", def.id);
+                continue;
+            };
+            let handle = models.upload(gpu, &model, world_weapon_material_mode);
+            let mut barrels = Vec::new();
+            if let Some(first) = def.barrels.first() {
+                let tags = pk3
+                    .get_file(&format!("{}tags.txt", directory(&package_path(first.model_path))))
+                    .map(|bytes| parse_tags(&String::from_utf8_lossy(&bytes)))
+                    .unwrap_or_default();
+                let mount = find_barrel_mount(&tags, &model.attachment_points);
+                for barrel in def.barrels {
+                    let Some(Ok(barrel_model)) = pk3
+                        .get_file(&package_path(barrel.model_path))
+                        .map(|bytes| GltfModel::from_glb(&bytes))
+                    else {
+                        continue;
+                    };
+                    let barrel_handle = models.upload(gpu, &barrel_model, barrel_material_mode);
+                    let root = barrel_root_matrix(
+                        &mount,
+                        &BarrelDef {
+                            model_path: barrel.model_path.to_owned(),
+                            offset: barrel.offset.map(Vec3::from),
+                        },
+                    );
+                    barrels.push((barrel_handle, barrel_model, root));
+                }
+            }
+            weapons.push(HandWeapon {
+                def,
+                handle,
+                model,
+                barrels,
+            });
+        }
+        Self { weapons }
+    }
+
+    /// How many weapons loaded.
+    #[must_use]
+    pub fn len(&self) -> usize {
+        self.weapons.len()
+    }
+
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.weapons.is_empty()
+    }
+
+    /// The draws of `weapon` held in a hand at `hand` (world), with the
+    /// quad's outline (`applyAttachedWeaponQuadOutline`) when `quad_pulse`
+    /// is given: 0.7 to 1.25 world units, over each mesh's own scale.
+    pub fn draws(&self, weapon: &str, hand: Mat4, quad_pulse: Option<f64>, draws: &mut Vec<ModelDraw>) {
+        let Some(def) = weapon_model(weapon) else { return };
+        let Some(w) = self.weapons.iter().find(|w| w.def.id == def.id) else {
+            return;
+        };
+        let leader = hand * hand_weapon_local(def);
+        let outline = |world: Mat4| {
+            quad_pulse.map(|pulse| Outline {
+                color: QUAD_DAMAGE_COLOR,
+                width: (QUAD_WORLD_WEAPON_OUTLINE_MIN + QUAD_WORLD_WEAPON_OUTLINE_RANGE * pulse) as f32
+                    / absolute_scale(world),
+            })
+        };
+        let matrices: Vec<Mat4> = if def.id == "blade" {
+            // The blade keeps its node tree.
+            w.model.primitives.iter().map(|p| leader * p.node_matrix).collect()
+        } else {
+            flattened_pickup_matrices(&w.model, leader)
+        };
+        for (primitive, world) in matrices.into_iter().enumerate() {
+            draws.push(ModelDraw {
+                outline: outline(world),
+                ..ModelDraw::new(w.handle, primitive, world)
+            });
+        }
+        for (handle, model, root) in &w.barrels {
+            for (primitive, p) in model.primitives.iter().enumerate() {
+                let world = leader * *root * p.node_matrix;
+                draws.push(ModelDraw {
+                    outline: outline(world),
+                    ..ModelDraw::new(*handle, primitive, world)
+                });
+            }
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -273,6 +449,23 @@ mod tests {
         let e = draws[0].emissive.unwrap();
         assert!((e.x - 0.65).abs() < 1e-6 && (e.y - 0.28 * 0.65).abs() < 1e-6);
         assert!((draws[0].outline.unwrap().width - 40.0 / 576.0).abs() < 1e-7);
+    }
+
+    #[test]
+    fn a_gun_sits_in_the_hand_at_half_its_view_scale() {
+        let plasmagun = weapon_model("plasmagun").unwrap();
+        let local = hand_weapon_local(plasmagun);
+        let (scale, _, translation) = local.to_scale_rotation_translation();
+        let expected = plasmagun.view.scale as f32 / MODEL_SCALE * 0.5;
+        assert!((scale.x - expected).abs() < 1e-6);
+        assert_eq!(translation, Vec3::ZERO);
+        // rotation.set(PI, 0, -PI / 2): the barrel (+X) turns along the
+        // fingers (the bone's +Y).
+        let barrel = local.transform_vector3(Vec3::X).normalize();
+        assert!((barrel - Vec3::Y).length() < 1e-5, "{barrel}");
+        // The blade's grip moves its handle into the hand.
+        let blade = hand_weapon_local(weapon_model("blade").unwrap());
+        assert!(blade.transform_point3(Vec3::ZERO).length() > 0.0);
     }
 
     #[test]

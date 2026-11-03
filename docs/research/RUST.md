@@ -2582,6 +2582,28 @@ fit and did not count the parity harness.
 
 Newest first. Each entry names the commits and what proves them.
 
+### Milestone 11, sixteenth slice: guns in players' hands (November 3, 2026)
+
+- **wash-fps-rust.** `HandWeapons` in `client/remote_player_renderer.rs`
+  ports `updateWeaponModel`: every gun's world model and barrels load once
+  when the player model does, and each player draws the weapon the
+  snapshots say they hold (`enemyWeapons`, `MapRenderer::set_live_weapons`)
+  in `mixamorig:RightHand`, as `attachToBone` places it: the leader mesh
+  turned `(PI, 0, -PI / 2)` and scaled to half the view model's scale over
+  the body's 36, the other meshes following it flattened as on a pickup,
+  the barrels on their mount. The blade keeps its node tree under
+  `attachBladeToPlayer`'s grip, in its right-handed form, since shagger's
+  glTF models are not mirrored. A quad carrier's gun takes
+  `applyAttachedWeaponQuadOutline`'s outline, 0.7 to 1.25 world units over
+  each mesh's own scale. `washoi view --player ...,WEAPON` holds one.
+- **Not yet.** The gun riding its owner's ragdoll, the muzzle tag for
+  third-person muzzle flashes, and distant weapon detail
+  (`dropDistantWeaponDetail`).
+- **Proof.** A unit test of the hand matrix (scale, the barrel along the
+  fingers, the blade's grip offset). A screenshot of a plasmagun holder
+  beside a quad carrier with the rocket launcher
+  (`rust-port/hand-weapons-amphi1.png`).
+
 ### Milestone 11, fifteenth slice: the gun's quad outline (November 3, 2026)
 
 - **wash-fps-rust.** `WeaponViewModel::powerup_outline` ports
@@ -2590,7 +2612,8 @@ Newest first. Each entry names the commits and what proves them.
   colour at 0.24 to 0.48 pulsing with the body's glow, divided by the
   root's scale as the black one is. `washoi view --weapon ID --quad` holds
   it.
-- **Not yet.** Weapons in remote players' hands, and so their quad outline.
+- **Not yet.** Nothing: weapons in players' hands, with their quad outline,
+  came in the sixteenth slice.
 - **Proof.** A screenshot of the plasmagun with the outline
   (`rust-port/weapon-quad-outline.png`).
 

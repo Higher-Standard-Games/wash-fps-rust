@@ -15,8 +15,9 @@ use washoi::client::cartoon_hit_effect::{CartoonHitEffect, CartoonHitRenderer};
 use washoi::client::damage_numbers::{DamageNumberRenderer, DamageNumbers};
 use washoi::client::fps_liquid_audio::play_liquid_crossing;
 use washoi::client::gib_system::{GibRenderer, GibSystem};
+use washoi::client::quad_damage_visual::{get_quad_damage_pulse, mask_has_quad};
 use washoi::client::ragdoll_system::{RagdollSystem, RagdollTrails};
-use washoi::client::remote_player_renderer::{body_matrix, update_powerup_glow};
+use washoi::client::remote_player_renderer::{HandWeapons, body_matrix, update_powerup_glow};
 use washoi::client::teleport_effect::{TeamColor, TeleportEffect, TeleportRenderer, legacy_team_color, play_tele_in};
 use washoi::liquid::client::liquid_interaction_system::{LiquidInteractionSystem, WaterRipples};
 use washoi::liquid::client::splash_droplet_renderer::SplashDropletRenderer;
@@ -622,6 +623,8 @@ pub struct PlayerView {
     pub frame: f64,
     /// Carrying Quad Damage (its glow, half way through the pulse).
     pub quad: bool,
+    /// The weapon in hand, if any.
+    pub weapon: Option<String>,
 }
 
 impl PlayerView {
@@ -820,6 +823,9 @@ pub struct MapRenderer {
     /// player model.
     pub ragdolls: Option<RagdollSystem>,
     ragdoll_trails: RagdollTrails,
+    /// Guns in players' hands (`updateWeaponModel`), and who holds which.
+    hand_weapons: HandWeapons,
+    live_weapons: HashMap<String, String>,
     /// Players whose body a ragdoll took, hidden until they leave the list.
     ragdolled: HashSet<String>,
     /// Poses of players who left the list this frame, for a death that
@@ -952,6 +958,11 @@ impl MapRenderer {
                 interp.powerup_mask.unwrap_or(0),
                 self.item_time,
             );
+            if let (Some(weapon), Some(hand)) = (self.live_weapons.get(id), renderer.hand_world(id, interp)) {
+                let quad =
+                    mask_has_quad(interp.powerup_mask.unwrap_or(0)).then(|| get_quad_damage_pulse(self.item_time));
+                self.hand_weapons.draws(weapon, hand, quad, &mut self.live_draws);
+            }
         }
         // RemotePlayerRenderer's teleport detection: a jump of more than
         // 256 units between frames. A player gone from the list (dead) is
@@ -1314,6 +1325,12 @@ impl MapRenderer {
                 }
             }
         }
+    }
+
+    /// Who holds which weapon (`enemyWeapons`), before
+    /// [`Self::set_live_players`].
+    pub fn set_live_weapons(&mut self, weapons: &HashMap<String, String>) {
+        self.live_weapons.clone_from(weapons);
     }
 
     /// Names the local player and their view yaw before [`Self::play_gibs`],
@@ -1821,10 +1838,13 @@ pub fn build_renderer(gpu: &Gpu, map: &mut LoadedMap, output_format: wgpu::Textu
     }
     let mut joints = Vec::new();
     let mut remote_players = None;
+    let mut hand_weapons = HandWeapons::default();
     if !map.players.is_empty() || map.remote_players || !map.teleports.is_empty() || !map.ragdolls.is_empty() {
         let pk3 = &mut map.pk3;
         match RemotePlayerRenderer::load(gpu, &mut models, |path| pk3.get_file(path)) {
             Ok(mut players) => {
+                hand_weapons = HandWeapons::load(gpu, &mut models, pk3);
+                println!("hand weapons: {} loaded", hand_weapons.len());
                 let style = get_player_model_visual_style(PlayerTeamSlot::Ffa, MODEL_SCALE);
                 for (i, player) in map.players.iter().enumerate() {
                     let id = format!("player{i}");
@@ -1834,6 +1854,10 @@ pub fn build_renderer(gpu: &Gpu, map: &mut LoadedMap, output_format: wgpu::Textu
                     let first = model_draws.len();
                     players.draws(&id, &interp, &style, &mut joints, &mut model_draws);
                     update_powerup_glow(&mut model_draws[first..], interp.powerup_mask.unwrap_or(0), 0.0);
+                    if let (Some(weapon), Some(hand)) = (&player.weapon, players.hand_world(&id, &interp)) {
+                        let quad = player.quad.then_some(get_quad_damage_pulse(0.0));
+                        hand_weapons.draws(weapon, hand, quad, &mut model_draws);
+                    }
                 }
                 remote_players = Some(players);
             }
@@ -2134,6 +2158,8 @@ pub fn build_renderer(gpu: &Gpu, map: &mut LoadedMap, output_format: wgpu::Textu
         live_tints: HashMap::new(),
         ragdolls,
         ragdoll_trails: RagdollTrails::default(),
+        hand_weapons,
+        live_weapons: HashMap::new(),
         ragdolled: HashSet::new(),
         departed: HashMap::new(),
         live_worlds: HashMap::new(),
@@ -2433,6 +2459,7 @@ pub fn run(o: &ViewOptions) -> i32 {
                 .filter(|(id, _, _)| Some(id) != eyes.as_ref())
                 .cloned()
                 .collect();
+            renderer.set_live_weapons(&view.weapons);
             renderer.set_live_players(&drawn, 1.0 / 60.0);
             renderer.set_live_projectiles(&projectiles, 1.0 / 60.0);
             renderer.play_effects(&view.effects, &view.weapons, 1.0 / 60.0);
