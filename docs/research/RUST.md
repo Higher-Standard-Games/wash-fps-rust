@@ -2582,6 +2582,28 @@ fit and did not count the parity harness.
 
 Newest first. Each entry names the commits and what proves them.
 
+### Milestone 11, seventh slice: damage numbers and cartoon hits (November 3, 2026)
+
+- **shagger 9dc9d35.** `EffectQuadBatch::textured` samples an RGBA8 image
+  (bindings 1 and 2) and can skip the depth test, as Babylon's rendering
+  group 1 draws over the scene; `Font::rasterize_char` draws one glyph.
+- **wash-fps-rust.** `client/damage_numbers.rs` ports `DamageNumbers.ts`
+  (rise 80 u/s for 1.5 s, fade from 1 s, 32 at most, white, yellow from 50,
+  orange on a head hit) and `client/cartoon_hit_effect.rs` ports
+  `CartoonHitEffect.ts` (from 75 damage, one of the two POW sprites, grows
+  80 to 110 %, floats 40 units, fades from 0.9 over 0.8 s, six at most, the
+  oldest recycled). `MapRenderer::play_hit_feedback` is
+  `handleOutgoingDamage`'s visual half for the player on screen (our own,
+  or the one followed in a demo). `washoi view --hit` holds one.
+- **Approximations.** The numbers' canvas text (`bold 60px Arial`, 4 px
+  stroke) is a digit atlas from the client's Rajdhani Bold with the stroke
+  dilated around each glyph, each digit a quad where the canvas would put
+  it. The sprites share one atlas without mipmaps; glow's emissive copy is
+  not drawn (bloom is off by default).
+- **Proof.** Unit tests: colours, float, fade and expiry, both caps, the
+  sprites' pop timing, the atlas layout centred inside the 128 px texture.
+  A screenshot of three hits on washoi_amphi1.
+
 ### Milestone 11, sixth slice: splash crowns (November 3, 2026)
 
 - **wash-fps-rust.** `liquid/client/splash_droplets.rs` ports

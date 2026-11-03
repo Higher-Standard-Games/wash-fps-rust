@@ -4,7 +4,7 @@
 //! prints the scoreboard.
 //!
 //! ```text
-//! washoi view <map> [--data DIR] [--spawn N] [--screenshot FILE.png] [--size WxH] [--time T] [--at X,Y,Z,YAW] [--pitch DEG] [--player X,Y,Z,YAW[,CLIP[,FRAME]]]... [--projectile ID,X,Y,Z,YAW[,PITCH]]... [--explosion ID,X,Y,Z,AGE]... [--tracer X,Y,Z,X2,Y2,Z2,R,G,B,AGE]... [--muzzle X,Y,Z,R,G,B,STYLE,SCALE,DURATION,AGE]... [--impact X,Y,Z,NX,NY,NZ,IX,IY,IZ,R,G,B,HEAVY,AGE]... [--rail X,Y,Z,X2,Y2,Z2,R,G,B,KIND,NX,NY,NZ,AGE]... [--lightning MODE,X,Y,Z,X2,Y2,Z2,R,G,B,KIND,AGE]... [--weapon ID [--aim]] [--no-cull] [--no-lights] [--seconds N]
+//! washoi view <map> [--data DIR] [--spawn N] [--screenshot FILE.png] [--size WxH] [--time T] [--at X,Y,Z,YAW] [--pitch DEG] [--player X,Y,Z,YAW[,CLIP[,FRAME]]]... [--projectile ID,X,Y,Z,YAW[,PITCH]]... [--explosion ID,X,Y,Z,AGE]... [--tracer X,Y,Z,X2,Y2,Z2,R,G,B,AGE]... [--muzzle X,Y,Z,R,G,B,STYLE,SCALE,DURATION,AGE]... [--impact X,Y,Z,NX,NY,NZ,IX,IY,IZ,R,G,B,HEAVY,AGE]... [--rail X,Y,Z,X2,Y2,Z2,R,G,B,KIND,NX,NY,NZ,AGE]... [--lightning MODE,X,Y,Z,X2,Y2,Z2,R,G,B,KIND,AGE]... [--hit X,Y,Z,DAMAGE,AGE[,head]]... [--weapon ID [--aim]] [--no-cull] [--no-lights] [--seconds N]
 //! washoi demo <file.shagdemo> [--data DIR] [--screenshot FILE.png] [--size WxH] [--time T] [--at X,Y,Z,YAW] [--pitch DEG] [--follow N] [--reel MINUTES] [--audio-out FILE.wav] [--scoreboard] [--seconds N]
 //! washoi watch <ws://game-server> [--name NAME] [--ticket TICKET] [--data DIR] [--screenshot FILE.png] [--time T] [--at X,Y,Z,YAW] [--follow N] [--seconds N]
 //! washoi play <ws://game-server> [--name NAME] [--ticket TICKET] [--data DIR] [--screenshot FILE.png] [--time T] [--say TEXT] [--seconds N]
@@ -56,7 +56,9 @@
 //! `world` or `player`; a zero normal faces the shooter), each `AGE` seconds
 //! in. `--lightning` holds a Voltaic beam: `hero` (the local player's, held
 //! on), `remote` (another player's) or `chain` (an arc between chain
-//! lightning targets). `--weapon` holds a first-person weapon (a definition
+//! lightning targets). `--hit` holds a hit the player dealt to a victim at
+//! a Quake origin, `AGE` seconds in: its damage number (orange with `head`)
+//! and, from 75 damage, its cartoon sprite. `--weapon` holds a first-person weapon (a definition
 //! id such as `plasmagun`), at the hip or, with `--aim`, down its sights.
 
 mod menu;
@@ -140,6 +142,7 @@ struct Options {
     projectiles: Vec<view::ProjectileView>,
     explosions: Vec<view::ExplosionView>,
     effects: Vec<view::EffectView>,
+    hits: Vec<view::HitView>,
     words: Vec<String>,
 }
 
@@ -220,6 +223,17 @@ fn parse_options(args: impl Iterator<Item = String>) -> Options {
                     id: parts.first().map_or_else(|| usage(), |s| (*s).to_owned()),
                     origin: [n(1), n(2), n(3)],
                     age: parts.get(4).and_then(|p| p.parse().ok()).unwrap_or_else(|| usage()),
+                });
+            }
+            "--hit" => {
+                let v = value();
+                let parts: Vec<&str> = v.split(',').map(str::trim).collect();
+                let n = |i: usize| -> f64 { parts.get(i).and_then(|p| p.parse().ok()).unwrap_or_else(|| usage()) };
+                o.hits.push(view::HitView {
+                    origin: [n(0), n(1), n(2)],
+                    damage: parts.get(3).and_then(|p| p.parse().ok()).unwrap_or_else(|| usage()),
+                    age: n(4),
+                    head: parts.get(5) == Some(&"head"),
                 });
             }
             flag @ ("--tracer" | "--muzzle" | "--impact" | "--rail" | "--lightning") => {
@@ -444,6 +458,7 @@ fn view_options(
         projectiles: o.projectiles.clone(),
         explosions: o.explosions.clone(),
         effects: o.effects.clone(),
+        hits: o.hits.clone(),
         weapon: o.weapon.clone(),
         aim: o.aim,
         demo,

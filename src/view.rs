@@ -9,6 +9,8 @@ use shagger::rendering::water::water_surface_lighting::{water_map_lights, water_
 use shagger::shared::js::js_hypot;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
+use washoi::client::cartoon_hit_effect::{CartoonHitEffect, CartoonHitRenderer};
+use washoi::client::damage_numbers::{DamageNumberRenderer, DamageNumbers};
 use washoi::client::fps_liquid_audio::play_liquid_crossing;
 use washoi::liquid::client::liquid_interaction_system::{LiquidInteractionSystem, WaterRipples};
 use washoi::liquid::client::splash_droplet_renderer::SplashDropletRenderer;
@@ -151,6 +153,7 @@ pub struct ViewOptions {
     pub projectiles: Vec<ProjectileView>,
     pub explosions: Vec<ExplosionView>,
     pub effects: Vec<EffectView>,
+    pub hits: Vec<HitView>,
     /// The first-person weapon to hold (`--weapon`), and whether it is
     /// aimed down its sights (`--aim`).
     pub weapon: Option<String>,
@@ -305,6 +308,17 @@ pub fn chase_camera(camera: &mut Camera, player: &InterpolatedEntity) {
     camera.pitch = 0.15;
 }
 
+/// The player on screen: our own, else the one followed (none for a free
+/// camera).
+#[must_use]
+pub fn view_entity<'a>(
+    local: Option<&'a str>,
+    players: &'a [(String, InterpolatedEntity, PlayerModelVisualStyle)],
+    follow: Option<usize>,
+) -> Option<&'a str> {
+    local.or_else(|| follow.and_then(|i| players.get(i)).map(|(id, _, _)| id.as_str()))
+}
+
 /// The sounds of a frame's events, heard at `camera` from the followed
 /// player (if any), at `now` seconds.
 #[allow(clippy::too_many_arguments)]
@@ -321,9 +335,7 @@ pub fn play_view_sounds(
     audio
         .sfx
         .set_listener(camera.position.as_dvec3(), camera.forward().as_dvec3(), DVec3::Y);
-    let view_entity = view
-        .local
-        .or_else(|| follow.and_then(|i| players.get(i)).map(|(id, _, _)| id.as_str()));
+    let view_entity = view_entity(view.local, players, follow);
     let position = |id: &str| {
         players
             .iter()
@@ -431,6 +443,18 @@ pub struct ExplosionView {
     /// Its Quake origin.
     pub origin: [f32; 3],
     /// Seconds since it went off.
+    pub age: f64,
+}
+
+/// A hit the player on screen dealt, held at an age (`--hit`): its damage
+/// number and, for a hard one, its cartoon sprite.
+#[derive(Debug, Clone, PartialEq)]
+pub struct HitView {
+    /// The victim's Quake origin.
+    pub origin: [f64; 3],
+    pub damage: u16,
+    pub head: bool,
+    /// Seconds since it landed.
     pub age: f64,
 }
 
@@ -574,6 +598,8 @@ pub struct LoadedMap {
     pub explosions: Vec<ExplosionView>,
     /// Streaks, flashes and impacts to hold on the map.
     pub effects: Vec<EffectView>,
+    /// Hits to hold on the map.
+    pub hits: Vec<HitView>,
     /// The first-person weapon, if any.
     pub weapon: Option<String>,
     /// Load the player model for players that move (a demo or a match).
@@ -635,6 +661,7 @@ pub fn load_map(data: &Path, map: &str) -> Result<LoadedMap, String> {
         players: Vec::new(),
         projectiles: Vec::new(),
         explosions: Vec::new(),
+        hits: Vec::new(),
         effects: Vec::new(),
         weapon: None,
         remote_players: false,
@@ -710,6 +737,12 @@ pub struct MapRenderer {
     liquid_clock: f64,
     /// The splash crowns' spray.
     splash: SplashDropletRenderer,
+    /// Numbers floating over the players the one on screen hurts.
+    pub damage_numbers: DamageNumbers,
+    damage_number_renderer: DamageNumberRenderer,
+    /// POW! sprites over hard hits; no renderer without their images.
+    pub cartoon_hits: CartoonHitEffect,
+    cartoon_hit_renderer: Option<CartoonHitRenderer>,
     /// Tint, fog and view warp while the camera is under a surface.
     pub underwater: UnderwaterView,
     /// The scene fog the underwater view holds this frame.
@@ -982,6 +1015,36 @@ impl MapRenderer {
         }
     }
 
+    /// FrameEffects' damage numbers and cartoon hits, then GameEvents'
+    /// `handleOutgoingDamage` for each hit the player on screen dealt
+    /// (`view_entity`): a number over the victim, and a sprite for a hard one.
+    pub fn play_hit_feedback(&mut self, events: &[SnapshotEvent], view_entity: Option<&str>, dt: f64) {
+        self.damage_numbers.update(dt);
+        self.cartoon_hits.update(dt);
+        let Some(viewer) = view_entity else {
+            return;
+        };
+        for event in events {
+            if let SnapshotEvent::Damage {
+                entity_id,
+                attacker_id,
+                damage,
+                at,
+                hit_location,
+                ..
+            } = event
+                && attacker_id == viewer
+                && attacker_id != entity_id
+            {
+                let at = DVec3::new(at.x, at.y, at.z);
+                if *damage > 0 {
+                    self.damage_numbers.spawn(at, *damage, *hit_location);
+                }
+                self.cartoon_hits.spawn(at, *damage);
+            }
+        }
+    }
+
     pub fn play_effects(&mut self, events: &[SnapshotEvent], weapons: &HashMap<String, String>, dt: f64) {
         self.effect_time += dt;
         let now = self.effect_time;
@@ -1166,6 +1229,10 @@ impl MapRenderer {
         }
         self.splash
             .prepare(gpu, &frame, self.liquid.droplets().map_or(&[], |d| d.sprites()));
+        self.damage_number_renderer.prepare(gpu, &frame, &self.damage_numbers);
+        if let Some(cartoon) = &mut self.cartoon_hit_renderer {
+            cartoon.prepare(gpu, &frame, &self.cartoon_hits);
+        }
         if let Some(water) = &mut self.water {
             water.update(self.item_time - self.water_time);
             self.water_time = self.item_time;
@@ -1239,6 +1306,11 @@ impl MapRenderer {
         self.splash.draw(pass);
         self.explosions.draw(pass);
         self.models.draw_blended(pass);
+        self.damage_number_renderer.draw(pass);
+        // Rendering group 1: over everything, so last and without depth.
+        if let Some(cartoon) = &self.cartoon_hit_renderer {
+            cartoon.draw(pass);
+        }
     }
 }
 
@@ -1645,6 +1717,26 @@ pub fn build_renderer(gpu: &Gpu, map: &mut LoadedMap, output_format: wgpu::Textu
             ),
         }
     }
+    // The HUD's Rajdhani Bold stands in for the numbers' Arial.
+    let damage_font = shagger::ui::font::Font::from_bytes(include_bytes!("../assets/fonts/Rajdhani-Bold.ttf").to_vec())
+        .expect("the client ships Rajdhani");
+    let cartoon_hit_renderer = CartoonHitRenderer::load(gpu, format, &mut map.pk3);
+    let mut damage_numbers = DamageNumbers::new();
+    let mut cartoon_hits = CartoonHitEffect::new(
+        cartoon_hit_renderer
+            .as_ref()
+            .map_or(0, CartoonHitRenderer::sprite_count),
+    );
+    for hit in &map.hits {
+        let at = babylon(hit.origin);
+        damage_numbers.spawn(at, hit.damage, hit.head.then_some("head"));
+        cartoon_hits.spawn(at, hit.damage);
+    }
+    // Every held hit at its age (the newest's, if they differ).
+    if let Some(age) = map.hits.iter().map(|h| h.age).reduce(f64::min) {
+        damage_numbers.update(age);
+        cartoon_hits.update(age);
+    }
     MapRenderer {
         projectiles,
         trails,
@@ -1676,6 +1768,10 @@ pub fn build_renderer(gpu: &Gpu, map: &mut LoadedMap, output_format: wgpu::Textu
         liquid,
         liquid_clock: 0.0,
         splash: SplashDropletRenderer::new(gpu, format),
+        damage_numbers,
+        damage_number_renderer: DamageNumberRenderer::new(gpu, format, &damage_font),
+        cartoon_hits,
+        cartoon_hit_renderer,
         underwater: UnderwaterView::default(),
         underwater_fog: None,
         applied_fog: None,
@@ -1760,6 +1856,7 @@ pub fn run(o: &ViewOptions) -> i32 {
     map.projectiles.clone_from(&o.projectiles);
     map.explosions.clone_from(&o.explosions);
     map.effects.clone_from(&o.effects);
+    map.hits.clone_from(&o.hits);
     map.weapon.clone_from(&o.weapon);
     map.remote_players = feed.is_some();
     // The highlight reel: analyzed and cut before the first frame, its
@@ -1916,6 +2013,11 @@ pub fn run(o: &ViewOptions) -> i32 {
             renderer.set_live_players(&drawn, 1.0 / 60.0);
             renderer.set_live_projectiles(&projectiles, 1.0 / 60.0);
             renderer.play_effects(&view.effects, &view.weapons, 1.0 / 60.0);
+            renderer.play_hit_feedback(
+                &view.effects,
+                view_entity(feed.local_entity(), &players, o.follow),
+                1.0 / 60.0,
+            );
             if let Some(hud) = &mut hud {
                 hud.scoreboard.held = o.scoreboard;
                 update_watch_hud(

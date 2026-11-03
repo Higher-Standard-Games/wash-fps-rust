@@ -42,7 +42,7 @@ use winit::window::{CursorGrabMode, Window, WindowId};
 use crate::reel_overlay::ReelOverlay;
 use crate::view::{
     CLEAR, DemoViewSounds, Feed, LoadedMap, MapRenderer, SceneReelWorld, apply_reel_camera, build_renderer,
-    chase_camera, play_view_sounds, styled_players, update_watch_hud,
+    chase_camera, play_view_sounds, styled_players, update_watch_hud, view_entity,
 };
 use shagger::animation::player_model_manager::PlayerModelVisualStyle;
 use shagger::network::client::snapshot_buffer::InterpolatedEntity;
@@ -370,6 +370,11 @@ impl App {
             }
             s.renderer.set_live_projectiles(&view.projectiles, f64::from(dt));
             s.renderer.play_effects(&view.effects, &view.weapons, f64::from(dt));
+            s.renderer.play_hit_feedback(
+                &view.effects,
+                view_entity(feed.local_entity(), &players, self.follow),
+                f64::from(dt),
+            );
             if let Some(audio) = &mut self.audio {
                 play_view_sounds(
                     audio,

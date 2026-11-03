@@ -2,9 +2,11 @@
 //! local first-person weapon so far).
 
 pub mod ammo_status;
+pub mod cartoon_hit_effect;
 pub mod cinematic_demo_player;
 pub mod credits;
 pub mod crosshair;
+pub mod damage_numbers;
 pub mod demo_download;
 pub mod demo_playback;
 pub mod demos_view;
