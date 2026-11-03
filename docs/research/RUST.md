@@ -2676,6 +2676,26 @@ the webview gets its own spec after the release.
 
 Newest first. Each entry names the commits and what proves them.
 
+### 0.1.1 released: skins, ammo counters, the end screen (November 3, 2026)
+
+- **Normal and gloss maps** (shagger 5d9fff7): model materials sample
+  their normal and metallic-roughness textures (cotangent frame from
+  screen derivatives); the riotgun's parity shot sits close to the
+  browser's.
+- **On-weapon ammo counters** (shagger 5d9fff7, wash-fps-rust f38dacc):
+  `weapon/ammo_counter_display.rs` ports the TypeScript counter: an
+  Orbitron digit strip with its glow, three quads on `tag_ammo`, tuned by
+  the weapon's `.cfg`, showing the current clip. Checked on screen
+  ("123" upright on the riotgun).
+- **The blade's swing trail** (shagger 61bf6e4, a02f83a; wash-fps-rust
+  0c04f74).
+- **The end screen** (wash-fps-rust cedd6aa): checked in a single-match
+  deathmatch on a local wash-fps server (`SHAG_TIMELIMIT=25s`,
+  `--single-match`): the result plate, the board and "Back to the lobby".
+- **Item 10.** The in-game HUD already follows `WashikiTheme.css`; the
+  menus wait for the webview.
+- **Version 0.1.1.**
+
 ### 0.1.1: camera motion and weapon animations (November 3, 2026)
 
 - **Camera** (shagger 5a3e876, wash-fps-rust 0204509): SHAG
