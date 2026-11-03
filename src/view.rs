@@ -51,7 +51,8 @@ use shagger::rendering::offscreen::{OFFSCREEN_FORMAT, render_hdr_scene_with_ui_t
 
 use shagger::loader::bsp::liquid_classifier::{classify_liquids, liquid_kind_from_surface_parms};
 use shagger::loader::bsp::world_fog::parse_world_fog;
-use shagger::rendering::sky_renderer::{SkyRenderer, apply_skybox};
+use shagger::loader::texture::skybox_loader::load_environment_cubemap;
+use shagger::rendering::sky_renderer::{SkyRenderer, apply_skybox, upload_cube};
 use shagger::rendering::water::liquid_surface_system::{LiquidSurfaceSystem, WaterSettings};
 use shagger::rendering::wgpu;
 use shagger::rendering::world_culling::WorldCulling;
@@ -1674,7 +1675,7 @@ impl MapRenderer {
 /// unified water material over the map's sky cube, unless `r_water` is 0.
 fn claim_liquid_surfaces(
     gpu: &Gpu,
-    map: &LoadedMap,
+    map: &mut LoadedMap,
     geometry: &shagger::rendering::world_geometry::WorldGeometry,
     sky: Option<&SkyRenderer>,
     format: wgpu::TextureFormat,
@@ -1708,7 +1709,36 @@ fn claim_liquid_surfaces(
         Some(_) => c.get_number("r_water_probe_height"),
         None => 64.0,
     });
-    let water = LiquidSurfaceSystem::new(gpu, geometry, &liquids, sky.map(SkyRenderer::cube), format, probe_lift)?;
+    // A liquid's own `cubemap`, the first one each kind names.
+    let mut kind_environments: Vec<(_, wgpu::TextureView)> = Vec::new();
+    for liquid in liquids.iter().filter(|l| l.drawn) {
+        let Some(base) = liquid.environment_map.as_deref() else {
+            continue;
+        };
+        if kind_environments.iter().any(|(k, _)| *k == liquid.kind) {
+            continue;
+        }
+        match load_environment_cubemap(&mut map.pk3, base) {
+            Ok(faces) => {
+                let (kind, size) = (liquid.kind.as_str(), faces.size);
+                println!("water: {kind} environment {base} ({size}x{size})");
+                kind_environments.push((liquid.kind, upload_cube(gpu, &faces, "water environment")));
+            }
+            Err(e) => eprintln!(
+                "[Water] Could not load {} environment {base}: {e}",
+                liquid.kind.as_str()
+            ),
+        }
+    }
+    let water = LiquidSurfaceSystem::new(
+        gpu,
+        geometry,
+        &liquids,
+        sky.map(SkyRenderer::cube),
+        &kind_environments,
+        format,
+        probe_lift,
+    )?;
     let kinds: Vec<String> = liquids
         .iter()
         .filter(|l| l.drawn)

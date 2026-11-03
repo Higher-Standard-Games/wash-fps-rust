@@ -2582,6 +2582,23 @@ fit and did not count the parity harness.
 
 Newest first. Each entry names the commits and what proves them.
 
+### Milestone 11, eighteenth slice: liquids' own cubemaps (November 3, 2026)
+
+- **shagger 9500dfd.** `loader/texture/skybox_loader.rs` ports
+  `loadEnvironmentCubemap`: a six-face KTX container at `{base}.ktx`
+  (`ktx1_loader::parse_ktx1_cube_faces`, from `parseKTX1CubeFaces`, then
+  the faces reordered into Quake order and through the sky's face map),
+  else a complete `_rt`... or QFusion `_px`... set of one size.
+  `LiquidSurfaceSystem::new` takes the cubes by kind
+  (`setEnvironmentTexture(texture, { kind })`) and binds a liquid's own
+  where no room was captured for its pool, the sky's elsewhere, as
+  `materialFor`'s fallback does. `sky_renderer::upload_cube` is shared.
+- **wash-fps-rust.** `claim_liquid_surfaces` loads the first `cubemap`
+  each drawn liquid kind's shader names (amphi1's slime: `env/wamphi3`,
+  1024 square).
+- **Proof.** A unit test splits a synthetic KTX cube into six parseable
+  faces. amphi1 logs the slime's environment at load.
+
 ### Milestone 11, seventeenth slice: soft particles (November 3, 2026)
 
 - **shagger 8330c7f.** `rendering/world_renderer.rs` and `world.wgsl` port
