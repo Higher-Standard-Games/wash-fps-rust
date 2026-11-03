@@ -3,6 +3,8 @@
 //! writes a PNG; otherwise it opens a window with a free camera. Players
 //! given with `--player` stand on the map as the Vanguard model.
 
+use shagger::lighting::map_emissive_surfaces::{SurfaceEmission, extract_emissive_surfaces};
+use shagger::rendering::water::water_surface_lighting::{water_map_lights, water_surface_lights};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
@@ -1234,6 +1236,25 @@ pub fn build_renderer(gpu: &Gpu, map: &mut LoadedMap, output_format: wgpu::Textu
         renderer.set_hidden_batches(water.hidden_batches());
         let camera = Camera::default();
         let captured = water.capture_reflections(gpu, &geometry, &renderer, sky.as_ref(), camera.near, camera.far);
+        // MapLoader: the map's lights, then its emitting panels.
+        let options = shagger::loader::shader::q3_shader_types::ResolveMaterialOptions::default();
+        let panels = extract_emissive_surfaces(&map.bsp, |name| {
+            let strength = map
+                .shaders
+                .resolve_material_props(&map.pk3, name, &options)
+                .surface_light;
+            SurfaceEmission {
+                emissive: strength > 0.0,
+                surface_light: strength,
+            }
+        });
+        let mut sources = water_map_lights(&map.bsp.entities);
+        sources.extend(water_surface_lights(&panels));
+        let lit = water.prepare_lighting(gpu, &geometry, &sources);
+        println!(
+            "water: {} authored highlight candidates, {lit} cached static highlight sources",
+            sources.len()
+        );
         println!(
             "water: {captured} room captures of {} pools, at {}",
             water.probe_cache().patches.len(),

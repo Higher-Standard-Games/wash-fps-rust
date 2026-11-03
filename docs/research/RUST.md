@@ -2582,6 +2582,33 @@ fit and did not count the parity harness.
 
 Newest first. Each entry names the commits and what proves them.
 
+### Milestone 11, third slice: water highlights (November 3, 2026)
+
+- **shagger `1c3b6b3`.** `lighting/map_emissive_surfaces.rs` ports
+  `MapEmissiveSurfaces.ts` (the world's `q3map_surfacelight` faces, largest
+  first). `rendering/water/static_visibility_index.rs` ports
+  `StaticVisibilityIndex.ts` (a BVH of 16-triangle leaves).
+  `water_surface_lighting.rs` ports `WaterSurfaceLighting.ts`:
+  untargeted `light` entities and emitting panels become up to four
+  sources for each of up to four reactive pools, each with a 16 by 16
+  visibility mask traced once at load through the static opaque world.
+  `LiquidSurfaceSystem::prepare_lighting` uploads the masks and binds
+  them, the sources and the mask bounds per surface. Ray triangle tests
+  now follow Babylon 8's `intersectsTriangle` exactly: an edge slack of
+  `Epsilon` (0.001) and no hits behind the origin, in the probe picks too.
+- **wash-fps-rust.** The map renderer gathers the sources as `MapLoader`
+  does (`waterMapLights`, then `waterSurfaceLights` from
+  `resolve_material_props(..).surface_light`) after the room captures.
+- **Proof.** Unit tests port `WaterSurfaceLighting.test.ts` (parsing,
+  the four-light cap, walls blocking, underwater and out-of-range
+  sources, panels facing the pool). washoi_dm11 lights all three pools
+  with 10 sources; a debug render of the masks shows the lit and shadowed
+  parts of the lower pool. The highlights are faint on dm11, as in the
+  TypeScript: its lights sit near the end of their range from the water.
+- **Not yet.** The actor reflection pass, ripples from bodies
+  (`WaterDisturbances`), per-liquid environment cubemaps, and the
+  underwater view.
+
 ### Milestone 11, second slice: water (November 3, 2026)
 
 - **shagger `ce7b320` and `a09e145`.** `loader/bsp/liquid_classifier.rs` ports
