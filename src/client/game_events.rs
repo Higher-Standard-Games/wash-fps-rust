@@ -261,7 +261,7 @@ impl GameAudio {
 
     #[must_use]
     pub fn new(sfx: AudioV2Sfx) -> Self {
-        Self {
+        let mut audio = Self {
             sfx,
             combat: FpsCombatAudio::default(),
             reload: FpsReloadAudio::default(),
@@ -274,7 +274,15 @@ impl GameAudio {
             music_packages: Pk3Loader::new(),
             cvar_serial: None,
             music_phase: None,
-        }
+        };
+        // The audio cvars before the first sound, so a muted game is muted
+        // from the start and music that is off never starts.
+        let serial = with_cvars(|c| {
+            apply_audio_cvars(c, &mut audio.sfx, &mut audio.music, &mut |_| None);
+            c.serial()
+        });
+        audio.cvar_serial = Some(serial);
+        audio
     }
 
     /// Reads the playlists from `data` (the packages' directory) and

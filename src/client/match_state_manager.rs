@@ -2,10 +2,12 @@
 //! events tell it (phase, clock, ready count, scores, rosters, rounds), for
 //! the HUD and the announcer.
 //!
-//! Not yet: the phase callbacks (callers compare phases themselves), the
-//! bomb's brush models (`brushModels.restore`), and typed objectives, round
-//! results and explosions, which stay JSON until Search and Destroy needs
-//! them.
+//! The bomb's brush models (`brushModels.restore`) are applied by
+//! `LivePlay`, which holds the prediction world.
+//!
+//! Not yet: the phase callbacks (callers compare phases themselves), and
+//! typed objectives, round results and explosions, which stay JSON until
+//! Search and Destroy needs them.
 
 use std::collections::BTreeMap;
 

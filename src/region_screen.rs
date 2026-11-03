@@ -29,7 +29,7 @@ use winit::window::{Window, WindowId};
 
 use egui::{Color32, Pos2, Rect, Stroke, Vec2, pos2, vec2};
 
-use crate::window::{OpenWindow, open_window, run_on_event_loop};
+use crate::window::{OpenWindow, next_frame, open_window, present, run_on_event_loop};
 
 const BACKGROUND: wgpu::Color = wgpu::Color {
     r: 0.035,
@@ -674,16 +674,18 @@ struct PickerApp {
 impl PickerApp {
     fn redraw(&mut self) {
         let Some(m) = &mut self.open else { return };
-        let frame = match m.surface.get_current_texture() {
-            wgpu::CurrentSurfaceTexture::Success(f) | wgpu::CurrentSurfaceTexture::Suboptimal(f) => f,
-            wgpu::CurrentSurfaceTexture::Outdated | wgpu::CurrentSurfaceTexture::Lost => {
-                m.surface.configure(&m.gpu.device, &m.config);
+        let frame = match next_frame(&m.gpu, &m.window, &mut m.surface, &m.config) {
+            Ok(Some(frame)) => frame,
+            Ok(None) => return,
+            Err(why) => {
+                self.error = Some(why);
                 return;
             }
-            // Hidden or slow: try again next frame.
-            _ => return,
         };
-        let view = frame.texture.create_view(&wgpu::TextureViewDescriptor::default());
+        let view = frame
+            .texture
+            .texture
+            .create_view(&wgpu::TextureViewDescriptor::default());
         let picker = &mut self.picker;
         let mut chosen = None;
         let ui = m.layer.run(&m.window, |ui| chosen = picker.ui(ui));
@@ -709,8 +711,7 @@ impl PickerApp {
         m.layer
             .paint(&m.gpu, &mut encoder, &view, [m.config.width, m.config.height], ui);
         m.gpu.queue.submit([encoder.finish()]);
-        m.window.pre_present_notify();
-        m.gpu.queue.present(frame);
+        present(&m.gpu, &m.window, &mut m.surface, &m.config, frame);
         if chosen.is_some() {
             self.chosen = chosen;
         }
@@ -771,7 +772,7 @@ impl ApplicationHandler for PickerApp {
             }
             WindowEvent::RedrawRequested => {
                 self.redraw();
-                if self.chosen.is_some() {
+                if self.chosen.is_some() || self.error.is_some() {
                     event_loop.exit();
                 }
             }
@@ -801,6 +802,9 @@ pub fn run(config_dir: Option<&Path>, offline: bool) -> Result<Option<Region>, S
     };
     let ran = run_on_event_loop(&mut app);
     app.picker.cancel.store(true, std::sync::atomic::Ordering::Relaxed);
+    if let Some(m) = &app.open {
+        crate::window::remember_placement(&m.window);
+    }
     app.open = None;
     ran?;
     if let Some(why) = app.error {

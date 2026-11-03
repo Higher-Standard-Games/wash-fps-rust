@@ -174,6 +174,13 @@ pub fn weapon_speed_bonus(id: &str) -> f64 {
     }
 }
 
+/// `WEAPONS[id]?.hipfireBlocked`: the launchers fire only aimed, so the
+/// trigger puts the aim up (`FPSController`'s auto ADS).
+#[must_use]
+pub fn weapon_hipfire_blocked(id: &str) -> bool {
+    matches!(id, "glauncher" | "rlauncher")
+}
+
 /// `WEAPONS[id]?.reloadModel`: `clip` guns reload a magazine, `pool` ones
 /// draw from their ammo, the blade never reloads.
 #[must_use]

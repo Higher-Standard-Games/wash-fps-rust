@@ -76,6 +76,7 @@
 //! id such as `plasmagun`), at the hip or, with `--aim`, down its sights; `--quad` puts the quad
 //! outline on it.
 
+mod bench;
 mod data_sync_screen;
 mod demo_overlay;
 mod menu;
@@ -108,6 +109,7 @@ fn usage() -> ! {
          usage: washoi [--region eu|us] [--data DIR] [--offline]\n\
          \x20      washoi sync [--region eu|us] [--data DIR]\n\
          \x20      washoi regions [--screenshot FILE.png [--seconds N] [--size WxH]]\n\
+         \x20      washoi bench <file.shagdemo> [--data DIR] [--frames N] [--warmup N] [--follow N] [--out FILE.json]\n\
          \x20      washoi --version\n\
          \x20      washoi view <map> [--data DIR] [--spawn N] [--screenshot FILE.png] [--size WxH] [--time T] [--at X,Y,Z,YAW] [--pitch DEG] [--player X,Y,Z,YAW[,CLIP[,FRAME[,quad][,WEAPON]]]]... [--projectile ID,X,Y,Z,YAW[,PITCH]]... [--explosion ID,X,Y,Z,AGE]... [--weapon ID [--aim] [--quad]] [--no-cull] [--no-lights] [--seconds N]\n\
          \x20      washoi demo <file.shagdemo> [--data DIR] [--screenshot FILE.png] [--size WxH] [--time T] [--at X,Y,Z,YAW] [--pitch DEG] [--follow N] [--reel MINUTES] [--audio-out FILE.wav] [--scoreboard] [--seconds N]\n\
@@ -147,6 +149,10 @@ struct Options {
     follow: Option<usize>,
     reel: Option<f64>,
     audio_out: Option<PathBuf>,
+    /// `washoi bench`: frames to time, frames before timing, the JSON report.
+    frames: Option<u64>,
+    warmup: Option<u64>,
+    out: Option<PathBuf>,
     scoreboard: bool,
     say: Option<String>,
     /// From the lobby into the window rather than headless (`--window`).
@@ -202,6 +208,9 @@ fn parse_options(args: impl Iterator<Item = String>) -> Options {
             "--follow" => o.follow = Some(value().parse().unwrap_or_else(|_| usage())),
             "--reel" => o.reel = Some(value().parse().unwrap_or_else(|_| usage())),
             "--audio-out" => o.audio_out = Some(PathBuf::from(value())),
+            "--frames" => o.frames = Some(value().parse().unwrap_or_else(|_| usage())),
+            "--warmup" => o.warmup = Some(value().parse().unwrap_or_else(|_| usage())),
+            "--out" => o.out = Some(PathBuf::from(value())),
             "--scoreboard" => o.scoreboard = true,
             "--say" => o.say = Some(value()),
             "--window" => o.window = true,
@@ -412,7 +421,11 @@ fn parse_options(args: impl Iterator<Item = String>) -> Options {
 }
 
 fn main() {
-    let mut args = std::env::args().skip(1).peekable();
+    // Lossy rather than `args()`, which panics on a path that is not UTF-8.
+    let mut args = std::env::args_os()
+        .skip(1)
+        .map(|a| a.to_string_lossy().into_owned())
+        .peekable();
     // The game itself: no mode, or only its options.
     let mode = match args.peek().map(String::as_str) {
         None => "game".to_owned(),
@@ -458,6 +471,11 @@ fn main() {
         "lobby" => lobby(&url, &o),
         "game" => game(o),
         "regions" => regions_mode(&o),
+        "bench" => {
+            let mut v = view_options(&o, url.clone(), Some(PathBuf::from(&url)), None, false);
+            v.bench = Some((o.frames.unwrap_or(600), o.warmup.unwrap_or(60), o.out.clone()));
+            view::run(&v)
+        }
         "sync" => {
             let (_, data) = region(&o);
             let dir = game_data_dir(&o);
@@ -555,26 +573,22 @@ fn game(mut o: Options) -> i32 {
                 _ => return 1,
             },
             Ok(None) => return 0,
-            Err(why) => {
-                eprintln!("{why}");
-                return 1;
-            }
+            Err(why) => return fatal(&why),
         }
     };
     let dir = game_data_dir(&o);
     // `--offline` never touches the network: whatever is on disk is played.
     if o.offline && !shagger::loader::pk3::package_store::has_packages(&dir) {
-        eprintln!("--offline: no game data in {}; start once without it", dir.display());
-        return 1;
+        return fatal(&format!(
+            "--offline: no game data in {}; start once without it",
+            dir.display()
+        ));
     }
     if !o.offline {
         match data_sync_screen::run(&data, &dir) {
             Ok(data_sync_screen::SyncOutcome::Ready) => {}
             Ok(data_sync_screen::SyncOutcome::Quit) => return 0,
-            Err(why) => {
-                eprintln!("{why}");
-                return 1;
-            }
+            Err(why) => return fatal(&why),
         }
     }
     o.data = Some(dir);
@@ -626,26 +640,91 @@ fn menu_mode(url: &str, o: &Options) -> i32 {
             }
         };
     }
+    // Why the last match or demo did not start, shown on the next menu.
+    let mut match_error = None;
     loop {
-        match menu::choose(url, key_file.clone()) {
+        match menu::choose(url, key_file.clone(), match_error.take()) {
             Ok(Some(c)) => {
                 go(&c);
-                if let Some(demo) = &c.demo {
+                let started = if let Some(demo) = &c.demo {
                     let mut v = view_options(o, c.map.clone(), Some(demo.clone()), None, false);
                     v.reel = c.reel.or(o.reel);
-                    view::run(&v);
-                    continue;
+                    view::start(&v)
+                } else {
+                    let watch = Some((c.server_url.clone(), c.name.clone(), c.admission_ticket.clone()));
+                    let mut v = view_options(o, c.server_url.clone(), None, watch, c.play);
+                    v.team.clone_from(&c.team);
+                    view::start(&v)
+                };
+                if let Err(why) = started {
+                    eprintln!("{why}");
+                    match_error = Some(why);
                 }
-                let watch = Some((c.server_url.clone(), c.name.clone(), c.admission_ticket.clone()));
-                view::run(&view_options(o, c.server_url.clone(), None, watch, c.play));
             }
             Ok(None) => return 0,
-            Err(e) => {
-                eprintln!("menu: {e}");
-                return 1;
-            }
+            Err(e) => return fatal(&format!("menu: {e}")),
         }
     }
+}
+
+/// An error that ends the game: printed, added to `washoi.log` in the
+/// config folder, and in a release build shown in a dialog, since a game
+/// started from its icon has no console to print to.
+fn fatal(why: &str) -> i32 {
+    eprintln!("{why}");
+    if let Some(dir) = config_dir() {
+        use std::io::Write;
+        let _ = std::fs::create_dir_all(&dir);
+        if let Ok(mut log) = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(dir.join("washoi.log"))
+        {
+            let at = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map_or(0, |d| d.as_secs());
+            let _ = writeln!(log, "{at} {} {why}", washoi::version_line());
+        }
+    }
+    if !cfg!(debug_assertions) {
+        show_error_dialog(why);
+    }
+    1
+}
+
+/// The system's own dialog, through a tool every desktop has; without one
+/// the log is all there is.
+fn show_error_dialog(why: &str) {
+    let text = format!("Washoi could not start.\n\n{why}");
+    #[cfg(windows)]
+    let _ = {
+        use std::os::windows::process::CommandExt;
+        // A PowerShell single-quoted string takes everything but `'`, doubled.
+        let script = format!(
+            "Add-Type -AssemblyName PresentationFramework; [System.Windows.MessageBox]::Show('{}', 'Washoi') | Out-Null",
+            text.replace('\'', "''")
+        );
+        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+        std::process::Command::new("powershell")
+            .args(["-NoProfile", "-Command", &script])
+            .creation_flags(CREATE_NO_WINDOW)
+            .status()
+    };
+    #[cfg(target_os = "macos")]
+    let _ = {
+        let quoted = text.replace('\\', "\\\\").replace('"', "\\\"");
+        std::process::Command::new("osascript")
+            .args([
+                "-e",
+                &format!("display alert \"Washoi\" message \"{quoted}\" as critical"),
+            ])
+            .status()
+    };
+    #[cfg(not(any(windows, target_os = "macos")))]
+    let _ = std::process::Command::new("zenity")
+        .args(["--error", "--title=Washoi", "--no-markup", &format!("--text={text}")])
+        .status()
+        .or_else(|_| std::process::Command::new("kdialog").args(["--error", &text]).status());
 }
 
 fn view_options(
@@ -657,6 +736,7 @@ fn view_options(
 ) -> view::ViewOptions {
     let (width, height) = o.size.unwrap_or((1280, 720));
     view::ViewOptions {
+        team: None,
         seconds: o.seconds,
         map,
         data: data_dir(o),
@@ -686,6 +766,7 @@ fn view_options(
         follow: o.follow,
         reel: o.reel,
         audio_out: o.audio_out.clone(),
+        bench: None,
         scoreboard: o.scoreboard,
         join,
         say: o.say.clone(),
@@ -995,7 +1076,9 @@ fn play_match(url: &str, name: &str, ticket: Option<String>, seconds: f64, play:
                             } = event
                                 && *id == entity_id
                             {
-                                client.set_speed_bonus(weapon_speed_bonus(current_weapon));
+                                client.set_speed_bonus(weapon_speed_bonus(
+                                    washoi::client::game_events::canonical_weapon_id(current_weapon),
+                                ));
                             }
                         }
                         match prediction::server_snapshot(&state, &entity_id) {

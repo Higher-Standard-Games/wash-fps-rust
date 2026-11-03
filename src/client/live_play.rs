@@ -27,6 +27,7 @@ use crate::client::snapshot_feed::{DemoView, SnapshotFeed};
 use crate::client::v2_network_client::{ClientInput, PredictedMovementState, V2NetworkClient};
 use crate::shared::entities::definitions::weapons::weapons_table::weapon_speed_bonus;
 use crate::shared::net::snapshot_events::{SnapshotEvent, WashoiEvents};
+use shagger::shared::json::Value;
 
 /// shared/server/gametype/Loadout.ts `DEFAULT_LOADOUT`: the kit the browser's
 /// picker starts on, sent for the player until the native client has a picker.
@@ -54,6 +55,8 @@ pub mod buttons {
     pub const ALT_FIRE: u16 = 1 << 9;
     pub const RELOAD: u16 = 1 << 10;
     pub const USE: u16 = 1 << 11;
+    /// ADS asked for by the trigger on a weapon that cannot fire from the hip.
+    pub const AUTO_ADS: u16 = 1 << 12;
 }
 
 /// `PlayerInputState`: what the keys and mouse ask for this tick.
@@ -70,12 +73,30 @@ pub struct PlayInput {
     pub alt_fire: bool,
     pub reload: bool,
     pub use_key: bool,
+    /// The aim was put up by the trigger, not the aim key (`autoAds`).
+    pub auto_ads: bool,
     /// Radians: yaw about +y, Babylon left-handed (forward is
     /// (sin yaw, 0, cos yaw)); pitch positive looks down.
     pub yaw: f64,
     pub pitch: f64,
     /// 1 to 9 picks a weapon; 0 keeps the one in hand.
     pub weapon_slot: u8,
+}
+
+/// `bomb?.disabledModels`: the brush models a detonation took out.
+fn disabled_models(match_state: &MatchStateManager) -> Vec<usize> {
+    match_state
+        .bomb()
+        .and_then(|b| b.get("disabledModels"))
+        .and_then(|v| v.as_array())
+        .map(|list| {
+            list.iter()
+                .filter_map(Value::as_f64)
+                .filter(|i| *i >= 0.0 && i.fract() == 0.0)
+                .map(|i| i as usize)
+                .collect()
+        })
+        .unwrap_or_default()
 }
 
 /// One tick's command from the input (`sendInput`'s buttons and world
@@ -95,6 +116,7 @@ pub fn command_for(input: &PlayInput, tick: u32) -> Command {
         (input.alt_fire, buttons::ALT_FIRE),
         (input.reload, buttons::RELOAD),
         (input.use_key, buttons::USE),
+        (input.fire && input.alt_fire && input.auto_ads, buttons::AUTO_ADS),
     ] {
         if on {
             b |= bit;
@@ -142,6 +164,11 @@ const COMMAND_MS: f64 = 8.0;
 const RESPAWN_COOLDOWN_MS: f64 = 3000.0;
 
 pub struct LivePlay {
+    /// The side picked in the lobby room (`shag.lobby_team`), asked for on
+    /// join; `None` lets the server balance.
+    team: Option<String>,
+    /// The brush models last switched off in prediction.
+    disabled_models: Vec<usize>,
     session: NetworkSession<SnapshotEvent>,
     feed: SnapshotFeed,
     predictor: V2NetworkClient,
@@ -208,6 +235,7 @@ impl LivePlay {
         url: &str,
         name: &str,
         ticket: Option<String>,
+        team: Option<String>,
         data: &Path,
         timeout: Duration,
     ) -> Result<Self, String> {
@@ -258,6 +286,8 @@ impl LivePlay {
                         player_id: String::new(),
                         entity_id: String::new(),
                         joined: false,
+                        team,
+                        disabled_models: Vec::new(),
                         notices: Vec::new(),
                         connected: true,
                         alive: false,
@@ -403,7 +433,7 @@ impl LivePlay {
                         // ("Choose a loadout before joining."); the others ignore it.
                         self.session.send(default_loadout());
                         self.session.send(SessionRequest::JoinGame {
-                            team_id: None,
+                            team_id: self.team.clone(),
                             manual_pick: false,
                             admission_ticket: None,
                         });
@@ -464,6 +494,13 @@ impl LivePlay {
             }
         }
         let now = self.now_ms();
+        // `MatchStateManager`: the brushes the bomb destroyed are gone from
+        // prediction too, before the snapshots replay against them.
+        let disabled = disabled_models(&self.feed.match_state);
+        if disabled != self.disabled_models {
+            self.predictor.restore_brush_models(&disabled);
+            self.disabled_models = disabled;
+        }
         self.predictor.process_buffered_snapshots(now);
         self.predictor.decay_visual_offset(dt);
         self.send_commands(input, now);
@@ -490,14 +527,21 @@ impl LivePlay {
                 self.respawn_requested = true;
             }
         }
-        if frozen || !self.alive {
-            // The dead and the frozen keep their aim, use and weapon choice
-            // (`Game.ts` strips movement and the attack buttons only).
+        if !self.alive {
+            // The dead keep their aim, use and weapon choice (`Game.ts`
+            // strips the movement and attack buttons only).
             input = PlayInput {
                 yaw: input.yaw,
                 pitch: input.pitch,
                 use_key: input.use_key,
                 weapon_slot: input.weapon_slot,
+                ..PlayInput::default()
+            };
+        } else if frozen {
+            // The round freeze strips use and weapon switching too.
+            input = PlayInput {
+                yaw: input.yaw,
+                pitch: input.pitch,
                 ..PlayInput::default()
             };
         }
@@ -563,5 +607,32 @@ mod tests {
         assert_eq!(c.tick, 7);
         let still = command_for(&PlayInput::default(), 0);
         assert_eq!(still.direction, [0.0, 0.0, 0.0]);
+    }
+
+    #[test]
+    fn auto_ads_goes_only_with_the_trigger_and_the_aim() {
+        let aimed = PlayInput {
+            fire: true,
+            alt_fire: true,
+            auto_ads: true,
+            ..PlayInput::default()
+        };
+        let both = buttons::FIRE | buttons::ALT_FIRE;
+        assert_eq!(command_for(&aimed, 0).buttons, both | buttons::AUTO_ADS);
+        let by_hand = PlayInput {
+            auto_ads: false,
+            ..aimed
+        };
+        assert_eq!(command_for(&by_hand, 0).buttons, both);
+    }
+
+    #[test]
+    fn the_bombs_destroyed_models_are_read_from_the_match_state() {
+        let mut state = MatchStateManager::new();
+        assert!(disabled_models(&state).is_empty());
+        let event =
+            shagger::shared::json::parse(r#"{"phase":2,"objective":{"kind":"bomb","disabledModels":[3,7]}}"#).unwrap();
+        state.process_event(&event);
+        assert_eq!(disabled_models(&state), [3, 7]);
     }
 }

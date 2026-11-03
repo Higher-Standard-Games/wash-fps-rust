@@ -26,7 +26,7 @@ use winit::event_loop::ActiveEventLoop;
 use winit::keyboard::{KeyCode, PhysicalKey};
 use winit::window::{Window, WindowId};
 
-use crate::window::{OpenWindow, open_window, run_on_event_loop};
+use crate::window::{OpenWindow, next_frame, open_window, present, run_on_event_loop};
 
 /// The music's playlists, served beside the packages.
 const PLAYLISTS: [&str; 3] = ["game.playlist.json", "menu.playlist.json", "endgame.playlist.json"];
@@ -159,14 +159,18 @@ impl SyncApp {
             }
         }
         let Some(m) = &mut self.open else { return };
-        let frame = match m.surface.get_current_texture() {
-            wgpu::CurrentSurfaceTexture::Success(f) | wgpu::CurrentSurfaceTexture::Suboptimal(f) => f,
-            _ => {
-                m.surface.configure(&m.gpu.device, &m.config);
+        let frame = match next_frame(&m.gpu, &m.window, &mut m.surface, &m.config) {
+            Ok(Some(frame)) => frame,
+            Ok(None) => return,
+            Err(why) => {
+                self.error = Some(why);
                 return;
             }
         };
-        let view = frame.texture.create_view(&wgpu::TextureViewDescriptor::default());
+        let view = frame
+            .texture
+            .texture
+            .create_view(&wgpu::TextureViewDescriptor::default());
         let mut choice = None;
         let speed = self.speed;
         let ui = m.layer.run(&m.window, |ui| {
@@ -235,8 +239,7 @@ impl SyncApp {
         m.layer
             .paint(&m.gpu, &mut encoder, &view, [m.config.width, m.config.height], ui);
         m.gpu.queue.submit([encoder.finish()]);
-        m.window.pre_present_notify();
-        m.gpu.queue.present(frame);
+        present(&m.gpu, &m.window, &mut m.surface, &m.config, frame);
         match choice {
             Some(true) => self.outcome = Some(SyncOutcome::Ready),
             Some(false) => self.restart(),
@@ -301,7 +304,7 @@ impl ApplicationHandler for SyncApp {
             }
             WindowEvent::RedrawRequested => {
                 self.redraw();
-                if self.outcome.is_some() {
+                if self.outcome.is_some() || self.error.is_some() {
                     event_loop.exit();
                 }
             }
@@ -336,6 +339,9 @@ pub fn run(base_url: &str, dir: &Path) -> Result<SyncOutcome, String> {
     app.restart();
     let ran = run_on_event_loop(&mut app);
     app.cancel.store(true, Ordering::Relaxed);
+    if let Some(m) = &app.open {
+        crate::window::remember_placement(&m.window);
+    }
     app.open = None;
     ran?;
     if let Some(why) = app.error {

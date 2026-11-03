@@ -2365,6 +2365,52 @@ left is no longer the code. It is visual parity: matching the browser
 picture closely enough that players don't notice. The screenshot harness of
 8.3 carries that, and it should be built in the first week.
 
+### 21.13 Measuring before optimising: `washoi bench`
+
+The browser client's big wins (snapshotted rendering, frozen meshes,
+shader-side work) removed Babylon's per-mesh CPU overhead: its scene
+walk, observers and uniform uploads for every mesh every frame. The Rust
+renderer never had that overhead (batched world, one uniform upload per
+frame, pipelines built ahead of time), so the same moves are not
+automatically wins here. They are judged by measurement.
+
+`washoi bench <demo> [--frames N] [--warmup N] [--out FILE.json]` plays a
+recorded match through the game's own frame loop (`window.rs`) at a fixed
+60 steps a second with vsync off, and times each frame's CPU stages
+(`feed`: demo and interpolation; `scene`: players, effects, HUD, sound;
+`acquire`; `prepare`: culling and uploads; `encode`; `submit`; `present`;
+`gpu wait`) and, where the GPU has timestamp queries, each GPU pass
+(`opaque`, `capture`, `transparent`, `overlay`, `post`, `ui`). It prints
+mean, p50, p95, p99 and max per stage and writes the same as JSON, to
+compare runs before and after a change.
+
+First run (November 3, 2026), release build, the S&D demo on washoi_snd1,
+1280 × 720, in the cloud sandbox (software Vulkan, llvmpipe):
+
+| Stage | Mean ms | p99 ms |
+| --- | ---: | ---: |
+| CPU feed | 1.26 | 2.70 |
+| CPU scene | 0.68 | 3.01 |
+| CPU prepare | 0.44 | 0.80 |
+| CPU encode | 0.69 | 1.74 |
+| CPU submit | 1.38 | 1.96 |
+| GPU opaque | 130.2 | 176.2 |
+| GPU transparent | 14.9 | 25.2 |
+| GPU post | 7.5 | 11.0 |
+
+What it says:
+
+- The whole CPU side of a frame is about 5 ms on a slow shared cloud
+  CPU, of which encoding the draws is 0.7 ms. Render bundles for the static
+  world can save part of that 0.7 ms and no more, so they wait until a
+  real machine shows encoding mattering.
+- A software GPU says nothing about a real GPU's time, except that the
+  opaque pass is where the pixels are: overdraw in the world pass is the
+  first thing to look at on real hardware (front-to-back order of opaque
+  batches, or a depth pre-pass).
+- The next step is running the bench on the target machines (a mid-range
+  Windows PC and an Apple silicon Mac) and deciding from those numbers.
+
 ### 21.12 Changes to earlier sections
 
 - 8.2 said to start from the WGSL in the material plugins. It now says
@@ -2596,6 +2642,62 @@ fit and did not count the parity harness.
 ## 23. Progress log
 
 Newest first. Each entry names the commits and what proves them.
+
+### Third review round: lifecycle, parity, platform, rendering, audio (November 3, 2026)
+
+Five reviewers took one area each and found about 55 problems. Fixed
+(shagger `f5585d5`, wash-fps-rust after `e9da3d7`):
+
+- **Frame loop.** The frame is acquired after the match, sounds and
+  effects advance, so the network is served while no frame can be drawn.
+  `Timeout` and `Occluded` (macOS reports a minimised window so) skip the
+  frame instead of ending the match; `Suboptimal` reconfigures after
+  presenting and `Lost` makes a new surface (`window::next_frame`,
+  `present`, used by every screen). In a demo, damage numbers, cartoon hits
+  and teleport effects run on the demo clock. Effects' sounds are dropped
+  each frame when there is no audio, rather than kept for the match.
+- **Between screens.** Windows open at 1280 × 720 points (not pixels) and
+  take the last screen's size, place and maximised state. A match that
+  cannot start (refused join, missing map) comes back to the menu with the
+  reason shown (`view::start`); the lobby room's side goes to the game
+  server on join (`shag.lobby_team`); the account key outlives the menu
+  when its file cannot be read or written; the settings sync waits up to
+  1.5 s for its upload to be confirmed before the menu disconnects, and
+  runs when the menu is closed too; it uses the bindings' folder, which
+  `--cvars` can move.
+- **Files.** cvars, synced storage, the sync state and console history are
+  written whole (`core::atomic_file`).
+- **Prediction.** Brush models the bomb destroyed stop colliding in
+  prediction (`restore_brush_models` from `disabledModels`); the round
+  freeze strips use and weapon switching as `Game.ts` does, death keeps
+  them; launchers fire with `AUTO_ADS` (`hipfireBlocked`).
+- **Audio.** A lost device (unplugged, server gone) or none at start is
+  looked for again every 2 s and gets the volumes and the waiting
+  commands. A full queue keeps streams, stops and volumes for later and
+  drops one-shots; the listener goes through a slot. Mono devices get both
+  sides; any sample format plays; stream queues are freed off the audio
+  thread. `s_sfxenabled` mutes every effect; the cvars apply before the
+  first sound; an unchanged music volume no longer cuts a fade; stopping a
+  track no longer waits for its thread.
+- **Assets.** Out-of-range BSP mesh indices, non-square sky faces, glTF
+  indices or joints out of range are left out; textures over the device's
+  limit are scaled down; wgpu validation errors are logged, not fatal.
+- **Release.** A tag must match Cargo.toml's version; the shagger token is
+  set only while sources are fetched and the build runs offline; a tag
+  build without signing secrets fails unless `ALLOW_UNSIGNED` is set; macOS
+  builds a dSYM, kept as a workflow artifact; `PYTHONUTF8=1`. Errors that
+  end the game go to `washoi.log` and, in release builds, a system dialog.
+  Arguments that are not UTF-8 no longer panic; the Wayland app id is
+  `net.washoi.Washoi`.
+
+Deferred, each small: a connecting screen while a match loads (the menu
+now shows the failure, but the wait has no window); a leave confirmation
+and one meaning for the close button; `exiting` cleanup on macOS Cmd+Q;
+the menu's tab and console kept between visits; reading music from the
+packages already in memory; sinc resampling; a stolen projectile light;
+glibc 2.28 builds, a `.desktop` file and CI on Windows and macOS; golden
+tests of `V2NetworkClient` end to end, of `loadState` mid run and of brush
+models in movement runs; per-frame allocations go with the bench (below).
 
 ### Region picker (November 3, 2026)
 

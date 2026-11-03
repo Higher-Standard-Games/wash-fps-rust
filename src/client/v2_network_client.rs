@@ -255,6 +255,18 @@ impl V2NetworkClient {
         self.collision.as_ref()
     }
 
+    /// `brushModels.restore(disabled)`: the brush models in `disabled` stop
+    /// colliding and every other comes back, as the server's state says.
+    pub fn restore_brush_models(&mut self, disabled: &[usize]) {
+        if let Some(models) = self
+            .collision
+            .as_mut()
+            .and_then(|world| world.backend.backend.brush_models.as_mut())
+        {
+            models.restore(disabled);
+        }
+    }
+
     /// The map's teleporters and jumppads, as the server installs them.
     pub fn set_trigger_volumes(&mut self, volumes: &[TriggerVolume]) {
         self.movement.set_trigger_volumes(volumes);

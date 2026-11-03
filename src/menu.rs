@@ -25,7 +25,7 @@ use winit::event_loop::ActiveEventLoop;
 use winit::keyboard::{KeyCode, PhysicalKey};
 use winit::window::{Window, WindowId};
 
-use crate::window::{OpenWindow, open_window, run_on_event_loop};
+use crate::window::{OpenWindow, next_frame, open_window, present, run_on_event_loop};
 
 /// Behind the page: Washoi's night blue.
 const BACKGROUND: wgpu::Color = wgpu::Color {
@@ -59,14 +59,18 @@ impl MenuApp {
             return;
         }
         let Some(m) = &mut self.open else { return };
-        let frame = match m.surface.get_current_texture() {
-            wgpu::CurrentSurfaceTexture::Success(f) | wgpu::CurrentSurfaceTexture::Suboptimal(f) => f,
-            _ => {
-                m.surface.configure(&m.gpu.device, &m.config);
+        let frame = match next_frame(&m.gpu, &m.window, &mut m.surface, &m.config) {
+            Ok(Some(frame)) => frame,
+            Ok(None) => return,
+            Err(why) => {
+                self.error = Some(why);
                 return;
             }
         };
-        let view = frame.texture.create_view(&wgpu::TextureViewDescriptor::default());
+        let view = frame
+            .texture
+            .texture
+            .create_view(&wgpu::TextureViewDescriptor::default());
         let (panel, console) = (&mut self.panel, &mut self.console);
         let ui = m.layer.run(&m.window, |ui| {
             panel.ui(ui);
@@ -83,8 +87,7 @@ impl MenuApp {
         m.layer
             .paint(&m.gpu, &mut encoder, &view, [m.config.width, m.config.height], ui);
         m.gpu.queue.submit([encoder.finish()]);
-        m.window.pre_present_notify();
-        m.gpu.queue.present(frame);
+        present(&m.gpu, &m.window, &mut m.surface, &m.config, frame);
     }
 }
 
@@ -177,7 +180,7 @@ impl ApplicationHandler for MenuApp {
             }
             WindowEvent::RedrawRequested => {
                 self.redraw();
-                if self.choice.is_some() || self.console.ctx.quit {
+                if self.choice.is_some() || self.console.ctx.quit || self.error.is_some() {
                     event_loop.exit();
                 }
             }
@@ -221,16 +224,29 @@ fn bind_code(event: &WindowEvent) -> Option<String> {
 
 /// The menu in its window until the lobby sends this player somewhere;
 /// `None` when the window closes first.
-pub fn choose(url: &str, key_file: Option<std::path::PathBuf>) -> Result<Option<LobbyChoice>, String> {
+pub fn choose(
+    url: &str,
+    key_file: Option<std::path::PathBuf>,
+    match_error: Option<String>,
+) -> Result<Option<LobbyChoice>, String> {
+    let mut panel = LobbyPanel::connect(url, key_file);
+    panel.match_error = match_error;
     let mut app = MenuApp {
         console: GameConsole::new(washoi::config_dir()),
-        panel: LobbyPanel::connect(url, key_file),
+        panel,
         open: None,
         choice: None,
         error: None,
     };
     let ran = run_on_event_loop(&mut app);
+    if let Some(m) = &app.open {
+        crate::window::remember_placement(&m.window);
+    }
     app.open = None;
+    if app.choice.is_none() {
+        // Closed or `quit`: the settings still go up.
+        app.panel.leave();
+    }
     ran?;
     if let Some(e) = app.error {
         return Err(e);

@@ -9,6 +9,7 @@
 //! server ([`LobbyChoice`]); the window then plays or watches there.
 
 use std::collections::VecDeque;
+use std::path::Path;
 use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
@@ -91,6 +92,9 @@ pub struct LobbyChoice {
     pub demo: Option<std::path::PathBuf>,
     /// Its highlight reel instead, about this many minutes long.
     pub reel: Option<f64>,
+    /// The side this player took in the room (`alpha` or `bravo`), for the
+    /// game server to honour on join; `None` in a mode without teams.
+    pub team: Option<String>,
 }
 
 /// A CSS `hsl()` colour, saturation and lightness in percent.
@@ -274,6 +278,10 @@ pub struct LobbyPanel {
     /// A room joined from the queue readies by itself.
     room_from_queue: bool,
     notice: String,
+    /// Why the last match or demo could not start, until dismissed or a new
+    /// one is chosen (`ConnectingOverlay`'s failure, which the menu shows
+    /// because the match had no window yet).
+    pub match_error: Option<String>,
     choice: Option<LobbyChoice>,
     /// The Settings page, while it is open.
     pub settings: Option<FpsSettingsView>,
@@ -293,6 +301,17 @@ pub struct LobbyPanel {
     pub guide: LobbyWelcomeGuide,
 }
 
+/// The account key this run logged in with last, which outlives a panel:
+/// when the key file cannot be read or written, a return to the menu after
+/// a match still logs back into the same account.
+static RUN_KEY: std::sync::Mutex<Option<String>> = std::sync::Mutex::new(None);
+
+fn remember_run_key(key: Option<&str>) {
+    if let Ok(mut k) = RUN_KEY.lock() {
+        *k = key.map(str::to_owned);
+    }
+}
+
 impl LobbyPanel {
     /// Connects and logs in with the stored key, or as a new account.
     #[must_use]
@@ -305,6 +324,7 @@ impl LobbyPanel {
             }
             _ => (None, false),
         };
+        let key = RUN_KEY.lock().ok().and_then(|k| k.clone()).or(key);
         Self {
             client: LobbyClient::connect(url),
             key,
@@ -332,6 +352,7 @@ impl LobbyPanel {
             room: None,
             room_from_queue: false,
             notice: String::new(),
+            match_error: None,
             choice: None,
             settings: None,
             console_pressed: false,
@@ -348,11 +369,30 @@ impl LobbyPanel {
     /// Where to go, once the lobby says so. Disconnects from the lobby.
     pub fn take_choice(&mut self) -> Option<LobbyChoice> {
         let choice = self.choice.take()?;
+        self.leave();
+        Some(choice)
+    }
+
+    /// The way out of the menu (`pagehide`): uploads settings not yet
+    /// uploaded, waits up to a second and a half for the lobby to confirm
+    /// them, then disconnects.
+    pub fn leave(&mut self) {
         if let Some(sync) = &mut self.settings_sync {
             with_cvars(|c| sync.flush(&mut self.client, c));
+            let deadline = Instant::now() + Duration::from_millis(1500);
+            while sync.awaiting_save()
+                && let Some(left) = deadline.checked_duration_since(Instant::now())
+            {
+                match self.client.next_event(left) {
+                    Some(LobbyEvent::Message(message)) => {
+                        with_cvars(|c| sync.on_message(&message, &mut self.client, c));
+                    }
+                    Some(LobbyEvent::Connected) => {}
+                    Some(LobbyEvent::Disconnected { .. } | LobbyEvent::Error(_)) | None => break,
+                }
+            }
         }
         self.client.disconnect();
-        Some(choice)
     }
 
     #[must_use]
@@ -392,6 +432,7 @@ impl LobbyPanel {
                 play: false,
                 demo: Some(path),
                 reel,
+                team: None,
             });
         }
     }
@@ -462,6 +503,7 @@ impl LobbyPanel {
                 }
                 _ => {
                     self.key = None;
+                    remember_run_key(None);
                     self.client.auth(None);
                 }
             }
@@ -512,6 +554,7 @@ impl LobbyPanel {
                     // Kept for this run whatever the disk says (`writeStorage`),
                     // so a reconnect logs back in rather than making another account.
                     self.key = Some(new_key.clone());
+                    remember_run_key(Some(new_key));
                     if let Some(file) = &self.key_file {
                         if self.key_unreadable {
                             self.notice = format!(
@@ -567,7 +610,10 @@ impl LobbyPanel {
                     Tab::Play => {}
                 }
                 // `startSettingsSync`.
-                if let Some(dir) = crate::config_dir() {
+                // Beside the bindings, which `--cvars` can move.
+                let dir = shagger::input::input_system::with_input(|i| i.storage().map(Path::to_path_buf))
+                    .or_else(crate::config_dir);
+                if let Some(dir) = dir {
                     self.settings_sync = with_cvars(|c| SettingsSync::start(&mut self.client, &w, c, &dir));
                 }
             }
@@ -584,6 +630,13 @@ impl LobbyPanel {
                 admission_ticket,
                 ..
             }) => {
+                // `MatchLobbyView`'s handoff: the local player's side.
+                let team = self
+                    .room
+                    .as_ref()
+                    .and_then(|room| room.players.iter().find(|p| p.is_local))
+                    .map(|p| p.team.clone())
+                    .filter(|team| !team.is_empty() && team != "ffa");
                 self.choice = Some(LobbyChoice {
                     server_url,
                     map,
@@ -592,6 +645,7 @@ impl LobbyPanel {
                     play: true,
                     demo: None,
                     reel: None,
+                    team,
                 });
             }
             LobbyIn::LobbyError(e) => {
@@ -708,6 +762,7 @@ impl LobbyPanel {
                 play: false,
                 demo: None,
                 reel: None,
+                team: None,
             });
         }
     }
@@ -727,6 +782,16 @@ impl LobbyPanel {
         egui::CentralPanel::default().show(ui, |ui| {
             if !self.notice.is_empty() {
                 ui.colored_label(hsl(0.0, 80.0, 60.0), &self.notice);
+            }
+            if let Some(why) = &self.match_error {
+                let mut dismiss = false;
+                ui.horizontal(|ui| {
+                    ui.colored_label(hsl(0.0, 80.0, 60.0), format!("The match could not start: {why}"));
+                    dismiss = ui.small_button("Dismiss").clicked();
+                });
+                if dismiss {
+                    self.match_error = None;
+                }
             }
             if let Some(settings) = &mut self.settings {
                 settings.ui(ui);

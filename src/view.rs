@@ -143,6 +143,8 @@ fn write_wav(path: &Path, rate: u32, pcm: &[f32]) -> std::io::Result<()> {
 }
 
 pub struct ViewOptions {
+    /// The side to ask for on joining, from the lobby room.
+    pub team: Option<String>,
     pub seconds: Option<f64>,
     pub map: String,
     pub data: PathBuf,
@@ -186,6 +188,8 @@ pub struct ViewOptions {
     /// Where to write the demo's or match's sound (`--audio-out`), mixed
     /// offline as heard from the camera.
     pub audio_out: Option<PathBuf>,
+    /// `washoi bench`: frames to time, warm-up frames, where to write JSON.
+    pub bench: Option<(u64, u64, Option<PathBuf>)>,
     /// Hold the scoreboard open (`--scoreboard`, Tab in the window).
     pub scoreboard: bool,
     /// Join the match in `watch` as a player (`washoi play`).
@@ -349,6 +353,7 @@ pub fn play_view_sounds(
     dt: f64,
 ) {
     let (effects, teams, now) = (view.effects, view.teams, renderer.effect_time);
+    audio.sfx.maintain();
     audio
         .sfx
         .set_listener(camera.position.as_dvec3(), camera.forward().as_dvec3(), DVec3::Y);
@@ -960,7 +965,21 @@ impl MapRenderer {
     /// Poses and places the players a demo or a match shows this frame,
     /// advancing their clips by `dt`; players missing from `players` are
     /// forgotten.
-    pub fn set_live_players(&mut self, players: &[(String, InterpolatedEntity, PlayerModelVisualStyle)], dt: f64) {
+    /// Throws away the sounds the effects asked for, when nothing can play
+    /// them; otherwise they would pile up for the whole match.
+    pub fn drop_sounds(&mut self) {
+        drop(self.teleports.take_sounds());
+        drop(self.liquid.take_sounds());
+    }
+
+    /// `effect_dt` is the demo clock's step in a demo (the teleport effects run
+    /// on it), the frame's otherwise.
+    pub fn set_live_players(
+        &mut self,
+        players: &[(String, InterpolatedEntity, PlayerModelVisualStyle)],
+        dt: f64,
+        effect_dt: f64,
+    ) {
         self.joints.truncate(self.static_joints);
         self.live_draws.clear();
         self.live_actors.clear();
@@ -1016,7 +1035,7 @@ impl MapRenderer {
         // RemotePlayerRenderer's teleport detection: a jump of more than
         // 256 units between frames. A player gone from the list (dead) is
         // forgotten, so a respawn starts afresh.
-        self.teleports.update(dt);
+        self.teleports.update(effect_dt);
         self.teleport_last
             .retain(|id, _| players.iter().any(|(p, _, _)| p == id));
         for (id, interp, _) in players {
@@ -2416,7 +2435,20 @@ pub fn styled_players(
     players.into_iter().map(|(id, p)| (id, p, style)).collect()
 }
 
+/// The view, demo or match until its window closes; the exit code.
 pub fn run(o: &ViewOptions) -> i32 {
+    start(o).unwrap_or_else(|why| {
+        eprintln!("{why}");
+        1
+    })
+}
+
+/// The same, with why it could not start (a refused join, a missing map)
+/// returned rather than printed, for the menu to show.
+///
+/// # Errors
+/// Why the view could not start.
+pub fn start(o: &ViewOptions) -> Result<i32, String> {
     let mut feed = if let Some(path) = &o.demo {
         match DemoPlayback::load(path) {
             Ok(d) => {
@@ -2431,19 +2463,24 @@ pub fn run(o: &ViewOptions) -> i32 {
                 Some(Feed::Demo(d))
             }
             Err(why) => {
-                eprintln!("{why}");
-                return 1;
+                return Err(why.to_string());
             }
         }
     } else if let Some((url, name, ticket)) = &o.watch
         && o.join
     {
         println!("connecting to {url} as {name}, to play");
-        match LivePlay::connect(url, name, ticket.clone(), &o.data, std::time::Duration::from_secs(15)) {
+        match LivePlay::connect(
+            url,
+            name,
+            ticket.clone(),
+            o.team.clone(),
+            &o.data,
+            std::time::Duration::from_secs(15),
+        ) {
             Ok(p) => Some(Feed::Play(Box::new(p), PlayInput::default())),
             Err(why) => {
-                eprintln!("{why}");
-                return 1;
+                return Err(why.to_string());
             }
         }
     } else if let Some((url, name, ticket)) = &o.watch {
@@ -2451,8 +2488,7 @@ pub fn run(o: &ViewOptions) -> i32 {
         match LiveWatch::connect(url, name, ticket.clone(), std::time::Duration::from_secs(15)) {
             Ok(l) => Some(Feed::Live(l)),
             Err(why) => {
-                eprintln!("{why}");
-                return 1;
+                return Err(why.to_string());
             }
         }
     } else {
@@ -2467,8 +2503,7 @@ pub fn run(o: &ViewOptions) -> i32 {
     let mut map = match load_map(&o.data, &map_name) {
         Ok(m) => m,
         Err(why) => {
-            eprintln!("{why}");
-            return 1;
+            return Err(why.to_string());
         }
     };
     map.players.clone_from(&o.players);
@@ -2503,8 +2538,7 @@ pub fn run(o: &ViewOptions) -> i32 {
     map.hands = o.join;
     let at = o.at.map(|[x, y, z, angle]| Camera::from_q3([x, y, z], angle));
     let Some(mut camera) = at.or_else(|| map.spawns.get(o.spawn).or(map.spawns.first()).copied()) else {
-        eprintln!("{} has no spawn point", map_name);
-        return 1;
+        return Err(format!("{map_name} has no spawn point"));
     };
     camera.pitch = o.pitch.to_radians();
     // `cl_fov` (90 at 16:9 unless set), as the browser's camera starts.
@@ -2516,29 +2550,30 @@ pub fn run(o: &ViewOptions) -> i32 {
         o.spawn.min(map.spawns.len() - 1)
     );
     let Some(path) = &o.screenshot else {
-        let audio = feed.as_ref().and_then(|_| match AudioV2Sfx::open_device() {
-            Ok(sfx) => {
-                let mut audio = GameAudio::new(sfx);
-                println!(
-                    "audio: {} sounds, {} music tracks at {} Hz",
-                    audio.preload(&mut map.pk3),
-                    audio.load_music(&map.pk3, &o.data),
-                    audio.sfx.sample_rate()
-                );
-                Some(audio)
-            }
-            Err(why) => {
-                println!("no audio: {why}");
-                None
-            }
+        // Without a sound card the game still keeps its sounds, and plays
+        // them once one appears (`AudioV2Sfx::maintain`).
+        let audio = feed.as_ref().map(|_| {
+            let mut audio = GameAudio::new(AudioV2Sfx::open_device_or_wait());
+            println!(
+                "audio: {} sounds, {} music tracks at {} Hz",
+                audio.preload(&mut map.pk3),
+                audio.load_music(&map.pk3, &o.data),
+                audio.sfx.sample_rate()
+            );
+            audio
         });
-        return crate::window::run(map, camera, o.seconds, feed, o.follow, audio, reel);
+        let bench = o
+            .bench
+            .as_ref()
+            .map(|(frames, warmup, out)| crate::bench::Bench::new(*frames, *warmup, out.clone()));
+        return Ok(crate::window::run(
+            map, camera, o.seconds, feed, o.follow, audio, reel, bench,
+        ));
     };
     let gpu = match Gpu::headless() {
         Ok(g) => g,
         Err(why) => {
-            eprintln!("{why}");
-            return 1;
+            return Err(why.to_string());
         }
     };
     println!("gpu: {}", gpu.describe());
@@ -2647,7 +2682,7 @@ pub fn run(o: &ViewOptions) -> i32 {
                 .cloned()
                 .collect();
             renderer.set_live_weapons(&view.weapons);
-            renderer.set_live_players(&drawn, 1.0 / 60.0);
+            renderer.set_live_players(&drawn, 1.0 / 60.0, 1.0 / 60.0);
             renderer.set_live_projectiles(&projectiles, 1.0 / 60.0);
             renderer.play_effects(&view.effects, &view.weapons, 1.0 / 60.0);
             renderer.play_gibs(&view.effects, 1.0 / 60.0);
@@ -2869,12 +2904,9 @@ pub fn run(o: &ViewOptions) -> i32 {
     match image::save_buffer(path, &pixels, o.width, o.height, image::ExtendedColorType::Rgba8) {
         Ok(()) => {
             println!("wrote {}", path.display());
-            0
+            Ok(0)
         }
-        Err(e) => {
-            eprintln!("{}: {e}", path.display());
-            1
-        }
+        Err(e) => Err(format!("{}: {e}", path.display())),
     }
 }
 

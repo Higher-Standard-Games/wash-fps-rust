@@ -27,12 +27,18 @@ use shagger::input::key_codes::{dom_code, dom_mouse_button};
 use shagger::movement::movement_vars::movement_var;
 use shagger::rendering::wgpu;
 use shagger::weapon::weapon_view_manager::ViewModelInput;
+use std::cell::Cell;
 use washoi::client::fps_actions::fps;
 use washoi::client::fps_hud::FpsHud;
 use washoi::client::fps_movement_audio::play_jumppad_launch;
+use washoi::client::game_events::canonical_weapon_id;
 use washoi::client::live_play::PlayInput;
+
+use crate::bench::Bench;
+use washoi::shared::entities::definitions::weapons::weapons_table::weapon_hipfire_blocked;
 use winit::application::ApplicationHandler;
-use winit::dpi::PhysicalSize;
+
+use winit::dpi::{LogicalSize, PhysicalPosition, PhysicalSize};
 use winit::event::{DeviceEvent, DeviceId, ElementState, MouseButton, MouseScrollDelta, WindowEvent};
 use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop};
 use winit::keyboard::{KeyCode, PhysicalKey};
@@ -130,6 +136,10 @@ struct App {
     demo_hud: Option<DemoOverlay>,
     /// The players as drawn last frame, for the reel to aim at.
     drawn: Vec<(String, InterpolatedEntity, PlayerModelVisualStyle)>,
+    /// `washoi bench`: the frame's stages timed, no vsync, a fixed step.
+    bench: Option<Bench>,
+    /// The drawing size the bench reports.
+    surface_size: [u32; 2],
 }
 
 impl App {
@@ -138,8 +148,15 @@ impl App {
             window,
             gpu,
             surface,
-            config,
+            mut config,
         } = open_window(event_loop)?;
+        if let Some(bench) = &mut self.bench {
+            // As fast as it draws: no waiting for the display.
+            config.present_mode = wgpu::PresentMode::AutoNoVsync;
+            surface.configure(&gpu.device, &config);
+            bench.attach(&gpu);
+            self.surface_size = [config.width, config.height];
+        }
         let map = self.map.as_mut().expect("the map is loaded before the window opens");
         let renderer = build_renderer(&gpu, map, config.format);
         let hdr = HdrTarget::new(&gpu, config.width, config.height);
@@ -298,7 +315,7 @@ impl App {
     /// This frame's actions as a player's input, through the player's
     /// bindings (`FPSActions`).
     fn play_input(&self) -> PlayInput {
-        with_input(|i| PlayInput {
+        let mut input = with_input(|i| PlayInput {
             forward: i.is_active(fps::MOVE_FORWARD),
             backward: i.is_active(fps::MOVE_BACKWARD),
             left: i.is_active(fps::MOVE_LEFT),
@@ -319,7 +336,20 @@ impl App {
                 .iter()
                 .position(|id| i.is_active(id))
                 .map_or(0, |n| n as u8 + 1),
-        })
+            auto_ads: false,
+        });
+        // `hipfireBlocked`: the trigger on a launcher puts the aim up.
+        if input.fire
+            && !input.alt_fire
+            && let Some(Feed::Play(play, _)) = &self.feed
+            && play
+                .weapon_in_hand()
+                .is_some_and(|w| weapon_hipfire_blocked(canonical_weapon_id(w)))
+        {
+            input.alt_fire = true;
+            input.auto_ads = true;
+        }
+        input
     }
 
     fn step(&mut self, dt: f32) {
@@ -353,8 +383,17 @@ impl App {
 
     fn redraw(&mut self) {
         let now = Instant::now();
-        let dt = now.duration_since(self.last).as_secs_f32().min(0.1);
+        // The bench steps the demo 60 times a second whatever the frame
+        // took, so every run draws the same frames.
+        let dt = if self.bench.is_some() {
+            1.0 / 60.0
+        } else {
+            now.duration_since(self.last).as_secs_f32().min(0.1)
+        };
         self.last = now;
+        if let Some(b) = &mut self.bench {
+            b.begin_frame();
+        }
         with_input(InputSystem::update);
         self.aiming = self.captured && with_input(|i| i.is_active(fps::AIM));
         self.step(dt);
@@ -362,18 +401,6 @@ impl App {
         // `cl_fov`, as `currentBaseFov` gives every camera.
         self.camera.fov_y = with_cvars(|c| current_base_fov(c)) as f32;
         let Some(s) = &mut self.surface else { return };
-        let frame = match s.surface.get_current_texture() {
-            wgpu::CurrentSurfaceTexture::Success(frame) | wgpu::CurrentSurfaceTexture::Suboptimal(frame) => frame,
-            wgpu::CurrentSurfaceTexture::Outdated | wgpu::CurrentSurfaceTexture::Lost => {
-                s.surface.configure(&s.gpu.device, &s.config);
-                return;
-            }
-            other => {
-                self.error = Some(format!("surface: {other:?}"));
-                return;
-            }
-        };
-        let view = frame.texture.create_view(&wgpu::TextureViewDescriptor::default());
         s.renderer.world.animate(&s.gpu, f64::from(dt));
         s.renderer.item_time += f64::from(dt);
         if let Some(feed) = &mut self.feed {
@@ -400,6 +427,9 @@ impl App {
                 _ => None,
             };
             let view = feed.advance(f64::from(dt));
+            if let Some(b) = &mut self.bench {
+                b.mark("feed");
+            }
             // `_syncDemoPresentationClock`: in a demo the effects and the
             // HUD's timed entries run on the demo clock (still while paused,
             // slow at a quarter speed), and a seek drops them.
@@ -478,7 +508,7 @@ impl App {
                 .cloned()
                 .collect();
             s.renderer.set_live_weapons(&view.weapons);
-            s.renderer.set_live_players(&drawn, f64::from(dt));
+            s.renderer.set_live_players(&drawn, f64::from(dt), effect_dt);
             // Our own camera in play; a frame without players keeps
             // `--follow N` for the first frame that has them.
             if self.reel.is_none() && !matches!(feed, Feed::Play(..)) && !players.is_empty() {
@@ -538,8 +568,11 @@ impl App {
             s.renderer.play_hit_feedback(
                 &view.effects,
                 view_entity(feed.local_entity(), &players, self.follow),
-                f64::from(dt),
+                effect_dt,
             );
+            if self.audio.is_none() {
+                s.renderer.drop_sounds();
+            }
             if let Some(audio) = &mut self.audio {
                 play_view_sounds(
                     audio,
@@ -616,34 +649,68 @@ impl App {
             });
         }
         s.renderer.update_underwater(&mut self.camera, f64::from(dt));
+        if let Some(b) = &mut self.bench {
+            b.mark("scene");
+        }
+        // The frame is acquired only now: the match, the sounds and the
+        // effects above advance whether or not there is one to draw.
+        let frame = match next_frame(&s.gpu, &s.window, &mut s.surface, &s.config) {
+            Ok(Some(frame)) => frame,
+            Ok(None) => return,
+            Err(why) => {
+                self.error = Some(why);
+                return;
+            }
+        };
+        let target = frame
+            .texture
+            .texture
+            .create_view(&wgpu::TextureViewDescriptor::default());
+        if let Some(b) = &mut self.bench {
+            b.mark("acquire");
+        }
         s.renderer
             .prepare(&s.gpu, &self.camera, [s.config.width as f32, s.config.height as f32]);
+        if let Some(b) = &mut self.bench {
+            b.mark("prepare");
+        }
         let mut encoder = s
             .gpu
             .device
             .create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some("frame") });
+        let mut stamp = |encoder: &mut wgpu::CommandEncoder, name| {
+            if let Some(b) = &mut self.bench {
+                b.stamp(encoder, name);
+            }
+        };
+        stamp(&mut encoder, "start");
         {
             let mut pass = begin_main_pass(&mut encoder, &s.hdr.color, &s.hdr.depth, CLEAR);
             s.renderer.draw_opaque(&mut pass);
         }
+        stamp(&mut encoder, "opaque");
         s.renderer.capture(&mut encoder, &s.hdr);
+        stamp(&mut encoder, "capture");
         {
             let mut pass = begin_continue_pass(&mut encoder, &s.hdr.color, &s.hdr.depth);
             s.renderer.draw_transparent(&mut pass);
         }
+        stamp(&mut encoder, "transparent");
         {
             let mut pass = begin_overlay_pass(&mut encoder, &s.hdr.color, &s.hdr.depth);
             s.renderer.draw_overlay(&mut pass);
         }
+        stamp(&mut encoder, "overlay");
         s.hdr.resolve(
             &s.gpu,
             &mut encoder,
             &s.renderer.post,
             &s.renderer.image_processing,
-            &view,
+            &target,
         );
+        stamp(&mut encoder, "post");
         if let (Some(hud), None) = (&s.hud, &self.reel) {
-            let mut pass = begin_ui_pass(&mut encoder, &view);
+            let mut pass = begin_ui_pass(&mut encoder, &target);
             hud.draw(&mut pass);
         }
         let cards = self.console.ctx.demo.is_none_or(|d| d.hud_visible);
@@ -671,10 +738,21 @@ impl App {
             console.ui(ui.ctx());
         });
         s.egui
-            .paint(&s.gpu, &mut encoder, &view, [s.config.width, s.config.height], ui);
+            .paint(&s.gpu, &mut encoder, &target, [s.config.width, s.config.height], ui);
+        if let Some(b) = &mut self.bench {
+            b.stamp(&mut encoder, "ui");
+            b.resolve(&mut encoder);
+            b.mark("encode");
+        }
         s.gpu.queue.submit([encoder.finish()]);
-        s.window.pre_present_notify();
-        s.gpu.queue.present(frame);
+        if let Some(b) = &mut self.bench {
+            b.mark("submit");
+        }
+        present(&s.gpu, &s.window, &mut s.surface, &s.config, frame);
+        if let Some(b) = &mut self.bench {
+            b.mark("present");
+            b.end_frame(&s.gpu);
+        }
         self.frames += 1;
         if let (Some(action), Some(Feed::Demo(demo))) = (demo_action, &mut self.feed) {
             match action {
@@ -1008,6 +1086,13 @@ impl ApplicationHandler for App {
             event_loop.exit();
             return;
         }
+        // The bench ends when it has its frames, or the demo does.
+        if let Some(b) = &self.bench
+            && (b.done() || self.feed.as_ref().is_some_and(|f| f.ended().is_some()))
+        {
+            event_loop.exit();
+            return;
+        }
         if let Some(s) = &self.surface {
             s.window.request_redraw();
         }
@@ -1043,6 +1128,63 @@ pub struct OpenWindow {
     pub config: wgpu::SurfaceConfiguration,
 }
 
+/// A frame to draw into; `stale` when the surface should be configured again
+/// once it is shown (`Suboptimal`, as after a move to another monitor).
+pub struct Frame {
+    pub texture: wgpu::SurfaceTexture,
+    stale: bool,
+}
+
+/// The next frame, or `None` to skip this one: the window is hidden or
+/// minimised (`Occluded`, which Metal reports), the wait timed out, or the
+/// surface had to be configured or made again. Only a validation error is
+/// returned as one.
+///
+/// # Errors
+/// The surface failed validation.
+pub fn next_frame(
+    gpu: &Gpu,
+    window: &Arc<Window>,
+    surface: &mut wgpu::Surface<'static>,
+    config: &wgpu::SurfaceConfiguration,
+) -> Result<Option<Frame>, String> {
+    match surface.get_current_texture() {
+        wgpu::CurrentSurfaceTexture::Success(texture) => Ok(Some(Frame { texture, stale: false })),
+        wgpu::CurrentSurfaceTexture::Suboptimal(texture) => Ok(Some(Frame { texture, stale: true })),
+        wgpu::CurrentSurfaceTexture::Timeout | wgpu::CurrentSurfaceTexture::Occluded => Ok(None),
+        wgpu::CurrentSurfaceTexture::Outdated => {
+            surface.configure(&gpu.device, config);
+            Ok(None)
+        }
+        wgpu::CurrentSurfaceTexture::Lost => {
+            // Configuring a lost surface again does not bring it back; a new
+            // one for the same window does.
+            *surface = gpu
+                .instance
+                .create_surface(window.clone())
+                .map_err(|e| format!("surface lost: {e}"))?;
+            surface.configure(&gpu.device, config);
+            Ok(None)
+        }
+        other => Err(format!("surface: {other:?}")),
+    }
+}
+
+/// Shows `frame`, then configures the surface again if it had gone stale.
+pub fn present(
+    gpu: &Gpu,
+    window: &Window,
+    surface: &mut wgpu::Surface<'static>,
+    config: &wgpu::SurfaceConfiguration,
+    frame: Frame,
+) {
+    window.pre_present_notify();
+    gpu.queue.present(frame.texture);
+    if frame.stale {
+        surface.configure(&gpu.device, config);
+    }
+}
+
 /// Opens Washoi's window, 1280 × 720, with a non-sRGB surface in vsync.
 /// The game's icon for the title bar and the task bar (macOS takes the
 /// app bundle's instead).
@@ -1054,11 +1196,51 @@ fn window_icon() -> Option<winit::window::Icon> {
     winit::window::Icon::from_rgba(image.into_raw(), width, height).ok()
 }
 
+#[derive(Clone, Copy)]
+struct Placement {
+    size: PhysicalSize<u32>,
+    /// Wayland does not tell.
+    position: Option<PhysicalPosition<i32>>,
+    maximized: bool,
+}
+
+thread_local! {
+    static PLACEMENT: Cell<Option<Placement>> = const { Cell::new(None) };
+}
+
+/// Keeps `window`'s size, place and maximised state for the next screen's
+/// window ([`open_window`]); called as each screen closes its window.
+pub fn remember_placement(window: &Window) {
+    PLACEMENT.with(|p| {
+        p.set(Some(Placement {
+            size: window.inner_size(),
+            position: window.outer_position().ok(),
+            maximized: window.is_maximized(),
+        }));
+    });
+}
+
 pub fn open_window(event_loop: &ActiveEventLoop) -> Result<OpenWindow, String> {
-    let attributes = Window::default_attributes()
+    // 1280 × 720 in points, so a HiDPI screen does not halve it; then where
+    // the last screen's window was, so going from the menu to a match keeps
+    // the player's size, place and maximised state.
+    let mut attributes = Window::default_attributes()
         .with_title("Washoi")
-        .with_inner_size(PhysicalSize::new(1280, 720))
+        .with_inner_size(LogicalSize::new(1280.0, 720.0))
         .with_window_icon(window_icon());
+    // The desktop's name for the window, which a `.desktop` file matches
+    // to its icon and launcher entry on Wayland and X11.
+    #[cfg(all(unix, not(target_os = "macos")))]
+    {
+        use winit::platform::wayland::WindowAttributesExtWayland;
+        attributes = WindowAttributesExtWayland::with_name(attributes, "net.washoi.Washoi", "washoi");
+    }
+    if let Some(last) = PLACEMENT.with(Cell::get) {
+        attributes = attributes.with_inner_size(last.size).with_maximized(last.maximized);
+        if let Some(position) = last.position {
+            attributes = attributes.with_position(position);
+        }
+    }
     let window = Arc::new(event_loop.create_window(attributes).map_err(|e| e.to_string())?);
     let instance = wgpu::Instance::new(wgpu::InstanceDescriptor::new_with_display_handle_from_env(Box::new(
         event_loop.owned_display_handle(),
@@ -1086,6 +1268,7 @@ pub fn open_window(event_loop: &ActiveEventLoop) -> Result<OpenWindow, String> {
 }
 
 /// Opens the window and runs until it closes.
+#[allow(clippy::too_many_arguments)]
 pub fn run(
     map: LoadedMap,
     camera: Camera,
@@ -1094,6 +1277,7 @@ pub fn run(
     follow: Option<usize>,
     audio: Option<GameAudio>,
     reel: Option<CinematicDemoPlayer>,
+    bench: Option<Bench>,
 ) -> i32 {
     // A key still down when the last window closed never saw its release.
     with_input(InputSystem::release_held_input);
@@ -1131,9 +1315,14 @@ pub fn run(
         overlay: ReelOverlay::default(),
         demo_hud: None,
         drawn: Vec::new(),
+        bench,
+        surface_size: [0, 0],
     };
     let ran = run_on_event_loop(&mut app);
     // Close the window before the next one opens on the same loop.
+    if let Some(s) = &app.surface {
+        remember_placement(&s.window);
+    }
     app.surface = None;
     if let Err(e) = ran {
         eprintln!("{e}");
@@ -1145,6 +1334,16 @@ pub fn run(
         app.frames,
         app.frames as f64 / elapsed
     );
+    if let Some(bench) = &app.bench {
+        let size = app.surface_size;
+        print!("{}", bench.report(size));
+        if let Some(out) = &bench.out {
+            match std::fs::write(out, serde_json::to_string_pretty(&bench.json(size)).unwrap_or_default()) {
+                Ok(()) => println!("bench: wrote {}", out.display()),
+                Err(e) => eprintln!("bench: {}: {e}", out.display()),
+            }
+        }
+    }
     if let Some(why) = app.error {
         eprintln!("{why}");
         return 1;
