@@ -157,8 +157,12 @@ Region → DataSync → Lobby (webview shown) ⇄ InGame (webview hidden)
   - (b) `build_gtk` into a separate GTK window that the client shows and
     hides instead of the child.
 
-  Recommendation: start with (a), since it is one code path, and keep (b)
-  for when a Wayland-only desktop reports trouble.
+  Decided: (a) for 0.2.0. Wayland is the default session on current
+  Ubuntu, Fedora, GNOME and KDE Plasma 6, so it is common, but those
+  desktops all ship XWayland and run X11 apps without setup. The costs are
+  small: a blurrier window under fractional scaling, and no native Wayland
+  window features. (b) is the fix if a player hits a desktop without
+  XWayland or the scaling bothers people.
 - **macOS.** The webview is an `NSView` subview of the window's content view,
   beside wgpu's `CAMetalLayer`. Hiding the subview is enough.
 - **Windows.** WebView2 is a child HWND. Its user data folder must be set
@@ -174,22 +178,23 @@ reasons that have nothing to do with the lobby.
 
 **Recommendation: a lobby-only entry, built and deployed with the web app.**
 
-- A second Vite entry: `native.html` → `client/native/main.ts`.
+- A second Vite entry: `client.html` → `client/native/main.ts`.
   - It runs the lobby part of `main.ts` (`configureLobbyTwin`,
     `LoadingScreen`, `LobbyPanel`).
   - It registers the client cvars and the settings pages.
   - It never imports `Game`, Babylon or `DemoService`.
-- Served at `<playUrl>native` (for example `https://eu.washoi.net/native`),
+- Served at `<playUrl>client` (for example `https://eu.washoi.net/client`),
   from the same deploy, so it is always the same build as the browser lobby.
-  The browser lobby's own deep-link forms still work there:
-  `/native?lobby=<id>&invite=<token>`.
+  The browser lobby's query deep links work there:
+  `/client?lobby=<id>&invite=<token>`. Not `/lobby/client`: `/lobby/<id>`
+  is the room deep link, so a room named `client` would collide.
 - The import graph has been checked: `LobbyPanel` itself pulls no Babylon.
   `DemoService` does (`Ray`, `Vector3`, `Scene`, `CameraSystem`), so in
   native mode `DemosView` must go through the bridge (section 10).
   `MatchLobbyView`, `GamePanel`, `DebugConsole`, `UIStyles`,
   `FPSSettingsView`, `ProfileView`, `LobbyAssetPreparation` and
   `LeaderboardView` are clean.
-- A lint rule or test keeps it that way: build `native.html` and fail if the
+- A lint rule or test keeps it that way: build `client.html` and fail if the
   chunk graph contains `@babylonjs`.
 
 The alternative is the same `index.html` with a "native" flag that skips the
@@ -197,7 +202,7 @@ renderer. It needs no new route, but it puts `if (native)` checks through
 `main.ts` and loads the game's main chunk anyway. Not recommended.
 
 The native client builds the URL from the region list: `playUrl` plus
-`native`. `regions.json` gets an optional `nativeUrl`, so the path can move
+`client`. `regions.json` gets an optional `clientUrl`, so the path can move
 without a client release.
 
 ## 5. The bridge: transport, handshake, messages
@@ -422,8 +427,12 @@ web's client cvar registry with the native one (section 17).
     `{ name, label, kind: "toggle" | "slider" | "choice", min, max, step,
     options, value, help }`.
   - Changes go back as `cvar:set`.
-  - One settings layout, with fields the native renderer actually has, and
-    no web release needed when the native client adds a video setting.
+  - The page draws these fields with the same `SettingsFields.ts`
+    controls and layout as every other page, so the whole settings UI stays
+    the web one, shared with the browser. Only the list of Video fields
+    comes from the native client. That keeps one settings layout, with fields
+    the native renderer actually has, and no web release when the native
+    client adds a video setting.
 - **During a match**, the native in-game settings (wash-fps-rust
   `client/settings`, egui) stay. They edit the same cvars and the same files.
 
@@ -444,10 +453,10 @@ web's client cvar registry with the native one (section 17).
 | Link or action today | In the native shell |
 |---|---|
 | Devlog, credits, site links | system browser |
-| "Back to the lobby" (`ReturnToLobby.ts`, navigates to the origin) | `match:ended` → the page reloads `/native` (section 6) |
-| Room and invite links the player copies to share (`/lobby/<id>?invite=…`) | stay `https://<region>/lobby/<id>?invite=…`, so a friend in a browser can open them; the page builds them from `location.origin` minus the `/native` path |
+| "Back to the lobby" (`ReturnToLobby.ts`, navigates to the origin) | `match:ended` → the page reloads `/client` (section 6) |
+| Room and invite links the player copies to share (`/lobby/<id>?invite=…`) | stay `https://<region>/lobby/<id>?invite=…`, so a friend in a browser can open them; the page builds them from `location.origin` minus the `/client` path |
 | Opening an invite someone sent to a native player | paste into the lobby (a small "Join by link" field in native mode, which runs the same `runDeepLinkJoin`); a `washoi://` URL scheme registered by the installer is a later step |
-| `location.reload()` (account deleted, connection failure, stale build) | allowed, since it reloads `/native` |
+| `location.reload()` (account deleted, connection failure, stale build) | allowed, since it reloads `/client` |
 | Key download (`link.download`, blob URL) | `file:save` → the system save dialog (`rfd`), defaulting to `washoi-key-<name>.txt` in Documents |
 | Timedemo report download | not offered in native mode (the native client has `washoi bench`) |
 | `navigator.clipboard.writeText` | works in WebView2 and WKWebView on a secure origin; `clipboard:write` is the fallback when it throws (WebKitGTK) |
@@ -669,7 +678,7 @@ Once the webview lobby ships (0.2.0):
     ticket recovery and failure;
   - the storage shim mirrors only the listed keys;
   - the link policy;
-  - `native.html` contains no `@babylonjs` chunk.
+  - `client.html` contains no `@babylonjs` chunk.
 - **The cvar registry test.** Dump the web client's registered cvars (name,
   type, default, range) to JSON from the lobby entry. The Rust test fails on
   any shared name whose fields differ.
@@ -677,7 +686,7 @@ Once the webview lobby ships (0.2.0):
   local servers this repo already uses for the headless client tests:
   wash-fps `lobby:server`, `net:server --single-match` with
   `SHAG_TIMELIMIT`, and the probe server for the page.
-  1. The client opens `/native` and gets `hello`.
+  1. The client opens `/client` and gets `hello`.
   2. It queues against a bot and gets `match:play`.
   3. It plays to the end screen, presses Back to the lobby (a synthetic
      click), and checks that the page is back and logged in as the same
@@ -697,27 +706,26 @@ Steps in order. Each lands with its tests.
 | Step | What | Repos |
 |---|---|---|
 | **W0 spike** | wry child webview in the winit window over the wgpu surface. Toggle visible and hidden with a 3D scene behind it. Focus round trip. Measure size, memory, and whether the lobby socket survives about 15 minutes hidden. On Windows, macOS, Linux X11 and Wayland via XWayland. Ends with the go-ahead or changes to sections 3 and 15. | shagger (spike branch), wash-fps-rust |
-| **W1 shell and bridge** | `shagger::webview` (engine code: host, transport, origin policy, navigation policy, init script). The single-window app state machine in wash-fps-rust. `NativeBridge.ts`, `native.html` and `client/native/main.ts` with `hello`. External links, quit, fullscreen, the error screen. | shagger, wash-fps-rust, wash-fps, SHAG (Vite entry) |
+| **W1 shell and bridge** | `shagger::webview` (engine code: host, transport, origin policy, navigation policy, init script). The single-window app state machine in wash-fps-rust. `NativeBridge.ts`, `client.html` and `client/native/main.ts` with `hello`. External links, quit, fullscreen, the error screen. | shagger, wash-fps-rust, wash-fps, SHAG (Vite entry) |
 | **W2 matches** | `NativeNetworkConnector`, `match:*`, seat reissue, watch and drop in, the return. Lobby music pause and resume. | wash-fps, wash-fps-rust |
 | **W3 account and settings** | The key mirror, the storage shim and the mirrored files. `Cvar.reloadFromStorage` and `CommandBindings.reload`. The Video page from `cvars:describe`. The cvar registry test. | wash-fps, SHAG, wash-fps-rust |
 | **W4 the rest** | Demos and reels, `data:status` and `missing_data`, console passthrough, key save, clipboard fallback, invite paste, update notice, `data-shell` CSS. | wash-fps, wash-fps-rust |
 | **W5 release** | Retire the egui lobby (section 16), the CI integration test, RUST.md, then release 0.2.0. | wash-fps-rust |
 
 The web changes go through pull requests on wash-fps and SHAG. washoi.net only
-gains `nativeUrl` in `regions.json`.
+gains `clientUrl` in `regions.json`.
 
-## 19. Decisions to confirm
+## 19. Decisions (confirmed November 3, 2026)
 
-1. **A lobby-only `/native` entry** (recommended) rather than the full game
-   page with a flag (section 4).
-2. **Keep the webview alive and hidden during a match** (recommended, as the
-   browser does) rather than unloading it (section 3; revisit after W0's
-   memory numbers).
-3. **The return reloads the lobby page** (recommended first, since it is
-   exactly the browser's single-match flow), with a no-reload return later.
-4. **Linux Wayland via XWayland** for the first release (section 3).
-5. **The Video settings page comes from native data** (`cvars:describe`)
-   rather than a web page that knows the native renderer's cvars
-   (section 8).
+1. **A lobby-only entry at `/client`** rather than the full game page with
+   a flag (section 4). The owner preferred `/client` to `/native`.
+2. **Keep the webview alive and hidden during a match**, as the browser
+   does (section 3; revisit only if W0's memory numbers are bad).
+3. **The return reloads the lobby page** first, exactly the browser's
+   single-match flow; a no-reload return later.
+4. **Linux Wayland via XWayland** for 0.2.0 (section 3), with the GTK window
+   path kept for later.
+5. **The settings UI stays the shared web one**; only the Video page's
+   fields come from native data (`cvars:describe`, section 8).
 6. **Invites:** paste-a-link in 0.2.0, and a `washoi://` URL scheme from the
    installers later (section 9).
