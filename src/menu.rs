@@ -138,8 +138,15 @@ impl ApplicationHandler for MenuApp {
     }
 
     fn window_event(&mut self, event_loop: &ActiveEventLoop, _id: WindowId, event: WindowEvent) {
+        // A backquote typed into a lobby text field is the field's; with the
+        // console open it closes it, as Escape does.
+        let typing = self
+            .open
+            .as_ref()
+            .is_some_and(|m| m.layer.ctx.egui_wants_keyboard_input());
         if let WindowEvent::KeyboardInput { event: key, .. } = &event
-            && key.physical_key == PhysicalKey::Code(KeyCode::Backquote)
+            && (key.physical_key == PhysicalKey::Code(KeyCode::Backquote) && (self.console.console.open || !typing)
+                || key.physical_key == PhysicalKey::Code(KeyCode::Escape) && self.console.console.open)
         {
             if key.state == ElementState::Pressed && !key.repeat {
                 self.console.console.toggle();

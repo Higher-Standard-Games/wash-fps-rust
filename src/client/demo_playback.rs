@@ -45,6 +45,9 @@ pub struct DemoPlayback {
     /// Demo time per real time (`DemoViewer.setSpeed`).
     speed: f64,
     paused: bool,
+    /// Played to its last frame (`DemoViewer`'s "ended" state): held there
+    /// until a seek, and play starts it over.
+    ended: bool,
     /// The index's `durationMs`.
     pub duration_ms: f64,
 }
@@ -65,6 +68,14 @@ impl DemoPlayback {
         if frames.is_empty() {
             return Err(format!("{}: no frames", path.display()));
         }
+        // Recorded ticks are the time source: without a rate the playhead
+        // cannot advance (`DemoViewer.load`).
+        if header.tick_rate == 0 {
+            return Err(format!(
+                "{}: Legacy demo (no tickRate in header) — re-record with a current server.",
+                path.display()
+            ));
+        }
         Ok(Self {
             header,
             frames,
@@ -73,6 +84,7 @@ impl DemoPlayback {
             feed: SnapshotFeed::new(),
             speed: 1.0,
             paused: false,
+            ended: false,
             duration_ms,
         })
     }
@@ -104,7 +116,11 @@ impl DemoPlayback {
         self.speed
     }
 
+    /// `play`: an ended demo starts over.
     pub fn play(&mut self) {
+        if self.ended {
+            self.seek_to_tick(f64::from(self.frames[0].tick));
+        }
         self.paused = false;
     }
 
@@ -116,9 +132,16 @@ impl DemoPlayback {
     /// to `tick`, without the effects of the frames on the way.
     pub fn seek_to_tick(&mut self, tick: f64) {
         let first = f64::from(self.frames[0].tick);
-        self.clock_ms = ((tick - first) * 1000.0 / self.tick_rate()).max(0.0);
-        self.feed = SnapshotFeed::new();
-        self.next = 0;
+        let end = self.frame_time(self.frames.len() - 1);
+        let target = ((tick - first) * 1000.0 / self.tick_rate()).clamp(0.0, end);
+        self.ended = false;
+        // Forward from where it is, the buffers it has hold; backward, they
+        // are rebuilt from the first frame.
+        if target < self.clock_ms {
+            self.feed = SnapshotFeed::new();
+            self.next = 0;
+        }
+        self.clock_ms = target;
         while self.next < self.frames.len() && self.frame_time(self.next) <= self.clock_ms {
             let at = self.frame_time(self.next);
             self.feed.push(at, &self.frames[self.next].state, "");
@@ -147,16 +170,20 @@ impl DemoPlayback {
         self.paused
     }
 
-    /// `togglePlayPause`: an ended demo plays again from the start.
+    /// `togglePlayPause`: an ended demo plays again from the start; one
+    /// paused on its last frame plays on from there.
     pub fn toggle_play_pause(&mut self) {
         if self.paused {
-            if self.finished() && self.clock_ms >= self.frame_time(self.frames.len() - 1) {
-                self.seek_to_tick(f64::from(self.frames[0].tick));
-            }
-            self.paused = false;
+            self.play();
         } else {
             self.paused = true;
         }
+    }
+
+    /// Whether playback reached the end and stopped there.
+    #[must_use]
+    pub fn ended(&self) -> bool {
+        self.ended
     }
 
     /// `stepSpeed`: the next of [`SPEED_OPTIONS`] from the nearest one.
@@ -252,7 +279,7 @@ impl DemoPlayback {
     }
 
     pub fn finished(&self) -> bool {
-        self.next >= self.frames.len()
+        self.ended || self.next >= self.frames.len()
     }
 
     /// The newest frame delivered, if any.
@@ -275,7 +302,13 @@ impl DemoPlayback {
 
     pub fn advance(&mut self, dt: f64) -> DemoView {
         if !self.paused {
-            self.clock_ms += dt * 1000.0 * self.speed;
+            let end = self.frame_time(self.frames.len() - 1);
+            self.clock_ms = (self.clock_ms + dt * 1000.0 * self.speed).min(end);
+            // `playheadMs` stops at the duration and the state is "ended".
+            if self.clock_ms >= end {
+                self.paused = true;
+                self.ended = true;
+            }
         }
         while self.next < self.frames.len() && self.frame_time(self.next) <= self.clock_ms {
             let at = self.frame_time(self.next);
@@ -333,5 +366,64 @@ mod tests {
         }
         assert!(projectiles > 0, "no projectiles flew");
         assert!(shots > 0, "nobody fired");
+    }
+
+    fn first_demo() -> DemoPlayback {
+        let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/golden/demos");
+        let mut files: Vec<_> = std::fs::read_dir(&dir)
+            .unwrap()
+            .filter_map(Result::ok)
+            .map(|e| e.path())
+            .filter(|p| p.extension().is_some_and(|e| e == "shagdemo"))
+            .collect();
+        files.sort();
+        DemoPlayback::load(&files[0]).unwrap()
+    }
+
+    /// The clock stops on the last frame (`DemoViewer`'s "ended"), a seek
+    /// back works from there in one step, and play starts an ended demo over.
+    #[test]
+    fn the_end_holds_and_play_starts_over() {
+        let mut demo = first_demo();
+        let (first, last) = demo.tick_span();
+        for _ in 0..(demo.duration() as usize + 30) {
+            let _ = demo.advance(1.0);
+        }
+        assert!(demo.ended() && demo.paused());
+        assert_eq!(demo.playhead_tick(), last);
+        demo.seek_to_tick(last - 5.0 * demo.tick_rate());
+        assert!(!demo.ended());
+        assert!((demo.playhead_tick() - (last - 5.0 * demo.tick_rate())).abs() < 1e-6);
+        demo.seek_to_tick(last + 100.0);
+        assert_eq!(demo.playhead_tick(), last);
+        // Paused on the last frame by a seek, play goes on from there.
+        demo.pause();
+        demo.toggle_play_pause();
+        assert_eq!(demo.playhead_tick(), last);
+        let _ = demo.advance(1.0);
+        assert!(demo.ended());
+        demo.toggle_play_pause();
+        assert_eq!(demo.playhead_tick(), first);
+        assert!(!demo.paused());
+    }
+
+    /// A seek forward keeps the buffers it has and lands where a seek from
+    /// the start would.
+    #[test]
+    fn a_forward_seek_matches_one_from_the_start() {
+        let mut a = first_demo();
+        let mut b = first_demo();
+        let (first, last) = a.tick_span();
+        let mid = first + (last - first) / 2.0;
+        a.seek_to_tick(first + (last - first) / 4.0);
+        a.seek_to_tick(mid);
+        b.seek_to_tick(mid);
+        assert_eq!(a.current_frame(), b.current_frame());
+        let (va, vb) = (a.advance(0.05), b.advance(0.05));
+        assert_eq!(va.players.len(), vb.players.len());
+        for ((ia, pa), (ib, pb)) in va.players.iter().zip(vb.players.iter()) {
+            assert_eq!(ia, ib);
+            assert!((pa.x - pb.x).abs() < 1e-9 && (pa.z - pb.z).abs() < 1e-9);
+        }
     }
 }

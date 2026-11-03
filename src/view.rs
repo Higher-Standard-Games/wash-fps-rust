@@ -436,6 +436,15 @@ impl Feed {
         }
     }
 
+    /// The game server's messages since the last call, for the chat.
+    pub fn take_notices(&mut self) -> Vec<String> {
+        match self {
+            Self::Demo(_) => Vec::new(),
+            Self::Live(l) => std::mem::take(&mut l.notices),
+            Self::Play(p, _) => std::mem::take(&mut p.notices),
+        }
+    }
+
     /// Why the feed has nothing more to show, once it has not.
     pub fn ended(&self) -> Option<String> {
         match self {
@@ -2827,7 +2836,7 @@ pub fn run(o: &ViewOptions) -> i32 {
             let name = followed.as_deref().map(|id| {
                 demo.roster()
                     .iter()
-                    .find(|(pid, _)| pid == id)
+                    .find(|(_, p)| p.entity_id == id)
                     .map_or(id, |(_, p)| p.name.as_str())
             });
             let who = followed.as_deref().zip(name);

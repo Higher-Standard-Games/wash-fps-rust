@@ -28,6 +28,9 @@ pub struct LiveWatch {
     /// Why the connection ended, once it has.
     pub closed: Option<String>,
     pub snapshots: u64,
+    /// The game server's messages for the player (`onServerMessage`), not
+    /// yet shown.
+    pub notices: Vec<String>,
 }
 
 impl LiveWatch {
@@ -59,6 +62,7 @@ impl LiveWatch {
                         entity_id: String::new(),
                         closed: None,
                         snapshots: 0,
+                        notices: Vec::new(),
                     });
                 }
                 Some(SessionEvent::Host(HostEvent::Failed(why)) | SessionEvent::Closed(why)) => {
@@ -94,6 +98,9 @@ impl LiveWatch {
                     self.snapshots += 1;
                     let now = self.now_ms();
                     self.feed.push(now, &state, &self.entity_id);
+                }
+                SessionEvent::Host(HostEvent::ServerMessage(m)) if !m.message.is_empty() => {
+                    self.notices.push(m.message);
                 }
                 SessionEvent::Host(HostEvent::Failed(why)) | SessionEvent::Closed(why) => {
                     self.closed.get_or_insert(why);

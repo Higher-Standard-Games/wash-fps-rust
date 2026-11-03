@@ -6,6 +6,7 @@ use std::path::PathBuf;
 use std::time::Duration;
 
 use shagger::network::client::http_fetch::{FetchError, FetchEvent, HttpFetch};
+use shagger::shared::demo::demo_reader::DemoReader;
 
 /// `DEMO_DOWNLOAD_IDLE_MS`: file transfers need a longer deadline than the
 /// archive's metadata.
@@ -83,6 +84,11 @@ pub struct DemoDownload {
     pub state: DemoDownloadState,
 }
 
+/// Whether `bytes` open as a demo: its header and index read.
+fn reads_as_demo(bytes: &[u8]) -> bool {
+    DemoReader::new(bytes.to_vec()).is_ok_and(|mut r| r.read_header().is_ok() && r.read_index().is_ok())
+}
+
 impl DemoDownload {
     /// Starts fetching `filename` from `base`, or finds it already saved.
     #[must_use]
@@ -94,8 +100,14 @@ impl DemoDownload {
                 state: DemoDownloadState::Failed("That recording's name is not a demo file.".to_owned()),
             };
         };
+        // A saved copy is used only if it reads as a demo; a damaged one
+        // goes, and the recording is fetched again.
         if let Some(path) = demo_cache_dir().map(|d| d.join(name))
             && path.is_file()
+            && (std::fs::read(&path).is_ok_and(|b| reads_as_demo(&b)) || {
+                let _ = std::fs::remove_file(&path);
+                false
+            })
         {
             return Self {
                 filename: filename.to_owned(),
@@ -127,6 +139,12 @@ impl DemoDownload {
                 }
                 FetchEvent::Done(bytes) => {
                     self.fetch = None;
+                    // An error page sent as 200, or a cut-short body, is not
+                    // kept: it would fail every later Play.
+                    if !reads_as_demo(&bytes) {
+                        self.state = DemoDownloadState::Failed("The recording arrived damaged. Try again.".to_owned());
+                        return;
+                    }
                     self.state = match self.save(&bytes) {
                         Ok(path) => DemoDownloadState::Ready(path),
                         Err(e) => DemoDownloadState::Failed(format!("Could not save the recording: {e}")),
@@ -179,5 +197,20 @@ mod tests {
             download_message(&FetchError::Status(404)),
             "Could not download the recording (HTTP 404). Please try again."
         );
+    }
+
+    #[test]
+    fn only_a_demo_reads_as_one() {
+        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/golden/demos");
+        let file = std::fs::read_dir(&dir)
+            .unwrap()
+            .filter_map(Result::ok)
+            .map(|e| e.path())
+            .find(|p| p.extension().is_some_and(|e| e == "shagdemo"))
+            .unwrap();
+        let bytes = std::fs::read(file).unwrap();
+        assert!(reads_as_demo(&bytes));
+        assert!(!reads_as_demo(b"<html>502 Bad Gateway</html>"));
+        assert!(!reads_as_demo(&bytes[..bytes.len().min(40)]));
     }
 }

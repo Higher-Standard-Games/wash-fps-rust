@@ -10,6 +10,9 @@
 //! here it is one egui area in the same colours. Minimizing it and the exit
 //! plate are left out: the window's Escape already leaves.
 
+// The bar's widgets sense clicks but never take keyboard focus
+// (`Sense::CLICK`, not `Sense::click()`): a focused button would also take
+// Space, toggling the pause back that the demo keys just toggled.
 use egui::{Align2, Color32, FontId, Pos2, Rect, Sense, Stroke, vec2};
 use shagger::ui::egui_layer::egui;
 use washoi::client::demo_playback::{DemoDeath, DemoPlayback};
@@ -139,7 +142,7 @@ impl DemoOverlay {
                 let hit = ui.interact(
                     line.expand2(vec2(0.0, 8.0)),
                     ui.scope_id().with("timeline"),
-                    Sense::click(),
+                    Sense::CLICK,
                 );
                 let (first, last) = demo.tick_span();
                 let progress = demo.progress_of_tick(demo.playhead_tick()) as f32;
@@ -197,7 +200,7 @@ impl DemoOverlay {
                 // Row two: the keys and the read-outs.
                 let row = rect.top() + 44.0;
                 let play = Rect::from_center_size(Pos2::new(rect.left() + 34.0, row), vec2(40.0, 24.0));
-                let play_hit = ui.interact(play, ui.scope_id().with("play"), Sense::click());
+                let play_hit = ui.interact(play, ui.scope_id().with("play"), Sense::CLICK);
                 painter.rect_filled(
                     play,
                     4.0,
@@ -232,10 +235,10 @@ impl DemoOverlay {
                     FontId::monospace(16.0),
                     fade(CREAM),
                 );
-                let status = if demo.paused() {
-                    "Paused"
-                } else if demo.finished() {
+                let status = if demo.ended() {
                     "Ended"
+                } else if demo.paused() {
+                    "Paused"
                 } else {
                     "Playing"
                 };
@@ -260,7 +263,7 @@ impl DemoOverlay {
                 let right = rect.right() - 16.0;
                 for (step, label, x) in [(-1i8, "−", right - 92.0), (1, "+", right - 12.0)] {
                     let key = Rect::from_center_size(Pos2::new(x, row), vec2(24.0, 24.0));
-                    let key_hit = ui.interact(key, ui.scope_id().with(("speed", step)), Sense::click());
+                    let key_hit = ui.interact(key, ui.scope_id().with(("speed", step)), Sense::CLICK);
                     painter.rect_filled(
                         key,
                         4.0,

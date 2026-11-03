@@ -43,6 +43,9 @@ pub struct DemoView {
     pub snapshots: Vec<HashMap<String, EntitySnapshot>>,
 }
 
+/// `PROJECTILE_FORGET_TICKS`: 11 seconds at `DEFAULT_PHYSICS_TICK_RATE` (125).
+const PROJECTILE_FORGET_TICKS: u32 = 11 * 125;
+
 /// The two buffers and what the snapshots told them.
 #[derive(Debug, Clone, Default)]
 pub struct SnapshotFeed {
@@ -51,6 +54,9 @@ pub struct SnapshotFeed {
     projectile_buffer: SnapshotBuffer,
     /// `proj_` entity → its definition, from `projectile_spawn` events.
     def_ids: HashMap<String, String>,
+    /// The tick each projectile was last in a snapshot (`seenTicks`), so
+    /// types are forgotten by age.
+    seen_ticks: HashMap<String, u32>,
     /// Each player's team from the roster ("ffa" for none).
     pub teams: HashMap<String, String>,
     /// The match as its `match_state` events tell it.
@@ -116,6 +122,23 @@ impl SnapshotFeed {
             }
         }
         let projectiles = extract_projectiles(state);
+        for id in projectiles.keys() {
+            self.seen_ticks.insert(id.clone(), state.tick);
+        }
+        // Types are forgotten by age instead: `projectile_impact` carries no
+        // entity id (`processProjectileEntities`).
+        let seen_ticks = &mut self.seen_ticks;
+        self.def_ids.retain(|id, _| match seen_ticks.get(id) {
+            None => {
+                seen_ticks.insert(id.clone(), state.tick);
+                true
+            }
+            Some(&seen) if state.tick.saturating_sub(seen) > PROJECTILE_FORGET_TICKS => {
+                seen_ticks.remove(id);
+                false
+            }
+            Some(_) => true,
+        });
         self.projectile_buffer.push(now, state.tick, projectiles, None);
     }
 

@@ -47,7 +47,9 @@ use crate::view::{
 };
 use shagger::animation::player_model_manager::PlayerModelVisualStyle;
 use shagger::debug::debug_console::LogType;
+use shagger::loader::pk3::pk3_loader::locale_compare;
 use shagger::network::client::snapshot_buffer::InterpolatedEntity;
+use shagger::shared::net::game_state::PlayerState;
 use shagger::ui::egui_layer::EguiLayer;
 use washoi::client::cinematic_demo_player::{CinematicDemoPlayer, REEL_TITLE_MS, analyze_demo};
 use washoi::client::death_camera::{DeathCamera, look_angles};
@@ -101,8 +103,15 @@ struct App {
     grounded: bool,
     /// A demo or a live match playing on the map.
     feed: Option<Feed>,
-    /// The player the camera chases (F cycles), by place in id order.
+    /// The player the camera chases this frame, by place in the drawn list;
+    /// worked out each frame from [`App::follow_id`].
     follow: Option<usize>,
+    /// Whom the camera chases, by entity id (`_followedEntityId`), so a
+    /// player joining, leaving or dying does not hand the camera to another.
+    follow_id: Option<String>,
+    /// The viewer chose the free camera (F past the last player); until
+    /// then a demo follows its first player (`refreshHudPlayerList`).
+    free_camera: bool,
     /// The view after our own death, and what it follows (`DeathCamera`).
     death_camera: DeathCamera,
     death_follow: Option<DeathFollow>,
@@ -159,8 +168,25 @@ impl App {
     /// The backquote opens and closes the console (`DebugConsole`'s
     /// keyboard handler); while it is open, the keys and the mouse are its.
     fn console_event(&mut self, event: &WindowEvent) -> bool {
+        let chat_typing = self
+            .surface
+            .as_ref()
+            .and_then(|s| s.hud.as_ref())
+            .is_some_and(|h| h.chat.is_input_active());
+        // Escape closes the open console (`DebugConsole`'s key handler).
+        if let WindowEvent::KeyboardInput { event: key, .. } = event
+            && self.console.console.open
+            && key.physical_key == PhysicalKey::Code(KeyCode::Escape)
+        {
+            if key.state == ElementState::Pressed && !key.repeat {
+                self.console.console.toggle();
+            }
+            return true;
+        }
+        // A backquote typed into the chat is the chat's.
         if let WindowEvent::KeyboardInput { event: key, .. } = event
             && key.physical_key == PhysicalKey::Code(KeyCode::Backquote)
+            && !chat_typing
         {
             if key.state == ElementState::Pressed && !key.repeat {
                 self.console.console.toggle();
@@ -176,7 +202,18 @@ impl App {
         let Some(s) = &mut self.surface else { return false };
         let used = s.egui.on_window_event(&s.window, event);
         // A click the demo bar took is not a click on the game.
-        if used && !self.captured && self.demo_hud.is_some() && matches!(event, WindowEvent::MouseInput { .. }) {
+        // Its release still reaches the input system, or a button would stay held.
+        if used
+            && !self.captured
+            && self.demo_hud.is_some()
+            && matches!(
+                event,
+                WindowEvent::MouseInput {
+                    state: ElementState::Pressed,
+                    ..
+                }
+            )
+        {
             return true;
         }
         self.console.console.open
@@ -199,6 +236,12 @@ impl App {
             false
         };
         s.window.set_cursor_visible(!grab);
+        if self.captured && !grab {
+            // Pointer lock lost: nothing stays held (`releaseHeldInput`).
+            self.held.clear();
+            self.firing = false;
+            with_input(InputSystem::release_held_input);
+        }
         self.captured = grab;
     }
 
@@ -272,7 +315,16 @@ impl App {
 
     fn step(&mut self, dt: f32) {
         if matches!(self.feed, Some(Feed::Play(..))) {
-            let input = self.play_input();
+            // `FPSController.update`: without the pointer lock, no keys play.
+            let input = if self.captured {
+                self.play_input()
+            } else {
+                PlayInput {
+                    yaw: f64::from(self.camera.yaw),
+                    pitch: f64::from(self.camera.pitch),
+                    ..PlayInput::default()
+                }
+            };
             if let Some(Feed::Play(_, held)) = &mut self.feed {
                 *held = input;
             }
@@ -295,7 +347,7 @@ impl App {
         let dt = now.duration_since(self.last).as_secs_f32().min(0.1);
         self.last = now;
         with_input(InputSystem::update);
-        self.aiming = with_input(|i| i.is_active(fps::AIM));
+        self.aiming = self.captured && with_input(|i| i.is_active(fps::AIM));
         self.step(dt);
         with_input(InputSystem::end_frame);
         // `cl_fov`, as `currentBaseFov` gives every camera.
@@ -394,11 +446,24 @@ impl App {
                 .collect();
             s.renderer.set_live_weapons(&view.weapons);
             s.renderer.set_live_players(&drawn, f64::from(dt));
-            if let Some(i) = self.follow {
-                match players.get(i) {
-                    Some((_, p, _)) => chase_camera(&mut self.camera, p),
-                    None => self.follow = None,
+            if self.reel.is_none() {
+                // `--follow N` names a place in the first frame's list.
+                if let (Some(i), None) = (self.follow, &self.follow_id) {
+                    self.follow_id = players.get(i).map(|(id, _, _)| id.clone());
                 }
+                // A demo watches someone until the viewer flies free.
+                if self.follow_id.is_none() && !self.free_camera && matches!(feed, Feed::Demo(_)) {
+                    self.follow_id = name_order(feed.roster(), &players).into_iter().next();
+                }
+                self.follow = self
+                    .follow_id
+                    .as_ref()
+                    .and_then(|id| players.iter().position(|(p, _, _)| p == id));
+            }
+            if let Some(i) = self.follow
+                && let Some((_, p, _)) = players.get(i)
+            {
+                chase_camera(&mut self.camera, p);
             }
             s.renderer.set_live_projectiles(&view.projectiles, f64::from(dt));
             s.renderer.play_effects(&view.effects, &view.weapons, f64::from(dt));
@@ -462,6 +527,15 @@ impl App {
             if let Some(view_model) = &mut s.renderer.view_model {
                 view_model.powerup_outline = outline;
             }
+            let notices = feed.take_notices();
+            if let Some(hud) = &mut s.hud {
+                for notice in &notices {
+                    hud.chat.add_notice(notice);
+                }
+            }
+            for notice in &notices {
+                println!("server: {notice}");
+            }
             if let (Some(hud), None) = (&mut s.hud, &self.reel) {
                 hud.scoreboard.held = self.held.contains(&KeyCode::Tab);
                 update_watch_hud(
@@ -478,9 +552,12 @@ impl App {
                 hud.prepare(&s.gpu);
             }
             self.drawn = players;
-            if let Some(why) = feed.ended() {
-                // Hold the last frame; the title says so.
-                s.window.set_title(&format!("Washoi ({why})"));
+            // Hold the last frame; the title says so, until a seek goes back.
+            let title = feed
+                .ended()
+                .map_or_else(|| "Washoi".to_owned(), |why| format!("Washoi ({why})"));
+            if title != s.window.title() {
+                s.window.set_title(&title);
             }
         }
         if let Some(view_model) = &mut s.renderer.view_model {
@@ -546,7 +623,7 @@ impl App {
                 let name = followed.and_then(|id| {
                     demo.roster()
                         .iter()
-                        .find(|(pid, _)| pid == id)
+                        .find(|(_, p)| p.entity_id == id)
                         .map(|(_, p)| p.name.as_str())
                 });
                 demo_action = hud.ui(ui.ctx(), demo, followed.map(|id| (id, name.unwrap_or(id))));
@@ -591,7 +668,7 @@ impl App {
         };
         let context = DemoKeyContext {
             reel: false,
-            free_camera: self.follow.is_none(),
+            free_camera: self.free_camera,
         };
         let Some(action) = demo_key_action(&dom_code(code), modifiers, context) else {
             return false;
@@ -602,7 +679,8 @@ impl App {
         }
         hud.wake();
         let rate = demo.tick_rate();
-        let players = self.drawn.len();
+        let order = name_order(demo.roster(), &self.drawn);
+        let players = order.len();
         match action {
             DemoKeyAction::TogglePause => demo.toggle_play_pause(),
             DemoKeyAction::Seek { seconds } => demo.seek_to_tick(demo.playhead_tick() + seconds * rate),
@@ -620,13 +698,20 @@ impl App {
             }
             DemoKeyAction::Player { step } => {
                 if players > 0 {
-                    let at = self.follow.unwrap_or(if step > 0 { players - 1 } else { 0 });
-                    self.follow = Some((at as isize + isize::from(step)).rem_euclid(players as isize) as usize);
+                    let current = self
+                        .follow_id
+                        .as_ref()
+                        .and_then(|id| order.iter().position(|o| o == id));
+                    let at = current.unwrap_or(if step > 0 { players - 1 } else { 0 });
+                    let next = (at as isize + isize::from(step)).rem_euclid(players as isize) as usize;
+                    self.follow_id = Some(order[next].clone());
+                    self.free_camera = false;
                 }
             }
             DemoKeyAction::PlayerAt { index } => {
-                if index < players {
-                    self.follow = Some(index);
+                if let Some(id) = order.get(index) {
+                    self.follow_id = Some(id.clone());
+                    self.free_camera = false;
                 }
             }
             DemoKeyAction::Shot { .. } => return false,
@@ -766,6 +851,8 @@ impl ApplicationHandler for App {
                     ElementState::Released => i.key_up(&dom_code(code)),
                 });
                 match event.state {
+                    // A held Escape frees the mouse once; its repeats do not quit.
+                    ElementState::Pressed if code == KeyCode::Escape && event.repeat => {}
                     ElementState::Pressed if code == KeyCode::Escape => {
                         if self.captured {
                             self.set_captured(false);
@@ -773,14 +860,27 @@ impl ApplicationHandler for App {
                             event_loop.exit();
                         }
                     }
-                    ElementState::Pressed if self.reel_key(code) && !event.repeat => {}
+                    ElementState::Pressed if !event.repeat && self.reel_key(code) => {}
+                    // A reel's keys do not repeat (`bindPlaybackKeys`).
+                    ElementState::Pressed if event.repeat && self.reel.is_some() => {}
                     ElementState::Pressed if self.demo_key(code, event.repeat) => {}
                     ElementState::Pressed if code == KeyCode::KeyF && !event.repeat => {
-                        // Chase the next player, then back to the free camera.
-                        self.follow = match self.follow {
-                            None => Some(0),
-                            Some(i) => Some(i + 1),
+                        // Chase the next player by name, then back to the free camera.
+                        let order = self
+                            .feed
+                            .as_ref()
+                            .map_or_else(Vec::new, |f| name_order(f.roster(), &self.drawn));
+                        let next = match self
+                            .follow_id
+                            .as_ref()
+                            .and_then(|id| order.iter().position(|o| o == id))
+                        {
+                            None if !self.free_camera || self.follow_id.is_none() => order.first(),
+                            None => None,
+                            Some(i) => order.get(i + 1),
                         };
+                        self.follow_id = next.cloned();
+                        self.free_camera = self.follow_id.is_none();
                     }
                     ElementState::Pressed => {
                         self.held.insert(code);
@@ -799,6 +899,12 @@ impl ApplicationHandler for App {
                     self.set_captured(true);
                 } else {
                     self.firing = state == ElementState::Pressed;
+                }
+            }
+            WindowEvent::CursorMoved { .. } => {
+                // `DemoViewerHUD`: a move of the mouse brings the bar back.
+                if let Some(hud) = &mut self.demo_hud {
+                    hud.wake();
                 }
             }
             WindowEvent::Focused(false) => {
@@ -935,6 +1041,8 @@ pub fn run(
     audio: Option<GameAudio>,
     reel: Option<CinematicDemoPlayer>,
 ) -> i32 {
+    // A key still down when the last window closed never saw its release.
+    with_input(InputSystem::release_held_input);
     let mut app = App {
         map: Some(map),
         camera,
@@ -958,6 +1066,8 @@ pub fn run(
         },
         feed,
         follow,
+        follow_id: None,
+        free_camera: false,
         death_camera: DeathCamera::default(),
         death_follow: None,
         audio,
@@ -985,4 +1095,21 @@ pub fn run(
         return 1;
     }
     0
+}
+
+/// The drawn players' ids by name, as the viewer cycles them
+/// (`playerOrder`: `name.localeCompare`, then id).
+fn name_order(
+    roster: &[(String, PlayerState)],
+    drawn: &[(String, InterpolatedEntity, PlayerModelVisualStyle)],
+) -> Vec<String> {
+    let name = |id: &str| {
+        roster
+            .iter()
+            .find(|(_, p)| p.entity_id == id && !p.name.is_empty())
+            .map_or_else(|| id.to_lowercase(), |(_, p)| p.name.to_lowercase())
+    };
+    let mut ids: Vec<&str> = drawn.iter().map(|(id, _, _)| id.as_str()).collect();
+    ids.sort_by(|a, b| locale_compare(&name(a), &name(b)).then(a.cmp(b)));
+    ids.into_iter().map(str::to_owned).collect()
 }

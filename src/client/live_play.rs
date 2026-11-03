@@ -138,6 +138,11 @@ pub struct LivePlay {
     pub player_id: String,
     pub entity_id: String,
     joined: bool,
+    /// The game server's messages for the player, not yet shown.
+    pub notices: Vec<String>,
+    /// The session has the seat: false from a drop until the resumed
+    /// connection's first snapshot (`gameHost.isConnected()`).
+    connected: bool,
     /// The body is in the world (not dead, not yet spawned).
     pub alive: bool,
     died_at: f64,
@@ -236,6 +241,8 @@ impl LivePlay {
                         player_id: String::new(),
                         entity_id: String::new(),
                         joined: false,
+                        notices: Vec::new(),
+                        connected: true,
                         alive: false,
                         died_at: f64::NEG_INFINITY,
                         respawn_requested: false,
@@ -383,7 +390,9 @@ impl LivePlay {
                         self.next_command = self.now_ms();
                     }
                 }
+                SessionEvent::Resuming { .. } => self.connected = false,
                 SessionEvent::Host(HostEvent::Snapshot(state)) => {
+                    self.connected = true;
                     let now = self.now_ms();
                     self.tick = state.tick;
                     for event in &state.events {
@@ -418,6 +427,11 @@ impl LivePlay {
                     }
                     self.feed.push(now, &state, &self.entity_id);
                 }
+                // `onServerMessage`: why a join was refused, a place in the
+                // queue, a round to wait for; every one is for the player.
+                SessionEvent::Host(HostEvent::ServerMessage(m)) if !m.message.is_empty() => {
+                    self.notices.push(m.message);
+                }
                 SessionEvent::Host(HostEvent::Failed(why)) | SessionEvent::Closed(why) => {
                     self.closed.get_or_insert(why);
                 }
@@ -432,7 +446,12 @@ impl LivePlay {
     }
 
     fn send_commands(&mut self, input: &PlayInput, now: f64) {
-        if !self.joined || self.closed.is_some() {
+        // `sendInput`: nothing is predicted or sent while the connection is
+        // being restored, so the predictor's numbering stays the wire's.
+        if !self.joined || self.closed.is_some() || !self.connected {
+            if !self.connected {
+                self.next_command = now;
+            }
             return;
         }
         let mut input = *input;
@@ -458,7 +477,9 @@ impl LivePlay {
         while self.next_command <= now {
             self.next_command += COMMAND_MS;
             let command = command_for(&input, self.tick);
-            if self.alive {
+            // Every command sent is predicted, dead or alive (`sendInput`):
+            // the server acks the wire's sequence, which counts them all.
+            {
                 // Predict what the server simulates: the f32 wire values.
                 let sent = command.as_sent();
                 self.predictor.process_input(

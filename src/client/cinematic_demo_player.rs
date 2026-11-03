@@ -243,7 +243,8 @@ impl CinematicDemoPlayer {
             return;
         };
         let playhead = demo.playhead_tick();
-        if playhead >= segment.end_tick as f64 {
+        // A shot cut past the last frame ends with the demo, which stops there.
+        if playhead >= segment.end_tick as f64 || demo.ended() {
             self.advance_segment(demo, world);
             return;
         }
