@@ -15,6 +15,7 @@ use shagger::rendering::gpu::Gpu;
 use shagger::rendering::offscreen::{OFFSCREEN_FORMAT, render_encoded_to_rgba};
 use shagger::rendering::wgpu;
 use shagger::ui::egui_layer::{EguiLayer, egui};
+use washoi::client::hud::frame_rate_display::FrameRateDisplay;
 use washoi::client::lobby_panel::{LobbyChoice, LobbyPanel, Tab, install_style};
 use washoi::client::settings::fps_settings_view::FpsSettingsView;
 use washoi::client::settings::settings_model::{SETTINGS_PAGES, VIDEO_SECTIONS};
@@ -49,6 +50,9 @@ struct MenuApp {
     open: Option<MenuWindow>,
     choice: Option<LobbyChoice>,
     error: Option<String>,
+    /// `show_fps`, which the browser shows over the lobby too.
+    frame_rate: FrameRateDisplay,
+    last_frame: Option<Instant>,
 }
 
 impl MenuApp {
@@ -71,9 +75,17 @@ impl MenuApp {
             .texture
             .texture
             .create_view(&wgpu::TextureViewDescriptor::default());
-        let (panel, console) = (&mut self.panel, &mut self.console);
+        let now = Instant::now();
+        let dt = self.last_frame.map_or(0.0, |t| now.duration_since(t).as_secs_f64());
+        self.last_frame = Some(now);
+        self.frame_rate
+            .tick(dt, shagger::core::cvar::with_cvars(|c| c.get_bool("show_fps")));
+        let (panel, console, frame_rate) = (&mut self.panel, &mut self.console, &self.frame_rate);
         let ui = m.layer.run(&m.window, |ui| {
             panel.ui(ui);
+            if let Some(text) = frame_rate.text() {
+                frame_rate_badge(ui.ctx(), text);
+            }
             if std::mem::take(&mut panel.console_pressed) {
                 console.console.toggle();
             }
@@ -89,6 +101,32 @@ impl MenuApp {
         m.gpu.queue.submit([encoder.finish()]);
         present(&m.gpu, &m.window, &mut m.surface, &m.config, frame);
     }
+}
+
+/// `.fps-frame-rate` over the lobby: the number and "FPS" on the yellow
+/// badge in the top-right corner.
+fn frame_rate_badge(ctx: &egui::Context, text: &str) {
+    let ink = egui::Color32::from_rgb(23, 19, 38);
+    egui::Area::new(egui::Id::unique("fps-frame-rate"))
+        .anchor(egui::Align2::RIGHT_TOP, [0.0, 0.0])
+        .order(egui::Order::Foreground)
+        .interactable(false)
+        .show(ctx, |ui| {
+            egui::Frame::new()
+                .fill(egui::Color32::from_rgb(0xff, 0xc5, 0x2c))
+                .inner_margin(egui::Margin {
+                    left: 22,
+                    right: 14,
+                    top: 8,
+                    bottom: 9,
+                })
+                .show(ui, |ui| {
+                    ui.horizontal(|ui| {
+                        ui.label(egui::RichText::new(format!("{text:>4}")).size(17.0).strong().color(ink));
+                        ui.label(egui::RichText::new("FPS").size(10.0).strong().color(ink));
+                    });
+                });
+        });
 }
 
 fn clear(encoder: &mut wgpu::CommandEncoder, view: &wgpu::TextureView) {
@@ -243,6 +281,8 @@ pub fn choose(
         open: None,
         choice: None,
         error: None,
+        frame_rate: FrameRateDisplay::default(),
+        last_frame: None,
     };
     let ran = run_on_event_loop(&mut app);
     if let Some(m) = &app.open {

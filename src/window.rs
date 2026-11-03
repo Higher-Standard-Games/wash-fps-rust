@@ -28,7 +28,7 @@ use shagger::movement::movement_vars::movement_var;
 use shagger::rendering::wgpu;
 use shagger::weapon::weapon_view_manager::ViewModelInput;
 use std::cell::Cell;
-use washoi::client::fps_actions::fps;
+use washoi::client::fps_actions::{fps, weapon_slot_pressed};
 use washoi::client::fps_hud::FpsHud;
 use washoi::client::fps_movement_audio::play_jumppad_launch;
 use washoi::client::game_events::canonical_weapon_id;
@@ -43,7 +43,7 @@ use winit::event::{DeviceEvent, DeviceId, ElementState, MouseButton, MouseScroll
 use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop};
 use winit::keyboard::{KeyCode, PhysicalKey};
 use winit::platform::run_on_demand::EventLoopExtRunOnDemand;
-use winit::window::{CursorGrabMode, Window, WindowId};
+use winit::window::{CursorGrabMode, Fullscreen, Window, WindowId};
 
 use crate::demo_overlay::{DemoOverlay, DemoOverlayAction};
 use crate::reel_overlay::ReelOverlay;
@@ -331,11 +331,8 @@ impl App {
             use_key: i.is_active(fps::USE),
             yaw: f64::from(self.camera.yaw),
             pitch: f64::from(self.camera.pitch),
-            // Held rather than pressed: the input is sampled each tick.
-            weapon_slot: fps::WEAPONS
-                .iter()
-                .position(|id| i.is_active(id))
-                .map_or(0, |n| n as u8 + 1),
+            // Picks go through `LivePlay::select_weapon`.
+            weapon_slot: 0,
             auto_ads: false,
         });
         // `hipfireBlocked`: the trigger on a launcher puts the aim up.
@@ -364,8 +361,21 @@ impl App {
                     ..PlayInput::default()
                 }
             };
-            if let Some(Feed::Play(_, held)) = &mut self.feed {
+            // Weapon select: number keys and the wheel, pressed this frame.
+            let pick = if self.captured {
+                with_input(|i| {
+                    (
+                        weapon_slot_pressed(i),
+                        i.was_pressed(fps::WEAPON_NEXT),
+                        i.was_pressed(fps::WEAPON_PREV),
+                    )
+                })
+            } else {
+                (0, false, false)
+            };
+            if let Some(Feed::Play(play, held)) = &mut self.feed {
                 *held = input;
+                play.select_weapon(pick.0, pick.1, pick.2);
             }
             self.velocity = Vec3::ZERO;
             return;
@@ -1120,6 +1130,21 @@ pub fn run_on_event_loop(app: &mut impl ApplicationHandler) -> Result<(), String
     })
 }
 
+thread_local! {
+    static ALT_HELD: Cell<bool> = const { Cell::new(false) };
+    /// The window open now, for Alt+Enter.
+    static CURRENT_WINDOW: std::cell::RefCell<std::sync::Weak<Window>> = const { std::cell::RefCell::new(std::sync::Weak::new()) };
+}
+
+/// Borderless fullscreen on the window's own monitor, or back.
+fn toggle_fullscreen() {
+    let Some(window) = CURRENT_WINDOW.with(|w| w.borrow().upgrade()) else {
+        return;
+    };
+    let full = window.fullscreen().is_none();
+    window.set_fullscreen(full.then_some(Fullscreen::Borderless(None)));
+}
+
 /// Every screen's handler, with one addition: when the system ends the
 /// process from inside the loop (Cmd+Q on macOS terminates the app there,
 /// so nothing after the loop runs), the settings still on their way to
@@ -1137,6 +1162,24 @@ impl<A: ApplicationHandler> ApplicationHandler for Exiting<'_, A> {
         self.0.user_event(event_loop, event);
     }
     fn window_event(&mut self, event_loop: &ActiveEventLoop, window_id: WindowId, event: WindowEvent) {
+        if let WindowEvent::ModifiersChanged(m) = &event {
+            ALT_HELD.with(|a| a.set(m.state().alt_key()));
+        }
+        // `InputSystem.onKeyDown`: Alt+Enter toggles fullscreen, on every
+        // screen, and goes no further.
+        if let WindowEvent::KeyboardInput { event: key, .. } = &event
+            && key.state == ElementState::Pressed
+            && matches!(
+                key.physical_key,
+                PhysicalKey::Code(KeyCode::Enter | KeyCode::NumpadEnter)
+            )
+            && ALT_HELD.with(Cell::get)
+        {
+            if !key.repeat {
+                toggle_fullscreen();
+            }
+            return;
+        }
         self.0.window_event(event_loop, window_id, event);
     }
     fn device_event(&mut self, event_loop: &ActiveEventLoop, device_id: DeviceId, event: DeviceEvent) {
@@ -1252,6 +1295,7 @@ struct Placement {
     /// Wayland does not tell.
     position: Option<PhysicalPosition<i32>>,
     maximized: bool,
+    fullscreen: bool,
 }
 
 thread_local! {
@@ -1272,6 +1316,7 @@ pub fn remember_placement(window: &Window) {
             size: window.inner_size(),
             position: window.outer_position().ok(),
             maximized: window.is_maximized(),
+            fullscreen: window.fullscreen().is_some(),
         }));
     });
 }
@@ -1293,11 +1338,15 @@ pub fn open_window(event_loop: &ActiveEventLoop) -> Result<OpenWindow, String> {
     }
     if let Some(last) = PLACEMENT.with(Cell::get) {
         attributes = attributes.with_inner_size(last.size).with_maximized(last.maximized);
+        if last.fullscreen {
+            attributes = attributes.with_fullscreen(Some(Fullscreen::Borderless(None)));
+        }
         if let Some(position) = last.position {
             attributes = attributes.with_position(position);
         }
     }
     let window = Arc::new(event_loop.create_window(attributes).map_err(|e| e.to_string())?);
+    CURRENT_WINDOW.with(|w| *w.borrow_mut() = Arc::downgrade(&window));
     let instance = wgpu::Instance::new(wgpu::InstanceDescriptor::new_with_display_handle_from_env(Box::new(
         event_loop.owned_display_handle(),
     )));

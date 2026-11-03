@@ -12,6 +12,7 @@ pub mod phase_message;
 pub mod pickup_toast;
 pub mod powerup_timer;
 pub mod scoreboard;
+pub mod speedometer;
 pub mod timer;
 pub mod vitals_block;
 pub mod weapon_slots;

@@ -156,6 +156,30 @@ pub fn command_for(input: &PlayInput, tick: u32) -> Command {
     }
 }
 
+/// `InventoryManager.getSlotCount()`: the blade and two weapons.
+const WEAPON_SLOT_COUNT: u8 = 3;
+
+/// The 0-based slot a number key (1-based `slot`) or a wheel step picks:
+/// the wheel skips the blade in slot 0 and wraps (`FPSController`).
+#[must_use]
+pub fn weapon_pick(current: u8, count: u8, slot: u8, next: bool, prev: bool) -> Option<u8> {
+    if slot > 0 {
+        return Some(slot - 1);
+    }
+    if count <= 1 {
+        return None;
+    }
+    let pick = if next {
+        let n = current + 1;
+        if n >= count { 1 } else { n }
+    } else if prev {
+        if current <= 1 { count - 1 } else { current - 1 }
+    } else {
+        return None;
+    };
+    Some(pick)
+}
+
 /// The simulation's step: 125 commands a second.
 const COMMAND_MS: f64 = 8.0;
 /// How long after a death the respawn may be asked for.
@@ -189,6 +213,10 @@ pub struct LivePlay {
     pub alive: bool,
     died_at: f64,
     respawn_requested: bool,
+    /// `currentWeaponSlot`: 0-based, as the last pick left it.
+    current_weapon_slot: u8,
+    /// `_pendingWeaponSlot`: 1-based, sent with the next command only.
+    pending_weapon_slot: u8,
     /// The newest snapshot's tick.
     tick: u32,
     next_command: f64,
@@ -293,6 +321,8 @@ impl LivePlay {
                         alive: false,
                         died_at: f64::NEG_INFINITY,
                         respawn_requested: false,
+                        current_weapon_slot: 0,
+                        pending_weapon_slot: 0,
                         tick: 0,
                         next_command: 0.0,
                         weapon: String::new(),
@@ -507,6 +537,16 @@ impl LivePlay {
         self.feed.sample(now)
     }
 
+    /// `syncKeysFromInput`'s weapon select: a number key (1-based `slot`,
+    /// 0 for none) or a wheel step picks the weapon the next command asks
+    /// for.
+    pub fn select_weapon(&mut self, slot: u8, next: bool, prev: bool) {
+        if let Some(pick) = weapon_pick(self.current_weapon_slot, WEAPON_SLOT_COUNT, slot, next, prev) {
+            self.current_weapon_slot = pick;
+            self.pending_weapon_slot = pick + 1;
+        }
+    }
+
     fn send_commands(&mut self, input: &PlayInput, now: f64) {
         // `sendInput`: nothing is predicted or sent while the connection is
         // being restored, so the predictor's numbering stays the wire's.
@@ -560,6 +600,8 @@ impl LivePlay {
             if let Some(t) = self.teleport.get() {
                 input.yaw = t.exit_yaw;
             }
+            // Fire-and-forget: the pick goes with one command.
+            input.weapon_slot = std::mem::take(&mut self.pending_weapon_slot);
             let command = command_for(&input, self.tick);
             // Every command sent is predicted, dead or alive (`sendInput`):
             // the server acks the wire's sequence, which counts them all.
@@ -589,6 +631,19 @@ impl LivePlay {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_wheel_cycles_the_weapons_past_the_blade() {
+        assert_eq!(weapon_pick(0, 3, 0, true, false), Some(1));
+        assert_eq!(weapon_pick(1, 3, 0, true, false), Some(2));
+        assert_eq!(weapon_pick(2, 3, 0, true, false), Some(1));
+        assert_eq!(weapon_pick(2, 3, 0, false, true), Some(1));
+        assert_eq!(weapon_pick(1, 3, 0, false, true), Some(2));
+        assert_eq!(weapon_pick(0, 3, 0, false, true), Some(2));
+        assert_eq!(weapon_pick(1, 3, 3, true, false), Some(2));
+        assert_eq!(weapon_pick(1, 3, 0, false, false), None);
+        assert_eq!(weapon_pick(0, 1, 0, true, false), None);
+    }
 
     #[test]
     fn builds_the_world_direction_as_send_input_does() {

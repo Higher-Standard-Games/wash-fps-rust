@@ -14,6 +14,7 @@ use shagger::ui::hud_2d::Hud2d;
 
 use crate::client::ammo_status::get_ammo_status;
 use crate::client::crosshair::{Crosshair, CrosshairFrame};
+use crate::client::hud::frame_rate_display::FrameRateDisplay;
 use crate::client::hud::hud_widget::{FpsHudWidget, HudFrame};
 use crate::client::hud::washiki::{Fonts, UI_SCALE};
 use crate::client::hud::widgets::ammo_counter::AmmoCounter;
@@ -28,6 +29,7 @@ use crate::client::hud::widgets::phase_message::PhaseMessage;
 use crate::client::hud::widgets::pickup_toast::PickupToast;
 use crate::client::hud::widgets::powerup_timer::PowerupTimer;
 use crate::client::hud::widgets::scoreboard::Scoreboard;
+use crate::client::hud::widgets::speedometer::Speedometer;
 use crate::client::hud::widgets::timer::Timer;
 use crate::client::hud::widgets::vitals_block::VitalsBlock;
 use crate::client::hud::widgets::weapon_slots::WeaponSlots;
@@ -52,6 +54,9 @@ pub struct FpsHud {
     ammo: AmmoCounter,
     crosshair: Crosshair,
     weapon_slots: WeaponSlots,
+    speedometer: Speedometer,
+    /// `show_fps`, app-wide in the browser; here over the match and demos.
+    pub frame_rate: FrameRateDisplay,
     ammo_warning: AmmoWarning,
     pickup: PickupToast,
     powerup_timer: PowerupTimer,
@@ -107,6 +112,8 @@ impl FpsHud {
             ammo: AmmoCounter::default(),
             crosshair: Crosshair::default(),
             weapon_slots: WeaponSlots::default(),
+            speedometer: Speedometer::default(),
+            frame_rate: FrameRateDisplay::default(),
             ammo_warning: AmmoWarning::default(),
             pickup: PickupToast::default(),
             powerup_timer: PowerupTimer::default(),
@@ -244,6 +251,11 @@ impl FpsHud {
                 .unwrap_or_default();
             self.chat.set_local_team(&team);
         }
+        let (show_speed, show_fps) =
+            shagger::core::cvar::with_cvars(|c| (c.get_bool("cl_showspeed"), c.get_bool("show_fps")));
+        // `FPSController` runs only for the player's own eyes.
+        self.speedometer.update(frame.playing && show_speed, frame.speed);
+        self.frame_rate.tick(frame.dt, show_fps);
         self.reticle = (!view.is_empty() && !state.dead).then(|| {
             let weapon = state.current_weapon.clone();
             let out = get_ammo_status(&weapon, state.ammo.get(&weapon).copied()).out_of_ammo;
@@ -308,8 +320,12 @@ impl FpsHud {
             let [slots_w, slots_h] = self.weapon_slots.size(&self.hud, &fonts);
             self.weapon_slots
                 .draw(&mut self.hud, &fonts, ammo_x + 8.0 * s - slots_w, bottom - slots_h);
-            // `.fps-toast-container`, over the bottom centre.
-            self.pickup.draw(&mut self.hud, &fonts, vw / 2.0, bottom);
+            // `.fps-hud-bottom-center`: the speedometer, and the toasts
+            // floating over it.
+            let [speed_w, speed_h] = self.speedometer.size(&self.hud, &fonts);
+            self.speedometer
+                .draw(&mut self.hud, &fonts, (vw - speed_w) / 2.0, bottom - speed_h);
+            self.pickup.draw(&mut self.hud, &fonts, vw / 2.0, bottom - speed_h);
         }
         self.scoreboard.draw(&mut self.hud, &fonts, 0.0, 0.0);
         // `.fps-chat`: clear of the bottom bar, over the scoreboard's veil.
@@ -329,6 +345,8 @@ impl FpsHud {
         if subject {
             self.ammo_warning.draw(&mut self.hud, &fonts, vw / 2.0, vh * 0.83);
         }
+        // `.fps-frame-rate` (z 900).
+        self.frame_rate.draw(&mut self.hud, &fonts, vw);
         if let Some((weapon, speed, out_of_ammo)) = &self.reticle
             && !self.scoreboard.held
         {
