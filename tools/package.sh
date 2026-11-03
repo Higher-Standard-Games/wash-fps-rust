@@ -56,7 +56,7 @@ case $os in
   linux)
     mkdir -p "$stage/$name"
     cp "$bin" "$stage/$name/washoi"
-    strip "$stage/$name/washoi" 2>/dev/null || true
+    # Not stripped: a crash report's backtrace needs the symbols.
     extras "$stage/$name"
     tar -C "$stage" -czf "dist/$name.tar.gz" "$name"
     echo "dist/$name.tar.gz"
@@ -95,13 +95,21 @@ case $os in
 PLIST
     # Ad-hoc unless a Developer ID is in the keychain; notarizing follows
     # in the release workflow when its secrets are there.
-    codesign --force --deep --options runtime --timestamp=none --sign "${MACOS_SIGN_IDENTITY:--}" "$app"
+    # Notarizing needs a secure timestamp; an ad-hoc signature cannot have one.
+    if [ -n "${MACOS_SIGN_IDENTITY:-}" ]; then
+      codesign --force --deep --options runtime --timestamp --sign "$MACOS_SIGN_IDENTITY" "$app"
+    else
+      codesign --force --deep --options runtime --timestamp=none --sign - "$app"
+    fi
     (cd "$stage" && ditto -c -k --keepParent Washoi.app "$OLDPWD/dist/$name.zip")
     echo "dist/$name.zip"
     ;;
   windows)
     mkdir -p "$stage/$name"
     cp "$bin" "$stage/$name/washoi.exe"
+    # The symbols beside the exe, so a crash report's backtrace has names.
+    pdb="${bin%.exe}.pdb"
+    [ -f "$pdb" ] && cp "$pdb" "$stage/$name/washoi.pdb"
     extras "$stage/$name"
     (cd "$stage" && 7z a -tzip "$OLDPWD/dist/$name.zip" "$name" >/dev/null)
     echo "dist/$name.zip"

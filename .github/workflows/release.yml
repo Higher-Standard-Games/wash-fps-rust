@@ -31,19 +31,10 @@ jobs:
           # The oldest supported Ubuntu, so the binary runs on older glibc.
           - runner: ubuntu-22.04
           - runner: macos-14
-          - runner: macos-13
+          # Intel: macos-13 is retired.
+          - runner: macos-15-intel
           - runner: windows-latest
     runs-on: ${{ matrix.runner }}
-    # Secrets cannot be tested in a step's `if`; as the job's environment they can.
-    env:
-      MACOS_CERTIFICATE: ${{ secrets.MACOS_CERTIFICATE }}
-      MACOS_CERTIFICATE_PASSWORD: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
-      MACOS_SIGN_IDENTITY: ${{ secrets.MACOS_SIGN_IDENTITY }}
-      APPLE_ID: ${{ secrets.APPLE_ID }}
-      APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
-      APPLE_APP_PASSWORD: ${{ secrets.APPLE_APP_PASSWORD }}
-      WINDOWS_CERTIFICATE: ${{ secrets.WINDOWS_CERTIFICATE }}
-      WINDOWS_CERTIFICATE_PASSWORD: ${{ secrets.WINDOWS_CERTIFICATE_PASSWORD }}
     defaults:
       run:
         shell: bash
@@ -56,12 +47,27 @@ jobs:
       - if: runner.os == 'Linux'
         run: sudo apt-get update && sudo apt-get install -y libasound2-dev
       - uses: Swatinem/rust-cache@v2
+      # Which signing secrets exist. Each secret reaches only the step that
+      # uses it, never the build (crate build scripts run there).
+      - name: Which secrets
+        id: secrets
+        env:
+          MACOS_CERTIFICATE: ${{ secrets.MACOS_CERTIFICATE }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          WINDOWS_CERTIFICATE: ${{ secrets.WINDOWS_CERTIFICATE }}
+        run: |
+          echo "mac_cert=$([ -n "$MACOS_CERTIFICATE" ] && echo true || echo false)" >> "$GITHUB_OUTPUT"
+          echo "notarize=$([ -n "$APPLE_ID" ] && echo true || echo false)" >> "$GITHUB_OUTPUT"
+          echo "win_cert=$([ -n "$WINDOWS_CERTIFICATE" ] && echo true || echo false)" >> "$GITHUB_OUTPUT"
       - name: Build
         run: cargo build --release --locked
         env:
           WASHOI_BUILD: ${{ github.ref_name }} ${{ github.sha }}
       - name: Import the macOS signing certificate
-        if: runner.os == 'macOS' && env.MACOS_CERTIFICATE != ''
+        if: runner.os == 'macOS' && steps.secrets.outputs.mac_cert == 'true'
+        env:
+          MACOS_CERTIFICATE: ${{ secrets.MACOS_CERTIFICATE }}
+          MACOS_CERTIFICATE_PASSWORD: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
         run: |
           keychain="$RUNNER_TEMP/signing.keychain-db"
           security create-keychain -p "" "$keychain"
@@ -72,7 +78,10 @@ jobs:
           security set-key-partition-list -S apple-tool:,apple: -s -k "" "$keychain"
           security list-keychains -d user -s "$keychain" login.keychain
       - name: Sign the Windows exe
-        if: runner.os == 'Windows' && env.WINDOWS_CERTIFICATE != ''
+        if: runner.os == 'Windows' && steps.secrets.outputs.win_cert == 'true'
+        env:
+          WINDOWS_CERTIFICATE: ${{ secrets.WINDOWS_CERTIFICATE }}
+          WINDOWS_CERTIFICATE_PASSWORD: ${{ secrets.WINDOWS_CERTIFICATE_PASSWORD }}
         shell: pwsh
         run: |
           [IO.File]::WriteAllBytes("$env:RUNNER_TEMP\cert.pfx", [Convert]::FromBase64String($env:WINDOWS_CERTIFICATE))
@@ -85,8 +94,13 @@ jobs:
           tools/package.sh
         env:
           PYTHON: ${{ runner.os == 'Windows' && 'python' || 'python3' }}
+          MACOS_SIGN_IDENTITY: ${{ steps.secrets.outputs.mac_cert == 'true' && secrets.MACOS_SIGN_IDENTITY || '' }}
       - name: Notarize the macOS app
-        if: runner.os == 'macOS' && env.APPLE_ID != ''
+        if: runner.os == 'macOS' && steps.secrets.outputs.notarize == 'true'
+        env:
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          APPLE_APP_PASSWORD: ${{ secrets.APPLE_APP_PASSWORD }}
         run: |
           for zip in dist/*.zip; do
             xcrun notarytool submit "$zip" --apple-id "$APPLE_ID" --team-id "$APPLE_TEAM_ID" --password "$APPLE_APP_PASSWORD" --wait
