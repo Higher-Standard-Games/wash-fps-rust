@@ -26,6 +26,7 @@ use shagger::input::input_system::{InputSystem, with_input};
 use shagger::input::key_codes::{dom_code, dom_mouse_button};
 use shagger::movement::movement_vars::movement_var;
 use shagger::rendering::wgpu;
+use shagger::viewport::ViewCvars;
 use shagger::weapon::weapon_view_manager::ViewModelInput;
 use std::cell::Cell;
 use washoi::client::fps_actions::{fps, weapon_slot_pressed};
@@ -61,6 +62,7 @@ use washoi::client::cinematic_demo_player::{CinematicDemoPlayer, REEL_TITLE_MS, 
 use washoi::client::death_camera::{DeathCamera, look_angles};
 use washoi::client::demo_playback_keys::{DemoKeyAction, DemoKeyContext, Modifiers, demo_key_action, frag_seek_tick};
 use washoi::client::demo_service::analysis_report;
+use washoi::client::first_person_view::{BodyFrame, FirstPersonView, ViewKeys, ViewOffset};
 use washoi::client::game_events::GameAudio;
 use washoi::client::lobby_panel::install_style;
 use washoi::client::teleport_effect::TeamColor;
@@ -127,6 +129,10 @@ struct App {
     demo_discontinuity: u64,
     /// The view after our own death, and what it follows (`DeathCamera`).
     death_camera: DeathCamera,
+    /// The first-person camera's motion on top of the mouse, in play.
+    first_person: FirstPersonView,
+    /// This frame's: put on the camera for drawing only.
+    view_offset: Option<ViewOffset>,
     death_follow: Option<DeathFollow>,
     /// The match's sound, when there is a sound card.
     audio: Option<GameAudio>,
@@ -465,7 +471,8 @@ impl App {
                     }
                 }
             }
-            if let Feed::Play(p, _) = feed {
+            self.view_offset = None;
+            if let Feed::Play(p, held) = feed {
                 // First person: the eye where prediction puts it.
                 if let Some(yaw) = p.take_spawn_facing() {
                     // `faceSpawn`: the spawn's facing, level.
@@ -485,6 +492,53 @@ impl App {
                 }
                 if let Some(eye) = p.eye() {
                     self.camera.position = Vec3::new(eye.x as f32, eye.y as f32, eye.z as f32);
+                }
+                // `FPSController.update`: steps, slide, ledge and the view
+                // effects, drawn but never aimed with.
+                match p.feet() {
+                    Some(feet) => {
+                        let m = p.movement();
+                        let v = p.velocity();
+                        let body = BodyFrame {
+                            feet: DVec3::new(feet.x, feet.y, feet.z),
+                            eye_lift: shagger::physics::player_physics_constants::DEFAULT_VIEWHEIGHT
+                                + m.crouch_view_offset,
+                            velocity: DVec3::new(v.x, v.y, v.z),
+                            grounded: p.grounded(),
+                            sliding: m.is_sliding,
+                            horizontal_speed: m.actual_horiz_speed,
+                            slide_phase: m.slide_phase,
+                            ledge_grab_phase: m.ledge_grab_phase,
+                            ledge_grab: m.ledge_grab_state,
+                            wall_jump: m.wall_jump_state,
+                        };
+                        let keys = ViewKeys {
+                            forward: held.forward,
+                            backward: held.backward,
+                            left: held.left,
+                            right: held.right,
+                            jump: held.jump,
+                            sprint: held.sprint,
+                            aim: self.aiming,
+                            fire: held.fire,
+                        };
+                        let (cvars, step_height, smooth_factor) = with_cvars(|c| {
+                            (
+                                ViewCvars::read(c),
+                                movement_var(c, "sv_stepheight"),
+                                movement_var(c, "cl_smoothfactor"),
+                            )
+                        });
+                        self.view_offset = Some(self.first_person.update(
+                            f64::from(dt),
+                            &body,
+                            &keys,
+                            &cvars,
+                            step_height,
+                            smooth_factor,
+                        ));
+                    }
+                    None => self.first_person.reset(),
                 }
                 let v = p.velocity();
                 self.velocity = Vec3::new(v.x as f32, v.y as f32, v.z as f32);
@@ -670,6 +724,18 @@ impl App {
                 reloading: false,
             });
         }
+        // The view's motion goes on for drawing and comes off after, so the
+        // mouse and the aim never carry it.
+        let mouse = (self.camera.pitch, self.camera.yaw);
+        let offset = self.view_offset.take().filter(|_| !self.death_camera.is_active());
+        if let Some(o) = offset {
+            self.camera.pitch += o.pitch as f32;
+            self.camera.yaw += o.yaw as f32;
+            self.camera.roll = o.roll as f32;
+            self.camera.fov_y *= o.fov_multiplier as f32;
+            let eye = o.eye_in_world(self.camera.right().as_dvec3(), self.camera.forward().as_dvec3());
+            self.camera.position = eye.as_vec3();
+        }
         s.renderer.update_underwater(&mut self.camera, f64::from(dt));
         if let Some(b) = &mut self.bench {
             b.mark("scene");
@@ -693,6 +759,10 @@ impl App {
         }
         s.renderer
             .prepare(&s.gpu, &self.camera, [s.config.width as f32, s.config.height as f32]);
+        if offset.is_some() {
+            (self.camera.pitch, self.camera.yaw) = mouse;
+            self.camera.roll = 0.0;
+        }
         if let Some(b) = &mut self.bench {
             b.mark("prepare");
         }
@@ -1453,6 +1523,8 @@ pub fn run(
         free_camera: false,
         demo_discontinuity: 0,
         death_camera: DeathCamera::default(),
+        first_person: FirstPersonView::default(),
+        view_offset: None,
         death_follow: None,
         audio,
         leave: false,

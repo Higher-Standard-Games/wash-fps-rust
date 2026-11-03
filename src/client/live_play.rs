@@ -358,6 +358,13 @@ impl LivePlay {
         &self.feed.roster
     }
 
+    /// The feet: the predicted position with its correction smoothing;
+    /// `None` while dead or before the first snapshot.
+    #[must_use]
+    pub fn feet(&self) -> Option<Vec3> {
+        (self.alive && self.predictor.has_valid_position()).then(|| self.predictor.visual_position())
+    }
+
     /// The eye: the predicted position (smoothed), lifted by the view
     /// height and the crouch.
     #[must_use]

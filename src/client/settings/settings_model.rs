@@ -1001,6 +1001,8 @@ pub fn register_client_cvars(cvars: &mut Cvars) {
     register_audio_cvars(cvars);
     // shagger: RenderVars.ts and PostProcessingManager.ts.
     register_render_vars(cvars);
+    // viewport/effects/*.ts: the first-person view effects.
+    shagger::viewport::register_view_cvars(cvars);
     // WorldFogController.ts (MapLoader registers them at startup).
     register_fog_cvars(cvars);
     // Crosshair.ts.
