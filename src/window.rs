@@ -66,8 +66,9 @@ use washoi::client::first_person_view::{BodyFrame, FirstPersonView, ViewKeys, Vi
 use washoi::client::game_events::GameAudio;
 use washoi::client::lobby_panel::install_style;
 use washoi::client::teleport_effect::TeamColor;
-use washoi::client::weapon_view::quad_view_weapon_outline;
+use washoi::client::weapon_view::{clip_reload_time, quad_view_weapon_outline, shot_style};
 use washoi::console::{ConsoleRequest, DemoConsole, GameConsole};
+use washoi::shared::net::snapshot_events::SnapshotEvent;
 
 /// Units per second (Q3's run speed is 320).
 const SPEED: f32 = 320.0;
@@ -131,6 +132,8 @@ struct App {
     death_camera: DeathCamera,
     /// The first-person camera's motion on top of the mouse, in play.
     first_person: FirstPersonView,
+    /// The viewed player's weapon was reloading in the last weapon state.
+    view_reloading: bool,
     /// This frame's: put on the camera for drawing only.
     view_offset: Option<ViewOffset>,
     death_follow: Option<DeathFollow>,
@@ -634,6 +637,46 @@ impl App {
                     self.camera.pitch = pitch as f32;
                 }
             }
+            // `presentFire` and the reload, for the eyes we look through:
+            // the server's shots and weapon state (wash-fps `FPSPlayer`).
+            if let Some(viewed) = view_entity(feed.local_entity(), &players, self.follow) {
+                let viewed = viewed.to_owned();
+                for event in &view.effects {
+                    match event {
+                        SnapshotEvent::WeaponFire {
+                            entity_id, weapon_id, ..
+                        } if *entity_id == viewed => {
+                            if let Some(view_model) = &mut s.renderer.view_model {
+                                let style = shot_style(canonical_weapon_id(weapon_id));
+                                view_model.view.present_fire(&style, false);
+                            }
+                        }
+                        SnapshotEvent::WeaponState {
+                            entity_id,
+                            current_weapon,
+                            reloading,
+                            ..
+                        } if *entity_id == viewed => {
+                            let weapon = canonical_weapon_id(current_weapon);
+                            if let Some(view_model) = &mut s.renderer.view_model
+                                && view_model.view.weapon == weapon
+                            {
+                                match (*reloading, view_model.view.reload_anim.is_reloading()) {
+                                    (true, false) if !self.view_reloading => {
+                                        if let Some(time) = clip_reload_time(weapon) {
+                                            view_model.view.start_reload(time);
+                                        }
+                                    }
+                                    (false, true) => view_model.view.cancel_reload(),
+                                    _ => {}
+                                }
+                            }
+                            self.view_reloading = *reloading;
+                        }
+                        _ => {}
+                    }
+                }
+            }
             s.renderer.play_hit_feedback(
                 &view.effects,
                 view_entity(feed.local_entity(), &players, self.follow),
@@ -709,6 +752,7 @@ impl App {
                 s.window.set_title(&title);
             }
         }
+        s.renderer.advance_switch(f64::from(dt));
         if let Some(view_model) = &mut s.renderer.view_model {
             let horizontal = f64::from(self.velocity.x.hypot(self.velocity.z));
             // The view bob's walk cycle: a stride per 160 units, as a run reads.
@@ -1524,6 +1568,7 @@ pub fn run(
         demo_discontinuity: 0,
         death_camera: DeathCamera::default(),
         first_person: FirstPersonView::default(),
+        view_reloading: false,
         view_offset: None,
         death_follow: None,
         audio,

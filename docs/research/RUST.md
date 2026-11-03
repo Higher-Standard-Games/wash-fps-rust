@@ -2662,9 +2662,37 @@ Order of work: the small ones first (6, 7, 8, 9), then 2 and 3 (a match
 can end and go back), then 4 and 5 (the feel), then 1 and 10. Each item
 lands on main with tests, and 0.1.1 is released when all ten are done.
 
+**Item 10 narrowed: the lobby moves to a webview after 0.1.1.** Porting the
+lobby twice (React in the browser, egui here) keeps the two apart for
+ever. Decided November 3, 2026: after 0.1.1 the menu becomes the system's
+own webview (`wry`: WebView2, WKWebView, WebKitGTK; a few MB, not a
+bundled Chromium) showing the washoi.net lobby, which hands the match to
+the native renderer through a small native-mode hook. No native lobby is
+kept as a fallback: the game needs a server anyway, and the console stays
+for anything offline. So 0.1.1's item 10 covers the in-game HUD only, and
+the webview gets its own spec after the release.
+
 ## 24. Progress log
 
 Newest first. Each entry names the commits and what proves them.
+
+### 0.1.1: camera motion and weapon animations (November 3, 2026)
+
+- **Camera** (shagger 5a3e876, wash-fps-rust 0204509): SHAG
+  `engine/viewport` ported to shagger `viewport/` (walk bob, landing
+  impact, strafe lean, speed FOV, idle breathing, ADS zoom, with their
+  cvars), `FirstPersonMotion` and `ViewKick` to `camera/`, and roll on
+  `Camera`. `client/first_person_view.rs` is `FPSController`'s view half:
+  step easing, slide dip, ledge lift and the effects on the drawn camera
+  only; the mouse and the aim sent never carry them. Proved by unit tests
+  on each effect and on the controller (no live server reaches this
+  container).
+- **Weapon animations** (shagger c334ec2): `WeaponSlash` (animation, not
+  yet the trail), `WeaponSwitchAnim`, `WeaponReloadAnim`, composed in
+  `WeaponView` as `updateWeaponBob` does. The game presents the viewed
+  player's `weapon_fire` (recoil, the blade's swing) and clip reloads from
+  `weapon_state`, and the renderer's `hold` slides weapons down and up.
+  Not yet: holster, blade charge, the slash trail, the muzzle flash light.
 
 ### Open repositories and unsigned builds (November 3, 2026)
 

@@ -12,8 +12,9 @@ use shagger::rendering::glam::{DVec3, Mat4};
 use shagger::rendering::gpu::Gpu;
 use shagger::rendering::model_renderer::{ModelDraw, ModelHandle, ModelMaterialMode, ModelRenderer, Outline};
 use shagger::rendering::wgpu;
+use shagger::shared::js::js_round;
 use shagger::weapon::weapon_view_manager::{
-    ViewModelDef, WEAPON_CAMERA_MAX_Z, WEAPON_CAMERA_MIN_Z, WEAPON_OUTLINE_WIDTH, WeaponView, blade_light,
+    ShotStyle, ViewModelDef, WEAPON_CAMERA_MAX_Z, WEAPON_CAMERA_MIN_Z, WEAPON_OUTLINE_WIDTH, WeaponView, blade_light,
     view_material_mode, weapon_light, weapon_outline,
 };
 
@@ -34,6 +35,48 @@ pub fn view_model_def(weapon: &WeaponModel) -> ViewModelDef {
         scale: v.scale,
         ads_time: Some(v.ads_time),
         ads_require_ready: v.ads_require_ready,
+    }
+}
+
+/// `presentFire`'s reading of a weapon's definition (wash-fps
+/// `shared/entities/definitions/weapons/*.ts`: `fireRate`, `recoilScale`,
+/// `adsRecoilScale`, `meleeRadius`).
+#[must_use]
+pub fn shot_style(weapon: &str) -> ShotStyle {
+    let (fire_rate, recoil_scale, ads_recoil_scale, melee) = match weapon {
+        "blade" => (2.0, 1.0, 0.2, true),
+        "electrobolt" => (0.8, 4.0, 0.2, false),
+        "glauncher" => (1.25, 1.0, 0.2, false),
+        "machinegun" => (10.0, 1.6, 0.5, false),
+        "plasmagun" => (10.0, 0.4, 0.2, false),
+        "riotgun" => (1.25, 4.0, 0.2, false),
+        "rlauncher" => (1.25, 3.0, 0.2, false),
+        "voltaic" | "lasergun" => (20.0, 0.1, 0.2, false),
+        _ => return ShotStyle::default(),
+    };
+    // `fireIntervalTicks(def) / DEFAULT_PHYSICS_TICK_RATE`.
+    let ticks = js_round(TICK_RATE / fire_rate).max(1.0);
+    ShotStyle {
+        recoil_scale,
+        ads_recoil_scale,
+        refire_seconds: Some(ticks / TICK_RATE),
+        melee,
+    }
+}
+
+/// `DEFAULT_PHYSICS_TICK_RATE`.
+const TICK_RATE: f64 = 125.0;
+
+/// `reloadTime` of a weapon with a clip (`reloadModel: "clip"`), which
+/// the view model's reload animation plays over.
+#[must_use]
+pub fn clip_reload_time(weapon: &str) -> Option<f64> {
+    match weapon {
+        "machinegun" => Some(1.5),
+        "plasmagun" => Some(1.3),
+        "riotgun" => Some(0.832),
+        "voltaic" | "lasergun" => Some(0.5),
+        _ => None,
     }
 }
 
@@ -139,5 +182,21 @@ impl WeaponViewModel {
     pub fn draw(&self, pass: &mut wgpu::RenderPass<'_>) {
         self.renderer.draw_opaque(pass);
         self.renderer.draw_blended(pass);
+    }
+}
+
+#[cfg(test)]
+mod shot_tests {
+    use super::*;
+
+    #[test]
+    fn refire_follows_the_tick_rate() {
+        // 63 ticks at 125 Hz between swings.
+        let blade = shot_style("blade");
+        assert!(blade.melee);
+        assert_eq!(blade.refire_seconds, Some(63.0 / 125.0));
+        assert_eq!(shot_style("machinegun").refire_seconds, Some(13.0 / 125.0));
+        assert_eq!(shot_style("voltaic").refire_seconds, Some(6.0 / 125.0));
+        assert_eq!(clip_reload_time("rlauncher"), None);
     }
 }

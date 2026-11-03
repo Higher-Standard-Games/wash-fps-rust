@@ -78,6 +78,7 @@ use shagger::weapon::projectile_manager::{
 };
 use shagger::weapon::rail::rail_profiles::{RailEffectSample, RailImpactKind};
 use shagger::weapon::tracer::streak_tracer_renderer::StreakTracerShot;
+use shagger::weapon::weapon_switch_anim::{SwitchAnimOffsets, WeaponSwitchAnim};
 use shagger::weapon::weapon_view_manager::ViewModelInput;
 use washoi::client::cinematic_demo_player::{
     CinematicDemoPlayer, REEL_TITLE_MS, ReelCamera, ReelWorld, look_at_rotation,
@@ -907,6 +908,10 @@ pub struct MapRenderer {
     pub view_model: Option<WeaponViewModel>,
     /// The other weapons a player in the match may switch to, by id.
     pub holster: HashMap<String, WeaponViewModel>,
+    /// `WeaponSwitchAnim`: the slide between weapons in hand.
+    pub switch_anim: WeaponSwitchAnim,
+    /// The switch's clock, seconds.
+    switch_clock: f64,
 }
 
 /// SHAG's image processing: PostProcessingManager's default settings
@@ -949,16 +954,60 @@ impl MapRenderer {
     /// Puts `id` in hand from the holster (the view model's weapon switch),
     /// or nothing when dead. The weapon in hand keeps its sway when it
     /// stays.
+    ///
+    /// With a weapon in hand, a change slides it down, swaps, and slides the
+    /// new one up (`switchWeaponAnimated`); empty-handed, it swaps at once.
     pub fn hold(&mut self, id: Option<&str>) {
         let id = id.map(|id| if id == "lasergun" { "voltaic" } else { id });
+        let current = self.view_model.as_ref().map(|v| v.view.weapon.clone());
+        let heading = self.switch_anim.pending().map(str::to_owned).or(current.clone());
+        if heading.as_deref() == id {
+            return;
+        }
+        match id {
+            Some(id) if current.is_some() && self.holster.contains_key(id) => {
+                if current.as_deref() == Some(id) {
+                    // Back to the weapon still in hand: a cut.
+                    self.switch_anim.reset();
+                    self.hold_now(Some(id));
+                } else {
+                    self.switch_anim.start(id, self.switch_clock * 1000.0);
+                }
+            }
+            _ => {
+                self.switch_anim.reset();
+                self.hold_now(id);
+            }
+        }
+    }
+
+    /// Puts `id` in hand now.
+    fn hold_now(&mut self, id: Option<&str>) {
         let current = self.view_model.as_ref().map(|v| v.view.weapon.clone());
         if current.as_deref() == id {
             return;
         }
-        if let Some(old) = self.view_model.take() {
+        if let Some(mut old) = self.view_model.take() {
+            old.view.cancel_reload();
+            old.view.switch_offsets = SwitchAnimOffsets::default();
             self.holster.insert(old.view.weapon.clone(), old);
         }
         self.view_model = id.and_then(|id| self.holster.remove(id));
+    }
+
+    /// Steps the switch by `dt` seconds: the swap when the slide down
+    /// ends, and the slide's offsets on the weapon in hand.
+    pub fn advance_switch(&mut self, dt: f64) {
+        self.switch_clock += dt;
+        let now = self.switch_clock * 1000.0;
+        if let Some(id) = self.switch_anim.update(now) {
+            self.hold_now(Some(&id));
+            self.switch_anim.loaded(&id, now);
+        }
+        let offsets = self.switch_anim.offsets(now);
+        if let Some(view_model) = &mut self.view_model {
+            view_model.view.switch_offsets = offsets;
+        }
     }
 
     /// Writes this frame's camera and culls for it.
@@ -2370,6 +2419,8 @@ pub fn build_renderer(gpu: &Gpu, map: &mut LoadedMap, output_format: wgpu::Textu
         image_processing: shag_image_processing(),
         view_model,
         holster,
+        switch_anim: WeaponSwitchAnim::default(),
+        switch_clock: 0.0,
     };
     // Held liquid rings (`--ring`).
     renderer.held_rings = map
@@ -2663,6 +2714,7 @@ pub fn start(o: &ViewOptions) -> Result<i32, String> {
                     camera.position = Vec3::new(eye.x as f32, eye.y as f32, eye.z as f32);
                 }
                 renderer.hold(p.weapon_in_hand());
+                renderer.advance_switch(1.0 / 60.0);
                 if p.alive
                     && let Some(text) = said.take()
                 {
