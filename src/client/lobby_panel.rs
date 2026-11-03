@@ -10,10 +10,10 @@
 
 use std::collections::VecDeque;
 use std::sync::Arc;
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
-use shagger::lobby::lobby_client::{LobbyClient, LobbyEvent};
-use shagger::lobby::types::{ChatMessage, GametypeInfo, LiveMatchInfo, LobbyConnect, LobbyIn};
+use shagger::lobby::lobby_client::{CLIENT_DISCONNECT_REASON, LobbyClient, LobbyEvent};
+use shagger::lobby::types::{AuthError, ChatMessage, GametypeInfo, LiveMatchInfo, LobbyConnect, LobbyIn};
 use shagger::ui::components::match_lobby_view::{MatchLobbyView, RoomAction};
 use shagger::ui::egui_layer::egui;
 
@@ -27,6 +27,7 @@ use crate::client::settings::fps_settings_view::FpsSettingsView;
 use crate::client::settings::settings_model::SettingsPageId;
 use shagger::core::cvar::with_cvars;
 use shagger::lobby::settings_sync::SettingsSync;
+use shagger::shared::js::js_round;
 
 /// `GameMode`: a mode's card on the Play page.
 #[derive(Debug, Clone, Copy)]
@@ -169,6 +170,43 @@ fn clock_time(ts: f64) -> String {
     format!("{:02}:{:02}", (secs / 3600) % 24, (secs / 60) % 60)
 }
 
+/// `loginFailureText`.
+fn login_failure_text(code: &str) -> String {
+    match code {
+        "unknown_key" => "No player has that key. Check it, or keep the player you have.".into(),
+        "rate_limited" => "Too many tries. Wait a minute, then try again.".into(),
+        "lobby_full" => "Servers are full. Your current player key is unchanged. Try again shortly.".into(),
+        "already_authenticated" => "This connection is already logged in. Try again.".into(),
+        other => format!("Login refused: {other}"),
+    }
+}
+
+/// `LobbyFullNotice.retryDelaySec`: the lobby's wait, give or take ten seconds.
+fn retry_delay_sec(retry_after_sec: Option<u32>, random: f64) -> u64 {
+    let base = retry_after_sec.filter(|&s| s > 0).unwrap_or(60);
+    let jitter = js_round((random * 2.0 - 1.0) * 10.0);
+    (f64::from(base) + jitter).max(5.0) as u64
+}
+
+/// `offlineRetryDelaySec`: 2, 5, 10, then 30 seconds, each give or take a fifth.
+fn offline_retry_delay_sec(attempt: u32, random: f64) -> u64 {
+    const WAITS: [f64; 4] = [2.0, 5.0, 10.0, 30.0];
+    let base = WAITS[(attempt.max(1) as usize - 1).min(WAITS.len() - 1)];
+    js_round(base * (0.8 + random * 0.4)).max(1.0) as u64
+}
+
+fn random01() -> f64 {
+    (now_seed() % 1_000_000) as f64 / 1_000_000.0
+}
+
+/// Writes the key through a file beside it, so a crash leaves the old key or
+/// the whole new one.
+pub fn save_key(file: &std::path::Path, key: &str) -> std::io::Result<()> {
+    let part = file.with_extension("part");
+    std::fs::write(&part, key)?;
+    std::fs::rename(&part, file)
+}
+
 fn now_seed() -> u64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -191,6 +229,18 @@ pub struct LobbyPanel {
     key: Option<String>,
     /// Where a new account's key is saved.
     key_file: Option<std::path::PathBuf>,
+    /// The key file exists but could not be read: a new account's key must
+    /// not replace it.
+    key_unreadable: bool,
+    url: String,
+    /// Failed logins in a row, for the offline backoff (`loginFailures`).
+    login_failures: u32,
+    /// When to connect again, after a drop or a full lobby.
+    retry_at: Option<Instant>,
+    /// The lobby is full and closes the connection; its wait stands.
+    lobby_full: bool,
+    /// The room this account was in when the connection dropped.
+    room_to_rejoin: Option<String>,
     connected: bool,
     pub name: String,
     local_lobby_player_id: Option<String>,
@@ -232,15 +282,24 @@ impl LobbyPanel {
     /// Connects and logs in with the stored key, or as a new account.
     #[must_use]
     pub fn connect(url: &str, key_file: Option<std::path::PathBuf>) -> Self {
-        let key = key_file
-            .as_ref()
-            .and_then(|f| std::fs::read_to_string(f).ok())
-            .map(|k| k.trim().to_owned())
-            .filter(|k| !k.is_empty());
+        let (key, key_unreadable) = match key_file.as_ref().map(std::fs::read_to_string) {
+            Some(Ok(k)) => (Some(k.trim().to_owned()).filter(|k| !k.is_empty()), false),
+            Some(Err(e)) if e.kind() != std::io::ErrorKind::NotFound => {
+                println!("lobby: the player key could not be read: {e}");
+                (None, true)
+            }
+            _ => (None, false),
+        };
         Self {
             client: LobbyClient::connect(url),
             key,
             key_file,
+            key_unreadable,
+            url: url.to_owned(),
+            login_failures: 0,
+            retry_at: None,
+            lobby_full: false,
+            room_to_rejoin: None,
             connected: false,
             name: String::new(),
             local_lobby_player_id: None,
@@ -286,6 +345,12 @@ impl LobbyPanel {
 
     /// Reads what the lobby sent since the last frame.
     pub fn poll(&mut self) {
+        if self.retry_at.is_some_and(|at| Instant::now() >= at) {
+            self.retry_at = None;
+            self.closed = None;
+            self.notice.clear();
+            self.client = LobbyClient::connect(&self.url);
+        }
         for event in self.client.poll_events() {
             self.on_event(event);
         }
@@ -314,14 +379,66 @@ impl LobbyPanel {
                 self.client.auth(self.key.as_deref());
             }
             LobbyEvent::Error(why) => {
-                self.connected = false;
+                self.connection_lost(false);
                 self.closed = Some(why);
             }
             LobbyEvent::Disconnected { reason, code } => {
-                self.connected = false;
+                self.connection_lost(reason == CLIENT_DISCONNECT_REASON);
                 self.closed = Some(format!("{reason} ({code})"));
             }
             LobbyEvent::Message(message) => self.on_message(message),
+        }
+    }
+
+    /// `_disconnected`: forget what the lobby said, keep the room to rejoin,
+    /// and try again after the outage backoff, unless the close was this
+    /// client's own or a full lobby already set its wait.
+    fn connection_lost(&mut self, deliberate: bool) {
+        self.connected = false;
+        self.guide.set_authenticated(false);
+        if let Some(room) = self.room.take() {
+            self.room_to_rejoin = Some(room.lobby_id);
+        }
+        self.room_from_queue = false;
+        self.queued = None;
+        self.pending_private_create = false;
+        self.pending_quick_play = false;
+        self.private_lobby_supported = false;
+        self.server_gametypes.clear();
+        self.live_matches.clear();
+        self.online = 0;
+        self.settings_sync = None;
+        if !deliberate && !self.lobby_full && self.retry_at.is_none() {
+            self.login_failures += 1;
+            let seconds = offline_retry_delay_sec(self.login_failures, random01());
+            self.notice = format!("Lobby server unavailable. Trying again in {seconds}s.");
+            self.retry_at = Some(Instant::now() + Duration::from_secs(seconds));
+        }
+        self.lobby_full = false;
+    }
+
+    /// `logIn`'s answer to a refusal.
+    fn login_refused(&mut self, e: &AuthError) {
+        // The lobby does not know the stored key (its accounts were reset):
+        // set the key aside and make a new account.
+        if e.code == "unknown_key"
+            && let Some(key) = self.key.take()
+        {
+            if let Some(file) = &self.key_file
+                && let Err(why) = save_key(&file.with_extension("unknown"), &key)
+            {
+                println!("lobby: could not set the unknown key aside: {why}");
+            }
+            self.client.auth(None);
+            return;
+        }
+        self.notice = login_failure_text(&e.code);
+        if e.code == "lobby_full" {
+            // The lobby closes the connection; wait as long as it asks.
+            self.lobby_full = true;
+            let seconds = retry_delay_sec(e.retry_after_sec, random01());
+            self.notice = format!("{} Trying again in {seconds}s.", self.notice);
+            self.retry_at = Some(Instant::now() + Duration::from_secs(seconds));
         }
     }
 
@@ -351,10 +468,23 @@ impl LobbyPanel {
                     .identity
                     .as_ref()
                     .map_or_else(|| w.player_id.clone(), |i| i.name.clone());
-                if let (Some(new_key), Some(file)) = (&w.key, &self.key_file)
-                    && let Err(e) = std::fs::write(file, new_key)
-                {
-                    self.notice = format!("Could not save the new account's key: {e}");
+                if let (Some(new_key), Some(file)) = (&w.key, &self.key_file) {
+                    if self.key_unreadable {
+                        self.notice = format!(
+                            "{} could not be read, so this new account's key is not saved",
+                            file.display()
+                        );
+                    } else if let Err(e) = save_key(file, new_key) {
+                        self.notice = format!("Could not save the new account's key: {e}");
+                    } else {
+                        self.key = Some(new_key.clone());
+                    }
+                }
+                self.login_failures = 0;
+                self.retry_at = None;
+                // `restoreRoom`.
+                if let Some(lobby_id) = self.room_to_rejoin.take() {
+                    self.client.join_lobby(&lobby_id, None);
                 }
                 self.server_gametypes = w.gametypes.clone();
                 self.private_lobby_supported = w
@@ -381,7 +511,7 @@ impl LobbyPanel {
                     self.settings_sync = with_cvars(|c| SettingsSync::start(&mut self.client, &w, c, &dir));
                 }
             }
-            LobbyIn::AuthError(e) => self.notice = format!("Login refused: {}", e.code),
+            LobbyIn::AuthError(e) => self.login_refused(&e),
             LobbyIn::MatchesUpdate(matches) => self.live_matches = matches,
             LobbyIn::Chat(c) => {
                 self.chat_log.push_back(c);
@@ -745,5 +875,94 @@ impl LobbyPanel {
             }
             self.chat_draft.clear();
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn retry_waits_match_the_browsers() {
+        // random 0.5 is the middle of each range.
+        let waits: Vec<u64> = (1..=6).map(|n| offline_retry_delay_sec(n, 0.5)).collect();
+        assert_eq!(waits, [2, 5, 10, 30, 30, 30]);
+        assert_eq!(offline_retry_delay_sec(1, 0.0), 2); // round(1.6)
+        assert_eq!(offline_retry_delay_sec(4, 1.0), 36);
+        assert_eq!(retry_delay_sec(Some(30), 0.5), 30);
+        assert_eq!(retry_delay_sec(None, 1.0), 70);
+        assert_eq!(retry_delay_sec(Some(1), 0.0), 5);
+    }
+
+    fn panel_with_key(dir: &std::path::Path, key: Option<&str>) -> LobbyPanel {
+        let file = dir.join("player.key");
+        if let Some(key) = key {
+            std::fs::write(&file, key).unwrap();
+        }
+        // Nobody listens there: the connection fails, which is all the tests need.
+        LobbyPanel::connect("ws://127.0.0.1:9", Some(file))
+    }
+
+    fn refusal(code: &str, retry_after_sec: Option<u32>) -> AuthError {
+        AuthError {
+            code: code.into(),
+            online: None,
+            max_players: None,
+            retry_after_sec,
+        }
+    }
+
+    #[test]
+    fn an_unknown_key_is_set_aside_for_a_new_account() {
+        let dir = std::env::temp_dir().join(format!("washoi-key-{}", now_seed()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let mut panel = panel_with_key(&dir, Some("old-key\n"));
+        assert_eq!(panel.key.as_deref(), Some("old-key"));
+        panel.login_refused(&refusal("unknown_key", None));
+        assert_eq!(panel.key, None);
+        assert_eq!(std::fs::read_to_string(dir.join("player.unknown")).unwrap(), "old-key");
+        assert!(panel.notice.is_empty() && panel.retry_at.is_none());
+        // A refusal of the new account is shown, not retried as unknown.
+        panel.login_refused(&refusal("unknown_key", None));
+        assert!(panel.notice.starts_with("No player has that key"));
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn a_full_lobby_waits_as_asked_and_a_drop_backs_off() {
+        let dir = std::env::temp_dir().join(format!("washoi-full-{}", now_seed()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let mut panel = panel_with_key(&dir, None);
+        let before = Instant::now();
+        panel.login_refused(&refusal("lobby_full", Some(120)));
+        let wait = panel.retry_at.unwrap() - before;
+        assert!(
+            wait >= Duration::from_secs(109) && wait <= Duration::from_secs(131),
+            "{wait:?}"
+        );
+        // The close that follows keeps the lobby's wait.
+        panel.connection_lost(false);
+        assert_eq!(panel.login_failures, 0);
+        assert!(panel.retry_at.unwrap() - before >= Duration::from_secs(109));
+
+        // An outage backs off from two seconds; this client's own close does not retry.
+        panel.retry_at = None;
+        panel.connection_lost(false);
+        assert_eq!(panel.login_failures, 1);
+        assert!(panel.retry_at.unwrap() - Instant::now() <= Duration::from_secs(3));
+        panel.retry_at = None;
+        panel.connection_lost(true);
+        assert!(panel.retry_at.is_none());
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn an_unreadable_key_is_not_a_missing_one() {
+        let dir = std::env::temp_dir().join(format!("washoi-dirkey-{}", now_seed()));
+        // A directory where the key file should be cannot be read as one.
+        std::fs::create_dir_all(dir.join("player.key")).unwrap();
+        let panel = panel_with_key(&dir, None);
+        assert!(panel.key.is_none() && panel.key_unreadable);
+        std::fs::remove_dir_all(&dir).unwrap();
     }
 }

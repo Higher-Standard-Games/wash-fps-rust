@@ -2587,6 +2587,63 @@ fit and did not count the parity harness.
 
 Newest first. Each entry names the commits and what proves them.
 
+### Review round before the client release (November 3, 2026)
+
+A review of five areas (live play, demo playback, window input, data
+sync, the session and lobby connections) for bugs and broken data flow,
+then the fixes. Each fix has a test, or a live run where a test cannot
+reach it.
+
+- **Live play and demos (wash-fps-rust `832035a`).** Commands stop while
+  the session resumes and are predicted dead or alive; server messages
+  reach the chat. Demos hold at the end and Play starts over; forward
+  seeks no longer rebuild the feed; legacy demos with no tick rate are
+  refused; downloads are checked to be demos before they are saved or
+  read from the cache. The camera follows a player by id, so it survives
+  roster changes, and Tab and the digit keys go in name order.
+- **Window input (same commit).** Escape closes the console first;
+  repeats no longer toggle the reel; releasing the mouse releases held
+  keys and buttons; play input and aiming need the capture.
+- **Data sync (shagger `c14ce8a`, wash-fps-rust pin).** A set is synced
+  only when every listed package is on disk at its listed size. Passing
+  failures (5xx, 408, 429, network, stalls) are tried twice more.
+  Packages go through a `.part` file and `sync_all` before the rename, the
+  old index goes first, and only packages the old index listed are
+  pruned. `fetch_at_most` refuses a body larger than the index says.
+  Rerun against eu.washoi.net: 29 packages, nothing downloaded.
+- **Release build (same pin commit).** Release keeps line tables and is not
+  stripped, so crash reports name functions; the Windows `.pdb` ships.
+  Secrets reach only the steps that use them.
+- **Sessions (shagger `ac8eb1a`).** A resume dropped or unanswered before
+  `JoinAccept` is tried again until the grace is spent, as
+  `resumeSession` does. Quitting while resuming or connecting returns at
+  once. Sends and closes are bounded, so a stalled link counts as a drop.
+  Tests run a local WebSocket server: one resume attempt fails before
+  the accept and the next succeeds, and a quit in the middle of a resume
+  takes less than half a second.
+- **Lobby (this commit).** A refused login follows `logIn`: an
+  `unknown_key` sets the key aside (`player.unknown`) and makes a new
+  account, `lobby_full` waits `retryDelaySec(retryAfterSec)`, and the
+  other refusals show `loginFailureText`. A dropped lobby connection
+  clears the lobby's state, keeps the room to rejoin, and reconnects
+  after `offlineRetryDelaySec`. The key file counts as missing only on
+  NotFound, and keys are written whole. Before `JoinGame` the client
+  sends `DEFAULT_LOADOUT`, because a mode with kits refuses a join
+  without one and the native client has no picker yet.
+
+Deferred, with the reason:
+
+- Package scope: 572 paths appear in more than one texture bank. None
+  differ today, so which bank wins has no visible effect.
+- Whole packages are held in memory while the client runs.
+- A crash under the Windows GUI subsystem shows no notice. The report is
+  still written to `config_dir/crashes`.
+- Commands take the yaw at send time rather than at sample time; this
+  matches the browser closely enough for now.
+- `AUTO_ADS` and the weapon slot are not cleared while dead.
+- A backward demo seek replays from the start. It is fast on today's demos.
+- The loadout picker (Milestone 12's HUD list) replaces the default kit.
+
 ### Milestone 13, first slice: a game a player can start (November 3, 2026)
 
 - **shagger `8778b2f`.** `loader/pk3/published_index.rs` gains

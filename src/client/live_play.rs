@@ -26,6 +26,19 @@ use crate::client::v2_network_client::{ClientInput, PredictedMovementState, V2Ne
 use crate::shared::entities::definitions::weapons::weapons_table::weapon_speed_bonus;
 use crate::shared::net::snapshot_events::{SnapshotEvent, WashoiEvents};
 
+/// shared/server/gametype/Loadout.ts `DEFAULT_LOADOUT`: the kit the browser's
+/// picker starts on, sent for the player until the native client has a picker.
+pub const DEFAULT_LOADOUT: (&str, &str) = ("rlauncher", "machinegun");
+
+/// The request that chooses [`DEFAULT_LOADOUT`].
+#[must_use]
+pub fn default_loadout() -> SessionRequest {
+    SessionRequest::Loadout {
+        primary: DEFAULT_LOADOUT.0.to_owned(),
+        secondary: DEFAULT_LOADOUT.1.to_owned(),
+    }
+}
+
 /// `InputButtons` (SHAG `InputComponent.ts`).
 pub mod buttons {
     pub const FORWARD: u16 = 1 << 0;
@@ -381,6 +394,9 @@ impl LivePlay {
                     self.player_id = player_id;
                     self.entity_id = entity_id;
                     if !self.joined {
+                        // A mode with kits refuses the join until one is chosen
+                        // ("Choose a loadout before joining."); the others ignore it.
+                        self.session.send(default_loadout());
                         self.session.send(SessionRequest::JoinGame {
                             team_id: None,
                             manual_pick: false,

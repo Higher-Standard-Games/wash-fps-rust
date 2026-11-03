@@ -692,7 +692,7 @@ fn lobby(url: &str, o: &Options) -> i32 {
                     .map_or_else(|| w.player_id.clone(), |i| i.name.clone());
                 println!("logged in as {name}, {} online", w.online_players.len());
                 if let (Some(new_key), Some(file)) = (&w.key, &o.key_file) {
-                    match std::fs::write(file, new_key) {
+                    match washoi::client::lobby_panel::save_key(file, new_key) {
                         Ok(()) => println!("new account: key saved to {}", file.display()),
                         Err(e) => println!("new account: could not save its key: {e}"),
                     }
@@ -903,6 +903,7 @@ fn play_match(url: &str, name: &str, ticket: Option<String>, seconds: f64, play:
                     println!("joined as {player_id} (entity {e:?})");
                     entity_id = e;
                     if play && !joined {
+                        session.send(washoi::client::live_play::default_loadout());
                         session.send(SessionRequest::JoinGame {
                             team_id: None,
                             manual_pick: false,
