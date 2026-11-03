@@ -7,7 +7,10 @@
 //! and for surfaces the water system does not draw. The clock is the
 //! caller's (`now` in seconds) where the TypeScript reads `performance.now`.
 //!
-//! Not yet: drawing the ring discs, and the splash crowns (`SplashDroplets`).
+//! With crowns on, a water splash throws spray (`SplashDroplets`) and the
+//! harder landings ripple where they fall back.
+//!
+//! Not yet: drawing the ring discs.
 
 use std::collections::HashMap;
 
@@ -18,6 +21,8 @@ use shagger::shared::js::{js_cos, js_hypot, js_sin};
 use crate::client::fps_liquid_audio::{HIT_WATER, LiquidCrossingSound, enter_sound, exit_sound, splash_volume};
 use crate::liquid::liquid_types::{LiquidKind, WaterLevel};
 use crate::liquid::liquid_volume_sampler::liquid_kind_at;
+
+use super::splash_droplets::{DropletSpawn, SplashDroplets};
 
 /// How many rings can be alive at once. Beyond this the oldest is recycled.
 pub const RING_POOL_SIZE: usize = 12;
@@ -33,6 +38,11 @@ const SURFACE_SEARCH_STEPS: u32 = 24;
 
 /// Lift off the surface so the ring does not fight the water for the pixel.
 const RING_SURFACE_LIFT: f64 = 0.5;
+
+/// How hard a droplet must land to ring the water, in units per second.
+const REENTRY_RING_SPEED: f64 = 180.0;
+/// Re-entry ripples are faint: a crown's aftermath, not another splash.
+const REENTRY_RING_STRENGTH: f64 = 0.25;
 
 /// Directions probed to find the pool's edge.
 const EDGE_PROBE_DIRECTIONS: u32 = 8;
@@ -99,9 +109,37 @@ pub struct LiquidInteractionSystem {
     last_spawned_kind: Option<LiquidKind>,
     projectiles: HashMap<String, bool>,
     sounds: Vec<LiquidCrossingSound>,
+    /// The crowns' spray; none until [`LiquidInteractionSystem::enable_crowns`].
+    droplets: Option<SplashDroplets>,
+    /// Splash counter, the seed of each crown's spread.
+    splash_seed: u32,
+    reentry_cooldown: f64,
 }
 
 impl LiquidInteractionSystem {
+    /// `enableCrowns`: splashes throw spray (from `r_water_quality` 2 up).
+    pub fn enable_crowns(&mut self) {
+        self.droplets.get_or_insert_with(SplashDroplets::default);
+    }
+
+    /// `disableCrowns`: back to plain ripples.
+    pub fn disable_crowns(&mut self) {
+        self.droplets = None;
+        self.reentry_cooldown = 0.0;
+    }
+
+    /// `crownsEnabled`.
+    #[must_use]
+    pub fn crowns_enabled(&self) -> bool {
+        self.droplets.is_some()
+    }
+
+    /// The spray to draw this frame, none without crowns.
+    #[must_use]
+    pub fn droplets(&self) -> Option<&SplashDroplets> {
+        self.droplets.as_ref()
+    }
+
     /// `notify`: a body's water level this frame; only a change splashes,
     /// and moving through the surface leaves a wake.
     #[allow(clippy::too_many_arguments)]
@@ -276,6 +314,21 @@ impl LiquidInteractionSystem {
     ) {
         // A ripple belongs to the surface, not to the swimmer.
         let at = DVec3::new(position.x, surface_y, position.z);
+        // Water only: slime and lava are thick and throw no spray.
+        if kind == LiquidKind::Water
+            && let Some(droplets) = &mut self.droplets
+        {
+            self.splash_seed += 1;
+            droplets.spawn(
+                DropletSpawn {
+                    x: at.x,
+                    z: at.z,
+                    surface_y,
+                    strength,
+                },
+                f64::from(self.splash_seed),
+            );
+        }
         self.place_ring(at, kind, strength, 48.0 + 64.0 * strength.min(1.0), collision, ripples);
     }
 
@@ -329,9 +382,33 @@ impl LiquidInteractionSystem {
         recycled
     }
 
-    /// The frame callback: rings expand fast and settle, and fade.
-    pub fn update(&mut self, dt: f64) {
+    /// The frame callback: rings expand fast and settle, and fade; the
+    /// crown flies, and the harder landings ripple where they fall.
+    pub fn update(
+        &mut self,
+        dt: f64,
+        collision: Option<PointContents<'_>>,
+        mut ripples: Option<&mut dyn WaterRipples>,
+    ) {
         let dt = dt.min(0.1);
+        if let Some(droplets) = &mut self.droplets {
+            let reentries = droplets.update(dt);
+            self.reentry_cooldown = (self.reentry_cooldown - dt).max(0.0);
+            for hit in reentries {
+                if hit.speed < REENTRY_RING_SPEED || self.reentry_cooldown > 0.0 {
+                    continue;
+                }
+                self.place_ring(
+                    DVec3::new(hit.x, hit.y, hit.z),
+                    LiquidKind::Water,
+                    REENTRY_RING_STRENGTH,
+                    24.0,
+                    collision,
+                    ripples.as_mut().map(|r| &mut **r as &mut dyn WaterRipples),
+                );
+                self.reentry_cooldown = 0.12;
+            }
+        }
         for ring in &mut self.rings {
             if ring.age >= RING_LIFETIME {
                 continue;
@@ -728,6 +805,55 @@ mod tests {
     }
 
     #[test]
+    fn crowns_spray_water_not_lava_and_ring_where_they_land() {
+        let mut system = LiquidInteractionSystem::default();
+        system.enable_crowns();
+        let pit: PointContents<'_> = &lava_pit;
+        system.notify("p1", 0, W, at(0.0, 50.0, 0.0), DIVING, false, 0.0, Some(pit), None);
+        system.notify("p1", 2, W, at(0.0, 50.0, 0.0), DIVING, false, 0.0, Some(pit), None);
+        assert_eq!(system.droplets().unwrap().alive_count(), 0);
+        let mut waves = Waves {
+            surface: Some(56.0),
+            ..Waves::default()
+        };
+        system.notify(
+            "p2",
+            0,
+            W,
+            at(600.0, 50.0, 0.0),
+            DIVING,
+            false,
+            0.0,
+            Some(pit),
+            Some(&mut waves),
+        );
+        system.notify(
+            "p2",
+            2,
+            W,
+            at(600.0, 50.0, 0.0),
+            DIVING,
+            false,
+            0.0,
+            Some(pit),
+            Some(&mut waves),
+        );
+        assert!(system.droplets().unwrap().alive_count() > 0);
+        assert_eq!(waves.impulses.len(), 1);
+        for _ in 0..120 {
+            system.update(1.0 / 60.0, Some(pit), Some(&mut waves));
+        }
+        assert_eq!(system.droplets().unwrap().alive_count(), 0);
+        // Re-entries ring faintly, rate-limited.
+        assert!(waves.impulses.len() > 1);
+        assert!(
+            waves.impulses[1..]
+                .iter()
+                .all(|i| i.1 == REENTRY_RING_STRENGTH && i.2 == 24.0)
+        );
+    }
+
+    #[test]
     fn projectiles_splash_once_on_the_way_in() {
         let mut system = LiquidInteractionSystem::default();
         let pool: PointContents<'_> = &pool;
@@ -752,7 +878,7 @@ mod tests {
         assert_eq!(system.active_rings(), 1);
         // Rings fade out.
         for _ in 0..6 {
-            system.update(0.1);
+            system.update(0.1, None, None);
         }
         assert_eq!(system.active_rings(), 0);
     }

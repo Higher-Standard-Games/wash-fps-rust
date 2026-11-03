@@ -2582,6 +2582,20 @@ fit and did not count the parity harness.
 
 Newest first. Each entry names the commits and what proves them.
 
+### Milestone 11, sixth slice: splash crowns (November 3, 2026)
+
+- **wash-fps-rust.** `liquid/client/splash_droplets.rs` ports
+  `SplashDroplets.ts` (a pooled, seeded crown of up to 220 droplets, its
+  hash in V8's sine), and `splash_droplet_renderer.rs` with its WGSL ports
+  `SplashDropletRenderer.ts` onto shagger's effect quad batch: soft quads
+  stretched along their screen velocity, faded near the eye, fogged.
+  The interaction system throws a crown from each water splash with crowns
+  on (`r_water_quality` 2 and up at load, as `LocalLiquid.start`), and the
+  harder landings ripple faintly where they fall, rate-limited.
+- **Proof.** Unit tests: crown size by strength, flight and re-entry, the
+  same seed giving the same crown, the pool's cap, no crown into lava, and
+  the re-entry ripples. A screenshot of a splash on washoi_amphi1's pool.
+
 ### Milestone 11, fifth slice: the underwater view (November 3, 2026)
 
 - **shagger `aa57050`.** `FogUniforms::scene_exp2` and a mode in

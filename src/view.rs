@@ -11,6 +11,7 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use washoi::client::fps_liquid_audio::play_liquid_crossing;
 use washoi::liquid::client::liquid_interaction_system::{LiquidInteractionSystem, WaterRipples};
+use washoi::liquid::client::splash_droplet_renderer::SplashDropletRenderer;
 use washoi::liquid::client::underwater_view::{UnderwaterFog, UnderwaterView};
 use washoi::liquid::liquid_types::LiquidKind;
 
@@ -707,6 +708,8 @@ pub struct MapRenderer {
     pub liquid: LiquidInteractionSystem,
     /// The liquid interactions' clock, in seconds.
     liquid_clock: f64,
+    /// The splash crowns' spray.
+    splash: SplashDropletRenderer,
     /// Tint, fog and view warp while the camera is under a surface.
     pub underwater: UnderwaterView,
     /// The scene fog the underwater view holds this frame.
@@ -1146,7 +1149,23 @@ impl MapRenderer {
         if let Some(sky) = &self.sky {
             sky.prepare(gpu, camera, aspect);
         }
-        self.liquid.update(self.item_time - self.water_time);
+        {
+            let shot_world = self.shot_world.as_ref();
+            let contents = |p: DVec3| {
+                shot_world.map_or(0, |w| {
+                    to_shared_contents(
+                        w.point_contents(shagger::babylon::maths::math_vector::Vector3::new(p.x, p.y, p.z), None),
+                    )
+                })
+            };
+            self.liquid.update(
+                self.item_time - self.water_time,
+                shot_world.is_some().then_some(&contents as &dyn Fn(DVec3) -> u32),
+                self.water.as_mut().map(|w| w as &mut dyn WaterRipples),
+            );
+        }
+        self.splash
+            .prepare(gpu, &frame, self.liquid.droplets().map_or(&[], |d| d.sprites()));
         if let Some(water) = &mut self.water {
             water.update(self.item_time - self.water_time);
             self.water_time = self.item_time;
@@ -1217,6 +1236,7 @@ impl MapRenderer {
         self.hitscan.streaks.draw(pass);
         self.hitscan.muzzle_flashes.draw(pass);
         self.hitscan.impact_sparks.draw(pass);
+        self.splash.draw(pass);
         self.explosions.draw(pass);
         self.models.draw_blended(pass);
     }
@@ -1515,6 +1535,15 @@ pub fn build_renderer(gpu: &Gpu, map: &mut LoadedMap, output_format: wgpu::Textu
         }
     }
     let mut hitscan = HitscanEffects::new(gpu, format);
+    // Splash crowns from Medium up (`LocalLiquid.start`).
+    let mut liquid = LiquidInteractionSystem::default();
+    if shagger::core::cvar::with_cvars(|c| {
+        c.get("r_water_quality")
+            .map_or(2.0, |_| c.get_number("r_water_quality"))
+    }) >= 2.0
+    {
+        liquid.enable_crowns();
+    }
     for effect in &map.effects {
         match effect {
             EffectView::Tracer { start, end, color, age } => {
@@ -1644,8 +1673,9 @@ pub fn build_renderer(gpu: &Gpu, map: &mut LoadedMap, output_format: wgpu::Textu
         fog_serial: None,
         water,
         water_time: 0.0,
-        liquid: LiquidInteractionSystem::default(),
+        liquid,
         liquid_clock: 0.0,
+        splash: SplashDropletRenderer::new(gpu, format),
         underwater: UnderwaterView::default(),
         underwater_fog: None,
         applied_fog: None,
