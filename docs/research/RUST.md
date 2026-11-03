@@ -2643,6 +2643,30 @@ fit and did not count the parity harness.
 
 Newest first. Each entry names the commits and what proves them.
 
+### Update check at washoi.net/client/ (November 3, 2026)
+
+The game now tells players when a newer version is out. washoi.net hosts
+the packages, so players never need a GitHub account and the site stays the
+one address players know:
+
+- **Server** (wash-fps PR #4, `scripts/deployment/client-release.sh`): EU's
+  deploy reads this repository's newest *published* release with a
+  read-only token, copies the `washoi-<v>-<os>-<arch>` packages to
+  `washoi.net/client/<v>/`, checks their sizes, records sha256, and writes
+  `client/latest.json` last, by rename. Three versions are kept. A draft
+  release is invisible, so publishing the draft is what ships it. Tested
+  against a fake GitHub (`tests/client-release.test.sh`).
+- **Game** (`src/update_check.rs`): unless `--offline`, the menu fetches
+  `latest.json` once per run on a background thread. When its version is
+  newer than `VERSION` (numbers compared, a release beats its
+  pre-release), the lobby shows "Washoi X is available" with Download
+  (the package for this OS and arch, opened in the browser) and Dismiss.
+  Only `https://washoi.net/client/` addresses of plain characters are
+  opened. Unit tests cover the version order, the platform pick, broken
+  indexes and the address filter.
+- **Not yet**: the game does not replace itself; the player installs the
+  download. Signed packages (16) make that safe to automate later.
+
 ### Fifth review round: round 4's fixes, threads and shutdown, more fuzzing (November 3, 2026)
 
 Two reviewers, one on round 4's commits and one across every thread the

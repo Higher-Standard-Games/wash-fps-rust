@@ -643,6 +643,9 @@ fn menu_mode(url: &str, o: &Options) -> i32 {
             }
         };
     }
+    if !o.offline {
+        washoi::update_check::start();
+    }
     // Why the last match or demo did not start, shown on the next menu.
     let mut match_error = None;
     loop {

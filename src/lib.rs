@@ -12,6 +12,7 @@ pub mod regions;
 pub mod server;
 pub mod shared;
 pub mod simulation;
+pub mod update_check;
 pub mod world;
 
 /// The client's version, as shown in the window title and sent nowhere yet.

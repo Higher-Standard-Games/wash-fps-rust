@@ -826,6 +826,25 @@ impl LobbyPanel {
                     self.match_error = None;
                 }
             }
+            if let Some(update) = crate::update_check::available() {
+                ui.horizontal(|ui| {
+                    ui.colored_label(
+                        hsl(120.0, 60.0, 60.0),
+                        format!("Washoi {} is available.", update.version),
+                    );
+                    if let Some(url) = &update.url
+                        && ui.small_button("Download").clicked()
+                    {
+                        match crate::update_check::open_in_browser(url) {
+                            Ok(()) => crate::update_check::dismiss(),
+                            Err(why) => self.notice = why,
+                        }
+                    }
+                    if ui.small_button("Dismiss").clicked() {
+                        crate::update_check::dismiss();
+                    }
+                });
+            }
             if let Some(settings) = &mut self.settings {
                 settings.ui(ui);
                 return;
