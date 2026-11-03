@@ -19,7 +19,8 @@ use washoi::client::quad_damage_visual::{get_quad_damage_pulse, mask_has_quad};
 use washoi::client::ragdoll_system::{RagdollSystem, RagdollTrails};
 use washoi::client::remote_player_renderer::{HandWeapons, body_matrix, update_powerup_glow};
 use washoi::client::teleport_effect::{TeamColor, TeleportEffect, TeleportRenderer, legacy_team_color, play_tele_in};
-use washoi::liquid::client::liquid_interaction_system::{LiquidInteractionSystem, WaterRipples};
+use washoi::liquid::client::liquid_interaction_system::{LiquidInteractionSystem, Ring, WaterRipples};
+use washoi::liquid::client::liquid_ring_renderer::LiquidRingRenderer;
 use washoi::liquid::client::splash_droplet_renderer::SplashDropletRenderer;
 use washoi::liquid::client::underwater_view::{UnderwaterFog, UnderwaterView};
 use washoi::liquid::liquid_types::LiquidKind;
@@ -165,6 +166,7 @@ pub struct ViewOptions {
     pub hits: Vec<HitView>,
     pub teleports: Vec<TeleportView>,
     pub gibs: Vec<GibView>,
+    pub rings: Vec<RingView>,
     pub ragdolls: Vec<RagdollView>,
     /// The first-person weapon to hold (`--weapon`), and whether it is
     /// aimed down its sights (`--aim`).
@@ -497,6 +499,16 @@ pub struct RagdollView {
     pub age: f64,
 }
 
+/// A liquid ring held on the map (`--ring`).
+#[derive(Debug, Clone, PartialEq)]
+pub struct RingView {
+    /// The ring's Quake centre.
+    pub origin: [f64; 3],
+    pub kind: washoi::liquid::liquid_types::LiquidKind,
+    pub radius: f64,
+    pub alpha: f64,
+}
+
 /// A body broken into shards, held at an age (`--gib`).
 #[derive(Debug, Clone, PartialEq)]
 pub struct GibView {
@@ -669,6 +681,8 @@ pub struct LoadedMap {
     pub teleports: Vec<TeleportView>,
     /// Gibs to hold on the map.
     pub gibs: Vec<GibView>,
+    /// Liquid rings to hold on the map.
+    pub rings: Vec<RingView>,
     /// Ragdolls to hold on the map.
     pub ragdolls: Vec<RagdollView>,
     /// The first-person weapon, if any.
@@ -735,6 +749,7 @@ pub fn load_map(data: &Path, map: &str) -> Result<LoadedMap, String> {
         hits: Vec::new(),
         teleports: Vec::new(),
         gibs: Vec::new(),
+        rings: Vec::new(),
         ragdolls: Vec::new(),
         effects: Vec::new(),
         weapon: None,
@@ -817,6 +832,10 @@ pub struct MapRenderer {
     liquid_clock: f64,
     /// The splash crowns' spray.
     splash: SplashDropletRenderer,
+    /// The rings' discs (lava, and pools the water system does not draw),
+    /// and rings held by `washoi view --ring`.
+    rings: LiquidRingRenderer,
+    pub held_rings: Vec<Ring>,
     /// Ghosts and speed-line bursts where players teleport.
     pub teleports: TeleportEffect,
     teleport_renderer: TeleportRenderer,
@@ -1600,6 +1619,8 @@ impl MapRenderer {
         }
         self.splash
             .prepare(gpu, &frame, self.liquid.droplets().map_or(&[], |d| d.sprites()));
+        self.rings
+            .prepare(gpu, &frame, self.held_rings.iter().chain(self.liquid.rings()));
         self.teleport_renderer.prepare(gpu, &frame, &self.teleports);
         self.damage_number_renderer.prepare(gpu, &frame, &self.damage_numbers);
         if let Some(cartoon) = &mut self.cartoon_hit_renderer {
@@ -1707,6 +1728,7 @@ impl MapRenderer {
         self.hitscan.streaks.draw(pass);
         self.hitscan.muzzle_flashes.draw(pass);
         self.hitscan.impact_sparks.draw(pass);
+        self.rings.draw(pass);
         self.splash.draw(pass);
         self.teleport_renderer.draw(pass);
         self.explosions.draw(pass);
@@ -2258,6 +2280,8 @@ pub fn build_renderer(gpu: &Gpu, map: &mut LoadedMap, output_format: wgpu::Textu
         liquid,
         liquid_clock: 0.0,
         splash: SplashDropletRenderer::new(gpu, format),
+        rings: LiquidRingRenderer::new(gpu, format),
+        held_rings: Vec::new(),
         teleports,
         teleport_renderer,
         teleport_last: HashMap::new(),
@@ -2289,6 +2313,19 @@ pub fn build_renderer(gpu: &Gpu, map: &mut LoadedMap, output_format: wgpu::Textu
         view_model,
         holster,
     };
+    // Held liquid rings (`--ring`).
+    renderer.held_rings = map
+        .rings
+        .iter()
+        .map(|r| Ring {
+            position: babylon(r.origin),
+            kind: r.kind,
+            alpha: r.alpha,
+            scale: r.radius,
+            age: 0.0,
+            max_radius: r.radius,
+        })
+        .collect();
     // Held gibs (`--gib`): broken up, then flown on to their age.
     for held in &map.gibs {
         renderer.gibs.spawn(babylon(held.origin), DVec3::ZERO, None);
@@ -2402,6 +2439,7 @@ pub fn run(o: &ViewOptions) -> i32 {
     map.hits.clone_from(&o.hits);
     map.teleports.clone_from(&o.teleports);
     map.gibs.clone_from(&o.gibs);
+    map.rings.clone_from(&o.rings);
     map.ragdolls.clone_from(&o.ragdolls);
     map.weapon.clone_from(&o.weapon);
     map.remote_players = feed.is_some();

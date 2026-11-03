@@ -2582,6 +2582,20 @@ fit and did not count the parity harness.
 
 Newest first. Each entry names the commits and what proves them.
 
+### Milestone 11, twentieth slice: lava's ripple rings (November 3, 2026)
+
+- **wash-fps-rust.** `liquid/client/liquid_ring_renderer.rs` draws the
+  ring discs `LiquidInteractionSystem` keeps for lava and for pools the
+  water system does not draw (`createRing`): unlit discs lying on the
+  surface in the ring's colour, colour and opacity both the soft ring mask
+  (`ringMask`'s band at 0.78 of the radius, 0.22 wide, nothing past the
+  edge), fogged, through shagger's effect quad batch. The TypeScript bakes
+  the mask into a 64-pixel texture on a 32-sided disc; the shader
+  evaluates it on a quad. `washoi view --ring X,Y,Z,KIND,RADIUS,ALPHA`
+  holds one.
+- **Proof.** A unit test of a ring's instance. A screenshot of a lava and
+  a water ring held on amphi1's pool (`rust-port/liquid-rings-amphi1.png`).
+
 ### Milestone 11, nineteenth slice: players reflected in water (November 3, 2026)
 
 - **shagger 2f6651e.** `rendering/water/water_actor_reflection.rs` ports

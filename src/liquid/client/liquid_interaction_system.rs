@@ -10,7 +10,7 @@
 //! With crowns on, a water splash throws spray (`SplashDroplets`) and the
 //! harder landings ripple where they fall back.
 //!
-//! Not yet: drawing the ring discs.
+//! The discs are drawn by `liquid_ring_renderer`.
 
 use std::collections::HashMap;
 
