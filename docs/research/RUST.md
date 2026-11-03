@@ -2,7 +2,7 @@
 
 Opened: October 31, 2026. Status: research rounds 1 to 6 done; milestone 0
 done; milestone 1 done except demos; milestone 3 has map loading,
-collision and the movement profile (section 23).
+collision and the movement profile (section 24).
 
 This file lives in wash-fps-rust and is the plan of record. It started in
 wash-fps (`docs/research/RUST.md` on `staging`), and that copy is no longer
@@ -1794,7 +1794,7 @@ timeouts: 15 s for headers, 60 s when idle, and 15 min in total. It is retried
 twice for 5xx, 408 and 429 responses, waiting 500 ms between tries.
 
 Natively the cache is simpler and stronger. (As built in milestone 13, see
-section 23: packages are kept under their own names in `<cache dir>/data`,
+section 24: packages are kept under their own names in `<cache dir>/data`,
 checked by size and SHA-256 and replaced when the index changes, and every
 package is fetched at startup rather than per map, with no budget; the
 directory then mounts as it stands. The plan below stays the target if
@@ -1906,7 +1906,7 @@ directly into a `shagger::loader::bsp` module over `&[u8]` using `bytemuck` or
 | WebP from `tex_*.pk3` | browser image decode | `image` (WebP), then mipmaps on the GPU with a compute or blit pass |
 | TGA, PNG, JPEG | `TgaDecoder.ts`, browser decode | `image`; port `TgaDecoder.ts` only if `image` disagrees on Q3 quirks (origin bit, RLE) |
 | KTX2 sidecar (`r_ktx2 1`) | Babylon KTX2 worker, transcodes Basis to a GPU format | phase 2: `ktx2` crate plus `basis-universal` bindings, to BC7 on desktop |
-| KTX1 `.ktx` (ETC1, a few uncompressed) | `KTX1Loader.ts` | decode on the CPU to RGBA8, as SHAG's software path does: 115 published textures exist only as KTX (decided November 2026, section 23) |
+| KTX1 `.ktx` (ETC1, a few uncompressed) | `KTX1Loader.ts` | decode on the CPU to RGBA8, as SHAG's software path does: 115 published textures exist only as KTX (decided November 2026, section 24) |
 | `r_picmip` | reduces map textures | `image::imageops::resize` before upload, same rules |
 
 Desktop VRAM is plentiful, so plain RGBA8 uploads from WebP are fine for the
@@ -2012,7 +2012,7 @@ building, which round 5 covers with the renderer.
   SHA-256 (20.2).
 - 7.2: WebP is the main map texture format (20.4). MP3 is not shipped. ETC1
   KTX1 is the only copy of 115 published textures, so the native client
-  decodes it (corrected in section 23).
+  decodes it (corrected in section 24).
 - 15, milestone 5 (assets, 3 to 4 weeks): unchanged, but KTX2 moves to a later
   optional step, and the BSP loader moves earlier, into milestone 3.
 
@@ -2639,7 +2639,30 @@ fit and did not count the parity harness.
 
 ---
 
-## 23. Progress log
+## 23. Release 0.1.1: what the first tester found missing
+
+0.1.0 (November 3, 2026) runs on Windows. Its first play-through listed
+what is missing against the browser game; together they are 0.1.1's goal.
+Each item names the TypeScript to port and where it goes.
+
+| # | Missing in 0.1.0 | Port from | To |
+|---|---|---|---|
+| 1 | Weapon and pickup skins: models draw as flat colour | weapon and pickup materials (`FPSWeaponPreloader`, `WeaponDetail`, `WeaponLighting`) | shagger `weapon/`, wash-fps-rust `weapon_view`, `world/pickups` |
+| 2 | Scoreboard: other layout, no players, no pings | `client/hud/widgets/Scoreboard.ts` | `client/hud/widgets/scoreboard.rs` |
+| 3 | No end of match screen, no return to the lobby | `PostGameShowcase.ts`, `ReturnToLobby.ts`, `RoundResult.ts` | `client/`, `live_play`, `main.rs` menu loop |
+| 4 | No camera movement effects: walk bob, landing, strafe lean, speed FOV, slide pitch, view kick | SHAG `engine/viewport/` (effects, `FPSApplicator`), `camera/FirstPersonMotion.ts`, `controllers/ViewKick.ts`, wash-fps `camera/FPSController.ts` (`updateLocalEffects`) | shagger `viewport/`, `camera/`; `window.rs` |
+| 5 | No weapon animations: blade slash, switch, holster, reload, charge | SHAG `engine/weapon/` (`WeaponSlash`, `WeaponSwitchAnim`, `WeaponHolsterAnim`, `WeaponReloadAnim`, `WeaponCharge`, `BladeEnvironment`), `WeaponViewManager.ts` | shagger `weapon/` |
+| 6 | Mouse wheel does not switch weapons (bound, not read) | `FPSController.ts` `WEAPON_NEXT`/`WEAPON_PREV` | `window.rs` `play_input` |
+| 7 | Alt+Enter does not toggle fullscreen | SHAG `InputSystem.ts` (Alt+Enter) | `window.rs` |
+| 8 | `show_fps 1` shows nothing | `client/hud/FrameRateDisplay.ts` | `client/hud/` |
+| 9 | `cl_showspeed` shows nothing (on by default) | `FPSController.ts` `updateSpeedDisplay` | `client/hud/` |
+| 10 | HUD and menu graphics look like placeholders | `client/hud/styles/WashikiTheme.css`, widget CSS, lobby styles | `client/hud/washiki.rs`, `lobby_panel.rs` |
+
+Order of work: the small ones first (6, 7, 8, 9), then 2 and 3 (a match
+can end and go back), then 4 and 5 (the feel), then 1 and 10. Each item
+lands on main with tests, and 0.1.1 is released when all ten are done.
+
+## 24. Progress log
 
 Newest first. Each entry names the commits and what proves them.
 
@@ -3855,7 +3878,7 @@ Deferred, with the reason:
   joins, is fragged ("Ramen [BULLET] fragged Player_8611"), comes back, and
   its `--say` line and the bot's taunt show in the chat over the warmup.
   Production's game ports are still out of reach from this sandbox
-  (section 23, Milestone 2).
+  (section 24, Milestone 2).
 - **Milestone 9 stands** at: a player can queue, play, see the HUD, chat
   and come back from a death in the window. Still missing for parity with
   the browser's MVP: a lobby screen in the window (it is the command line
