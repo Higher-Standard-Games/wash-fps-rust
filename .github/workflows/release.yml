@@ -3,7 +3,7 @@ name: Release
 # A tag v* builds the game for Linux, macOS (Apple silicon and Intel) and
 # Windows, packages each with tools/package.sh and attaches them to a draft
 # GitHub release. Run by hand, it builds and keeps the packages as workflow
-# artifacts only.
+# artifacts only, unless the `release` input asks for the draft.
 #
 # Signing happens only when its secrets exist:
 #   macOS    MACOS_CERTIFICATE (base64 .p12), MACOS_CERTIFICATE_PASSWORD,
@@ -18,12 +18,20 @@ name: Release
 on:
   push:
     tags: ["v*"]
+  # Run by hand with `release` on main, it drafts the release v<Cargo.toml
+  # version> itself; GitHub creates the tag when the draft is published.
   workflow_dispatch:
+    inputs:
+      release:
+        description: Draft a release v<version> from this commit
+        type: boolean
+        default: false
 
 env:
   CARGO_TERM_COLOR: always
-  # shagger is private: Cargo fetches it with git and the token below.
   CARGO_NET_GIT_FETCH_WITH_CLI: "true"
+  # A tag push, or a hand run on main that asks for the draft.
+  RELEASING: ${{ startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'workflow_dispatch' && inputs.release && github.ref == 'refs/heads/main') }}
   # tools/package.sh's Python prints paths; Windows' console code page
   # cannot encode every one.
   PYTHONUTF8: "1"
@@ -76,7 +84,7 @@ jobs:
           echo "notarize=$([ -n "$APPLE_ID" ] && echo true || echo false)" >> "$GITHUB_OUTPUT"
           echo "win_cert=$([ -n "$WINDOWS_CERTIFICATE" ] && echo true || echo false)" >> "$GITHUB_OUTPUT"
       - name: Refuse an unsigned release
-        if: startsWith(github.ref, 'refs/tags/v') && vars.REQUIRE_SIGNED == 'true'
+        if: env.RELEASING == 'true' && vars.REQUIRE_SIGNED == 'true'
         run: |
           missing=""
           if [ "$RUNNER_OS" = macOS ] && [ "${{ steps.secrets.outputs.mac_cert }}" != true ]; then missing="MACOS_CERTIFICATE"; fi
@@ -156,12 +164,24 @@ jobs:
           path: symbols
 
   release:
-    if: startsWith(github.ref, 'refs/tags/v')
+    if: startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'workflow_dispatch' && inputs.release && github.ref == 'refs/heads/main')
     needs: build
     runs-on: ubuntu-latest
     permissions:
       contents: write
     steps:
+      - uses: actions/checkout@v4
+        with:
+          sparse-checkout: Cargo.toml
+          sparse-checkout-cone-mode: false
+      - name: The release's tag
+        id: tag
+        run: |
+          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
+            echo "name=$GITHUB_REF_NAME" >> "$GITHUB_OUTPUT"
+          else
+            echo "name=v$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -1)" >> "$GITHUB_OUTPUT"
+          fi
       - uses: actions/download-artifact@v4
         with:
           path: dist
@@ -170,4 +190,7 @@ jobs:
       - uses: softprops/action-gh-release@v2
         with:
           draft: true
+          tag_name: ${{ steps.tag.outputs.name }}
+          target_commitish: ${{ github.sha }}
+          name: Washoi ${{ steps.tag.outputs.name }}
           files: dist/*
