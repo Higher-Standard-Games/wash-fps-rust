@@ -44,6 +44,11 @@ pub struct Chat {
 pub type Outgoing = (String, bool);
 
 impl Chat {
+    /// A demo seek: lines from the old position go.
+    pub fn clear_messages(&mut self) {
+        self.messages.clear();
+    }
+
     /// `setLocalTeam`.
     pub fn set_local_team(&mut self, team: &str) {
         team.clone_into(&mut self.local_team);

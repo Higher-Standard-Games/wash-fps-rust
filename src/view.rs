@@ -1084,6 +1084,26 @@ impl MapRenderer {
         );
     }
 
+    /// A demo seek (`flushInterpolation`, the presentation clock's reset):
+    /// nothing drawn from the old position carries across the jump, or a
+    /// player's move would read as a teleport, a splash or a trail.
+    pub fn discontinuity(&mut self) {
+        self.teleport_last.clear();
+        let bodies: Vec<String> = self.liquid.body_ids().map(str::to_owned).collect();
+        for id in bodies {
+            self.liquid.forget(&id);
+        }
+        let trails: Vec<String> = self.live_trails.keys().cloned().collect();
+        for id in trails {
+            if let Some((def, mut trail)) = self.live_trails.remove(&id) {
+                trail.reset();
+                self.spare_trails.push((def.id, trail));
+            }
+        }
+        self.gibs.clear();
+        self.damage_numbers.clear();
+    }
+
     /// Draws the projectiles in flight this frame, facing along their
     /// velocity, each carrying its pool light; call after
     /// [`Self::set_live_players`], which clears the frame's live draws.

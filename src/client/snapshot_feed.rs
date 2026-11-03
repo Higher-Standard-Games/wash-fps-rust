@@ -103,6 +103,7 @@ impl SnapshotFeed {
                 | SnapshotEvent::Death { .. }
                 | SnapshotEvent::PickupNotify { .. }
                 | SnapshotEvent::PowerupSpawn { .. }
+                | SnapshotEvent::PowerupState { .. }
                 | SnapshotEvent::CombatState { .. }
                 | SnapshotEvent::Chat { .. } => {
                     self.effects.push(event.clone());

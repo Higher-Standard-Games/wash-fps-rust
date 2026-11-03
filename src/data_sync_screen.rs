@@ -15,8 +15,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
-use shagger::loader::pk3::package_store::{SyncProgress, is_synced, sync_packages};
-use shagger::network::client::http_fetch::fetch;
+use shagger::loader::pk3::package_store::{SyncProgress, has_packages, is_synced, sync_packages};
 use shagger::rendering::gpu::Gpu;
 use shagger::rendering::wgpu;
 use shagger::ui::egui_layer::{EguiLayer, egui};
@@ -30,7 +29,7 @@ use winit::window::{Window, WindowId};
 use crate::window::{OpenWindow, open_window, run_on_event_loop};
 
 /// The music's playlists, served beside the packages.
-const PLAYLISTS: [&str; 3] = ["game", "menu", "endgame"];
+const PLAYLISTS: [&str; 3] = ["game.playlist.json", "menu.playlist.json", "endgame.playlist.json"];
 const BACKGROUND: wgpu::Color = wgpu::Color {
     r: 0.035,
     g: 0.03,
@@ -43,7 +42,26 @@ const BACKGROUND: wgpu::Color = wgpu::Color {
 enum Phase {
     Running(SyncProgress),
     Done,
-    Failed(String),
+    /// Why, and what the directory holds: a complete set, some packages, or none.
+    Failed(String, OnDisk),
+}
+
+/// What a directory holds when a sync cannot finish.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum OnDisk {
+    Complete,
+    Partial,
+    Nothing,
+}
+
+fn on_disk(dir: &Path) -> OnDisk {
+    if is_synced(dir) {
+        OnDisk::Complete
+    } else if has_packages(dir) {
+        OnDisk::Partial
+    } else {
+        OnDisk::Nothing
+    }
 }
 
 /// What the player chose on the screen.
@@ -60,7 +78,9 @@ pub enum SyncOutcome {
 fn start(base_url: String, dir: PathBuf, cancel: Arc<AtomicBool>, phase: Arc<Mutex<Phase>>) {
     std::thread::spawn(move || {
         let set = |p: Phase| *phase.lock().expect("sync phase") = p;
-        let result = sync_packages(&base_url, &dir, &cancel, &mut |p| set(Phase::Running(p.clone())));
+        let result = sync_packages(&base_url, &dir, &PLAYLISTS, &cancel, &mut |p| {
+            set(Phase::Running(p.clone()));
+        });
         let end = match result {
             Ok(report) => {
                 println!(
@@ -69,21 +89,13 @@ fn start(base_url: String, dir: PathBuf, cancel: Arc<AtomicBool>, phase: Arc<Mut
                     report.downloaded.len(),
                     report.removed.len()
                 );
-                for playlist in PLAYLISTS {
-                    let name = format!("{playlist}.playlist.json");
-                    let url = format!("{}/{name}", base_url.trim_end_matches('/'));
-                    let idle = Duration::from_secs(30);
-                    match fetch(&url, idle, idle, &cancel, &mut |_, _| {}) {
-                        Ok(bytes) => {
-                            let _ = std::fs::write(dir.join(&name), bytes);
-                        }
-                        // The music goes without; the game does not need it.
-                        Err(why) => println!("data: {name}: {why:?}"),
-                    }
+                // The music goes without; the game does not need it.
+                for name in report.extras_failed {
+                    println!("data: {name} could not be fetched");
                 }
                 Phase::Done
             }
-            Err(why) => Phase::Failed(why.to_string()),
+            Err(why) => Phase::Failed(why.to_string(), on_disk(&dir)),
         };
         set(end);
     });
@@ -146,7 +158,6 @@ impl SyncApp {
                 self.speed_from = (p.received, Instant::now());
             }
         }
-        let offline = is_synced(&self.dir);
         let Some(m) = &mut self.open else { return };
         let frame = match m.surface.get_current_texture() {
             wgpu::CurrentSurfaceTexture::Success(f) | wgpu::CurrentSurfaceTexture::Suboptimal(f) => f,
@@ -181,15 +192,18 @@ impl SyncApp {
                             );
                             ui.label(format!("{}/s", megabytes(speed as u64)));
                         }
-                        Phase::Failed(why) => {
+                        Phase::Failed(why, held) => {
                             ui.label("The game data could not be downloaded.");
                             ui.small(why);
+                            if *held == OnDisk::Partial {
+                                ui.small("The data on disk is incomplete: some maps or sounds may be missing.");
+                            }
                             ui.add_space(12.0);
                             ui.horizontal(|ui| {
                                 if ui.button("Try again").clicked() {
                                     choice = Some(false);
                                 }
-                                if offline && ui.button("Play with the data on disk").clicked() {
+                                if *held != OnDisk::Nothing && ui.button("Play with the data on disk").clicked() {
                                     choice = Some(true);
                                 }
                             });
@@ -349,7 +363,7 @@ pub fn run_headless(base_url: &str, dir: &Path) -> Result<(), String> {
         let now = phase.lock().expect("sync phase").clone();
         match now {
             Phase::Done => return Ok(()),
-            Phase::Failed(why) => return Err(why),
+            Phase::Failed(why, _) => return Err(why),
             Phase::Running(p) if p.package != last => {
                 println!(
                     "data: {} ({} of {})",

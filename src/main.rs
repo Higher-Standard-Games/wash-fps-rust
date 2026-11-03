@@ -518,7 +518,12 @@ fn game_data_dir(o: &Options) -> PathBuf {
 fn game(mut o: Options) -> i32 {
     let (lobby, data) = region(&o);
     let dir = game_data_dir(&o);
-    if !(o.offline && shagger::loader::pk3::package_store::is_synced(&dir)) {
+    // `--offline` never touches the network: whatever is on disk is played.
+    if o.offline && !shagger::loader::pk3::package_store::has_packages(&dir) {
+        eprintln!("--offline: no game data in {}; start once without it", dir.display());
+        return 1;
+    }
+    if !o.offline {
         match data_sync_screen::run(&data, &dir) {
             Ok(data_sync_screen::SyncOutcome::Ready) => {}
             Ok(data_sync_screen::SyncOutcome::Quit) => return 0,
@@ -841,11 +846,14 @@ fn print_standings(match_state: &Value, standings: &[Value]) {
 }
 
 #[allow(clippy::too_many_lines)]
-/// `--data`, or the packages `tools/fetch_maps.sh` fetched.
+/// `--data`, else the packages `tools/fetch_maps.sh` fetched when run from
+/// a checkout, else the data the game synced.
 fn data_dir(o: &Options) -> PathBuf {
-    o.data
-        .clone()
-        .unwrap_or_else(|| PathBuf::from("target/washoi-maps/pk3"))
+    let checkout = PathBuf::from("target/washoi-maps/pk3");
+    if o.data.is_none() && checkout.is_dir() {
+        return checkout;
+    }
+    game_data_dir(o)
 }
 
 fn play_match(url: &str, name: &str, ticket: Option<String>, seconds: f64, play: bool, data: &Path) -> i32 {
@@ -887,7 +895,9 @@ fn play_match(url: &str, name: &str, ticket: Option<String>, seconds: f64, play:
                         "welcome: \"{}\" ({}), map {}, {} Hz, {}/{} players",
                         w.server_name, w.server_id, w.map, w.tick_rate, w.current_players, w.max_players
                     );
-                    if play {
+                    // A resume welcomes us again; the predictor and its
+                    // command numbers carry on.
+                    if play && predictor.is_none() {
                         let mut client = V2NetworkClient::new(f64::from(w.tick_rate));
                         match prediction::install_map(&mut client, data, &w.map) {
                             Ok(()) => println!("predicting on {}", w.map),

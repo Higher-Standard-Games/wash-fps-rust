@@ -267,6 +267,18 @@ impl DemosView {
         }
     }
 
+    /// `disconnected`: requests to the old connection are forgotten, and
+    /// the lists are asked for again on the next one.
+    pub fn disconnected(&mut self) {
+        self.archive.clear();
+        self.archive_request = None;
+        self.archive_arrived = false;
+        self.archive_failed = false;
+        self.featured.clear();
+        self.featured_request = None;
+        self.featured_state = FeaturedState::Idle;
+    }
+
     /// The page opened: fetch what it shows.
     pub fn open(&mut self, client: &mut LobbyClient) {
         self.request_archive(client, false);

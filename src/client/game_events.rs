@@ -252,6 +252,13 @@ pub const ENDGAME_PLAYLIST: &str = "data/endgame.playlist.json";
 pub const MENU_PLAYLIST: &str = "data/menu.playlist.json";
 
 impl GameAudio {
+    /// A demo seek (`resetFPSMovementAudio`, `demoReloadAudio.reset()`):
+    /// footsteps and reloads start again from the new position.
+    pub fn discontinuity(&mut self) {
+        self.movement.reset();
+        self.reload.reset();
+    }
+
     #[must_use]
     pub fn new(sfx: AudioV2Sfx) -> Self {
         Self {

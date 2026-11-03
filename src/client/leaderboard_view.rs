@@ -84,6 +84,15 @@ impl Default for LeaderboardView {
 }
 
 impl LeaderboardView {
+    /// `clear`: the connection went; nothing it was asked will come.
+    pub fn clear(&mut self) {
+        self.request = None;
+        self.entries.clear();
+        self.you = None;
+        self.total = 0;
+        self.error = None;
+    }
+
     /// Asks for the board the filters name.
     pub fn refresh(&mut self, client: &mut LobbyClient) {
         self.error = None;

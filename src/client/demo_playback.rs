@@ -50,6 +50,10 @@ pub struct DemoPlayback {
     ended: bool,
     /// The index's `durationMs`.
     pub duration_ms: f64,
+    /// `discontinuityId`: raised on every seek, so what is drawn and heard
+    /// from the old position (trails, sounds, the HUD's timed entries) is
+    /// dropped rather than carried across the jump.
+    discontinuity: u64,
 }
 
 impl DemoPlayback {
@@ -86,6 +90,7 @@ impl DemoPlayback {
             paused: false,
             ended: false,
             duration_ms,
+            discontinuity: 0,
         })
     }
 
@@ -131,10 +136,14 @@ impl DemoPlayback {
     /// `seekToTick`: the buffers as they would be had the demo played up
     /// to `tick`, without the effects of the frames on the way.
     pub fn seek_to_tick(&mut self, tick: f64) {
-        let first = f64::from(self.frames[0].tick);
-        let end = self.frame_time(self.frames.len() - 1);
-        let target = ((tick - first) * 1000.0 / self.tick_rate()).clamp(0.0, end);
+        // `findFrameByTick`: onto the first frame at or after the tick.
+        let i = self
+            .frames
+            .partition_point(|f| f64::from(f.tick) < tick)
+            .min(self.frames.len() - 1);
+        let target = self.frame_time(i);
         self.ended = false;
+        self.discontinuity += 1;
         // Forward from where it is, the buffers it has hold; backward, they
         // are rebuilt from the first frame.
         if target < self.clock_ms {
@@ -196,6 +205,12 @@ impl DemoPlayback {
         let index = (nearest as isize + isize::from(step)).clamp(0, SPEED_OPTIONS.len() as isize - 1);
         self.speed = SPEED_OPTIONS[index as usize];
         self.speed
+    }
+
+    /// `discontinuityId`: changes on every seek.
+    #[must_use]
+    pub fn discontinuity(&self) -> u64 {
+        self.discontinuity
     }
 
     /// `currentFrame`: the newest frame delivered (0 before any).
@@ -391,9 +406,20 @@ mod tests {
         }
         assert!(demo.ended() && demo.paused());
         assert_eq!(demo.playhead_tick(), last);
-        demo.seek_to_tick(last - 5.0 * demo.tick_rate());
+        let before = demo.discontinuity();
+        let target = last - 5.0 * demo.tick_rate();
+        demo.seek_to_tick(target);
         assert!(!demo.ended());
-        assert!((demo.playhead_tick() - (last - 5.0 * demo.tick_rate())).abs() < 1e-6);
+        assert_eq!(demo.discontinuity(), before + 1);
+        // `findFrameByTick`: the first frame at or after the tick.
+        let landed = demo.playhead_tick();
+        assert!(landed >= target);
+        assert!(demo.frames().iter().any(|f| f64::from(f.tick) == landed));
+        assert!(
+            demo.frames()
+                .iter()
+                .all(|f| f64::from(f.tick) >= landed || f64::from(f.tick) < target)
+        );
         demo.seek_to_tick(last + 100.0);
         assert_eq!(demo.playhead_tick(), last);
         // Paused on the last frame by a seek, play goes on from there.

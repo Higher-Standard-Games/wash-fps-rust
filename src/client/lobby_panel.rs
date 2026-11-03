@@ -199,10 +199,19 @@ fn random01() -> f64 {
     (now_seed() % 1_000_000) as f64 / 1_000_000.0
 }
 
+/// `file` with `.suffix` added to its whole name (`lobby-key.part`,
+/// `key.txt.unknown`), never in place of an extension.
+fn beside(file: &std::path::Path, suffix: &str) -> std::path::PathBuf {
+    let mut name = file.file_name().unwrap_or_default().to_os_string();
+    name.push(".");
+    name.push(suffix);
+    file.with_file_name(name)
+}
+
 /// Writes the key through a file beside it, so a crash leaves the old key or
 /// the whole new one.
 pub fn save_key(file: &std::path::Path, key: &str) -> std::io::Result<()> {
-    let part = file.with_extension("part");
+    let part = beside(file, "part");
     std::fs::write(&part, key)?;
     std::fs::rename(&part, file)
 }
@@ -239,8 +248,13 @@ pub struct LobbyPanel {
     retry_at: Option<Instant>,
     /// The lobby is full and closes the connection; its wait stands.
     lobby_full: bool,
-    /// The room this account was in when the connection dropped.
-    room_to_rejoin: Option<String>,
+    /// The room this account was in when the connection dropped: the
+    /// room, its invite, and the account (`roomToRejoin`).
+    room_to_rejoin: Option<(String, Option<String>, Option<String>)>,
+    /// The open room's invite, from its share link (`currentInviteToken`).
+    room_invite: Option<String>,
+    /// The logged-in account (`currentIdentity().id`).
+    account_id: Option<String>,
     connected: bool,
     pub name: String,
     local_lobby_player_id: Option<String>,
@@ -300,6 +314,8 @@ impl LobbyPanel {
             retry_at: None,
             lobby_full: false,
             room_to_rejoin: None,
+            room_invite: None,
+            account_id: None,
             connected: false,
             name: String::new(),
             local_lobby_player_id: None,
@@ -347,9 +363,14 @@ impl LobbyPanel {
     pub fn poll(&mut self) {
         if self.retry_at.is_some_and(|at| Instant::now() >= at) {
             self.retry_at = None;
-            self.closed = None;
             self.notice.clear();
-            self.client = LobbyClient::connect(&self.url);
+            if self.connected {
+                // A refused login on an open connection logs in again on it.
+                self.client.auth(self.key.as_deref());
+            } else {
+                self.closed = None;
+                self.client = LobbyClient::connect(&self.url);
+            }
         }
         for event in self.client.poll_events() {
             self.on_event(event);
@@ -359,7 +380,9 @@ impl LobbyPanel {
         }
         self.demos.tick();
         // A recording is in: the menu gets out of the way.
-        if let Some((path, reel)) = self.demos.ready.take() {
+        if self.choice.is_none()
+            && let Some((path, reel)) = self.demos.ready.take()
+        {
             self.choice = Some(LobbyChoice {
                 server_url: String::new(),
                 map: path.display().to_string(),
@@ -397,8 +420,13 @@ impl LobbyPanel {
         self.connected = false;
         self.guide.set_authenticated(false);
         if let Some(room) = self.room.take() {
-            self.room_to_rejoin = Some(room.lobby_id);
+            self.room_to_rejoin = Some((room.lobby_id, self.room_invite.take(), self.account_id.clone()));
         }
+        // `leaderboardView.clear()`, `demosView.disconnected()`: nothing
+        // asked of the old connection will be answered.
+        self.leaderboard.clear();
+        self.profile.clear();
+        self.demos.disconnected();
         self.room_from_queue = false;
         self.queued = None;
         self.pending_private_create = false;
@@ -422,24 +450,35 @@ impl LobbyPanel {
         // The lobby does not know the stored key (its accounts were reset):
         // set the key aside and make a new account.
         if e.code == "unknown_key"
-            && let Some(key) = self.key.take()
+            && let Some(key) = self.key.clone()
         {
-            if let Some(file) = &self.key_file
-                && let Err(why) = save_key(&file.with_extension("unknown"), &key)
-            {
-                println!("lobby: could not set the unknown key aside: {why}");
+            // The old key is only ever replaced once it is safe beside it.
+            let aside = self.key_file.as_ref().map(|f| beside(f, "unknown"));
+            match aside.map(|aside| save_key(&aside, &key)) {
+                Some(Err(why)) => {
+                    println!("lobby: could not set the unknown key aside: {why}");
+                    self.notice = format!("{} The key could not be set aside: {why}", login_failure_text(&e.code));
+                }
+                _ => {
+                    self.key = None;
+                    self.client.auth(None);
+                }
             }
-            self.client.auth(None);
             return;
         }
         self.notice = login_failure_text(&e.code);
-        if e.code == "lobby_full" {
-            // The lobby closes the connection; wait as long as it asks.
+        // `performLobbyLogin`: a full lobby waits as long as it asks (and
+        // closes the connection); any other refusal tries again after the
+        // outage backoff.
+        let seconds = if e.code == "lobby_full" {
             self.lobby_full = true;
-            let seconds = retry_delay_sec(e.retry_after_sec, random01());
-            self.notice = format!("{} Trying again in {seconds}s.", self.notice);
-            self.retry_at = Some(Instant::now() + Duration::from_secs(seconds));
-        }
+            retry_delay_sec(e.retry_after_sec, random01())
+        } else {
+            self.login_failures += 1;
+            offline_retry_delay_sec(self.login_failures, random01())
+        };
+        self.notice = format!("{} Trying again in {seconds}s.", self.notice);
+        self.retry_at = Some(Instant::now() + Duration::from_secs(seconds));
     }
 
     fn on_message(&mut self, message: LobbyIn) {
@@ -468,23 +507,36 @@ impl LobbyPanel {
                     .identity
                     .as_ref()
                     .map_or_else(|| w.player_id.clone(), |i| i.name.clone());
-                if let (Some(new_key), Some(file)) = (&w.key, &self.key_file) {
-                    if self.key_unreadable {
-                        self.notice = format!(
-                            "{} could not be read, so this new account's key is not saved",
-                            file.display()
-                        );
-                    } else if let Err(e) = save_key(file, new_key) {
-                        self.notice = format!("Could not save the new account's key: {e}");
-                    } else {
-                        self.key = Some(new_key.clone());
+                if let Some(new_key) = &w.key {
+                    // Kept for this run whatever the disk says (`writeStorage`),
+                    // so a reconnect logs back in rather than making another account.
+                    self.key = Some(new_key.clone());
+                    if let Some(file) = &self.key_file {
+                        if self.key_unreadable {
+                            self.notice = format!(
+                                "{} could not be read, so this new account's key is not saved",
+                                file.display()
+                            );
+                        } else if let Err(e) = save_key(file, new_key) {
+                            self.notice = format!("Could not save the new account's key: {e}");
+                        }
                     }
                 }
                 self.login_failures = 0;
                 self.retry_at = None;
-                // `restoreRoom`.
-                if let Some(lobby_id) = self.room_to_rejoin.take() {
-                    self.client.join_lobby(&lobby_id, None);
+                let account = w.identity.as_ref().map(|i| i.id.clone());
+                // A new account sees none of the old one's numbers.
+                if account != self.account_id {
+                    self.leaderboard.clear();
+                    self.profile.clear();
+                    self.demos.disconnected();
+                }
+                self.account_id = account;
+                // `restoreRoom`: the same account, with the room's invite.
+                if let Some((lobby_id, invite, account)) = self.room_to_rejoin.take()
+                    && account == self.account_id
+                {
+                    self.client.join_lobby(&lobby_id, invite.as_deref());
                 }
                 self.server_gametypes = w.gametypes.clone();
                 self.private_lobby_supported = w
@@ -506,6 +558,13 @@ impl LobbyPanel {
                         == Some(true)
                 };
                 self.demos.connected(feature("demoOwnership"), feature("featuredDemos"));
+                // The open page asks again on the new connection.
+                match self.tab {
+                    Tab::Leaderboard => self.leaderboard.refresh(&mut self.client),
+                    Tab::Profile => self.profile.refresh(&mut self.client),
+                    Tab::Demos => self.demos.open(&mut self.client),
+                    Tab::Play => {}
+                }
                 // `startSettingsSync`.
                 if let Some(dir) = crate::config_dir() {
                     self.settings_sync = with_cvars(|c| SettingsSync::start(&mut self.client, &w, c, &dir));
@@ -540,6 +599,12 @@ impl LobbyPanel {
                 self.notice = e;
             }
             LobbyIn::Other { kind, .. } if kind == "queue:left" => self.queued = None,
+            // Renamed from another window logged in to this account (`adopt`).
+            LobbyIn::Other { kind, message } if kind == "identity:renamed" => {
+                if let Some(name) = message.pointer("/identity/name").and_then(serde_json::Value::as_str) {
+                    self.name = name.to_owned();
+                }
+            }
             LobbyIn::Other { .. } => {}
         }
     }
@@ -560,6 +625,13 @@ impl LobbyPanel {
         self.pending_private_create = false;
         self.pending_quick_play = false;
         self.room_from_queue = self.queued.take().is_some();
+        // `currentInviteToken`: a private room's share link carries it.
+        self.room_invite = lobby
+            .get("shareUrl")
+            .and_then(|v| v.as_str())
+            .and_then(|url| url.split_once("invite=").map(|(_, rest)| rest))
+            .map(|rest| rest.split(['&', '#']).next().unwrap_or_default().to_owned())
+            .filter(|t| !t.is_empty());
         self.notice.clear();
         let fill = if quick_play { QUICK_PLAY_BOTS } else { 0 };
         let mut room = MatchLobbyView::new(
@@ -594,7 +666,7 @@ impl LobbyPanel {
 
     /// `switchTab`: shows a rail page, asking the lobby for its data.
     pub fn open_tab(&mut self, tab: Tab) {
-        self.settings = None;
+        self.close_settings();
         if self.tab != tab && self.connected {
             match tab {
                 Tab::Leaderboard => self.leaderboard.refresh(&mut self.client),
@@ -604,6 +676,12 @@ impl LobbyPanel {
             }
         }
         self.tab = tab;
+    }
+
+    /// Settings closes; a guide waiting on keyboard setup comes back.
+    fn close_settings(&mut self) {
+        self.settings = None;
+        self.guide.resume();
     }
 
     /// A private FFA room that adds its bots, votes a map and readies by itself.
@@ -733,10 +811,14 @@ impl LobbyPanel {
             ui.horizontal(|ui| {
                 let open = self.settings.is_some();
                 if ui.selectable_label(open, "Settings").clicked() {
-                    self.settings = if open { None } else { Some(FpsSettingsView::default()) };
+                    if open {
+                        self.close_settings();
+                    } else {
+                        self.settings = Some(FpsSettingsView::default());
+                    }
                 }
                 if open && ui.button("Back to play").clicked() {
-                    self.settings = None;
+                    self.close_settings();
                 }
                 if ui.button("Console").clicked() {
                     self.console_pressed = true;
@@ -920,7 +1002,10 @@ mod tests {
         assert_eq!(panel.key.as_deref(), Some("old-key"));
         panel.login_refused(&refusal("unknown_key", None));
         assert_eq!(panel.key, None);
-        assert_eq!(std::fs::read_to_string(dir.join("player.unknown")).unwrap(), "old-key");
+        assert_eq!(
+            std::fs::read_to_string(dir.join("player.key.unknown")).unwrap(),
+            "old-key"
+        );
         assert!(panel.notice.is_empty() && panel.retry_at.is_none());
         // A refusal of the new account is shown, not retried as unknown.
         panel.login_refused(&refusal("unknown_key", None));
@@ -963,6 +1048,43 @@ mod tests {
         std::fs::create_dir_all(dir.join("player.key")).unwrap();
         let panel = panel_with_key(&dir, None);
         assert!(panel.key.is_none() && panel.key_unreadable);
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn other_refusals_try_again_and_suffixes_keep_the_whole_name() {
+        let dir = std::env::temp_dir().join(format!("washoi-limited-{}", now_seed()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let mut panel = panel_with_key(&dir, Some("k"));
+        panel.login_refused(&refusal("rate_limited", None));
+        assert!(panel.notice.starts_with("Too many tries"));
+        assert_eq!(panel.login_failures, 1);
+        assert!(panel.retry_at.is_some());
+        assert_eq!(panel.key.as_deref(), Some("k"));
+        assert_eq!(
+            beside(std::path::Path::new("/x/key.unknown"), "unknown"),
+            std::path::Path::new("/x/key.unknown.unknown")
+        );
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn a_room_is_rejoined_with_its_invite_by_the_same_account_only() {
+        let dir = std::env::temp_dir().join(format!("washoi-rejoin-{}", now_seed()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let mut panel = panel_with_key(&dir, Some("k"));
+        panel.account_id = Some("a1".into());
+        panel.handle_lobby_created(&serde_json::json!({
+            "id": "r1", "gametype": "ffa", "visibility": "private",
+            "shareUrl": "https://washoi.net/?lobby=r1&invite=tok9#x",
+            "config": {"maxPlayers": 4}, "players": []
+        }));
+        assert_eq!(panel.room_invite.as_deref(), Some("tok9"));
+        panel.connection_lost(false);
+        assert_eq!(
+            panel.room_to_rejoin,
+            Some(("r1".into(), Some("tok9".into()), Some("a1".into())))
+        );
         std::fs::remove_dir_all(&dir).unwrap();
     }
 }

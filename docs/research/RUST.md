@@ -2587,6 +2587,90 @@ fit and did not count the parity harness.
 
 Newest first. Each entry names the commits and what proves them.
 
+### Second review round: data flows (November 3, 2026)
+
+Five reviewers traced the data end to end, including the first round's
+fixes, and found 48 problems. The serious ones and the regressions are
+fixed below, each with a test where one can reach it.
+
+- **Packages (shagger `18c9cbc`).**
+  - The first round's "remove the index first" lost the list of what to
+    prune, so a sync that stopped half way left withdrawn packages
+    mounted for good. The old index is now set aside
+    (`index.previous.json`) and read back.
+  - A body of the wrong size or digest is fetched again inside the retry,
+    as `PackageStore` validates.
+  - Packages on disk are hashed on every sync, as the browser checks each
+    cache read.
+  - A lock file keeps two copies of the game apart.
+  - The playlists use the same fetch and safe write, before the index.
+  - An oversized body is `TooLarge` and is never retried. Cancelling is
+    seen within a second.
+  - Two crash reports in one second no longer share a file.
+  - An end-to-end test against a local HTTP server covers all of this.
+- **Starting without the network (wash-fps-rust).** `--offline` never
+  touches the network. The sync screen offers the data on disk whenever
+  any packages are there, and says when the set is incomplete. The other
+  modes fall back to the synced data.
+- **Sessions (shagger `1be011f`).**
+  - Every command the game hands over takes a sequence number, even when
+    the link is down. Before this, commands predicted in the moment
+    between a drop and `Resuming` were dropped without a number, and the
+    predictor's numbering stayed off by that many for the rest of the
+    match.
+  - Other requests made while reconnecting wait for the accept. Client
+    prefs are kept.
+  - Decoded events reach the game before a socket ends.
+  - The grace runs from the drop.
+  - A quit is never held up by a send.
+  - A ticketed join still times out without its token.
+- **Live play.**
+  - F (use) no longer hands the first-person camera to another player.
+    This was a regression.
+  - `cl_autorun` is honoured, so Shift walks, as in the browser.
+  - `powerup_state` reaches the HUD.
+  - A spawn's or teleporter's yaw goes into the same frame's commands.
+  - A spectator sends nothing, and only a real death arms RequestSpawn.
+  - The dead keep use and their weapon choice.
+  - Weapon ids are canonical, and the direction uses `js_sin`/`js_cos`.
+  - The headless client keeps its predictor across a resume.
+- **Lobby.**
+  - A dropped private room is rejoined with its invite, and only by the
+    same account.
+  - Any refused login tries again (`rate_limited` used to stall).
+  - A new account's key is kept in memory even if it cannot be saved.
+  - An unknown key is replaced only once it has been set aside safely.
+  - Key suffixes add to the whole file name.
+  - The Leaderboard, Profile and Demos pages reset on a drop or a new
+    account, and the open page asks again after a login.
+  - `identity:renamed` is followed.
+  - The welcome guide is asked once per run and comes back when Settings
+    closes.
+  - A finished demo download no longer replaces a pending match.
+- **Demos and input.**
+  - Seeks land on the first frame at or after the tick (`findFrameByTick`)
+    and raise a discontinuity. On a discontinuity the window clears
+    teleport ghosts, splashes, trails, gibs, damage numbers, the kill
+    feed, chat and powerup timers, and resets footstep and reload audio.
+  - Effects and the HUD's timed entries run on the demo clock.
+  - `--follow N` survives a first frame with no players, and a demo picks
+    someone else when the followed player leaves.
+  - Synthetic key presses are ignored.
+  - A failed mouse grab still plays.
+  - Looking around no longer keeps the demo bar up on Windows.
+
+Deferred, with the reason:
+
+- Settings changed during a match can be overwritten at the next login.
+  The browser keeps the lobby open during a match, so its sync goes on.
+  The native client closes the lobby and builds a new panel after each
+  match, which also loses the rematch room. The fix is to keep the panel
+  and its connection across the match (the next lobby slice).
+- A new account after an accounts reset is not renamed to the player's
+  earlier name. The native client has no saved profile name yet.
+- One data folder serves both regions. They share a deployment today.
+- Ragdolls are not cleared on a seek. They settle within a second.
+
 ### Review round before the client release (November 3, 2026)
 
 A review of five areas (live play, demo playback, window input, data

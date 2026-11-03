@@ -28,6 +28,12 @@ impl Default for ProfileView {
 }
 
 impl ProfileView {
+    /// The connection went, or the account changed.
+    pub fn clear(&mut self) {
+        self.request = None;
+        self.summary = None;
+    }
+
     pub fn refresh(&mut self, client: &mut LobbyClient) {
         self.request = Some(client.request_stats(self.mode, "all", self.private));
     }

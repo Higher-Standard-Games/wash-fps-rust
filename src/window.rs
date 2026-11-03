@@ -112,6 +112,8 @@ struct App {
     /// The viewer chose the free camera (F past the last player); until
     /// then a demo follows its first player (`refreshHudPlayerList`).
     free_camera: bool,
+    /// The demo's last seek seen (`discontinuityId`).
+    demo_discontinuity: u64,
     /// The view after our own death, and what it follows (`DeathCamera`).
     death_camera: DeathCamera,
     death_follow: Option<DeathFollow>,
@@ -227,10 +229,16 @@ impl App {
     fn set_captured(&mut self, captured: bool) {
         let Some(s) = &self.surface else { return };
         let grab = if captured {
-            s.window
+            // Without a grab the game still plays: raw mouse motion turns
+            // the view and the cursor stays hidden.
+            if let Err(e) = s
+                .window
                 .set_cursor_grab(CursorGrabMode::Locked)
                 .or_else(|_| s.window.set_cursor_grab(CursorGrabMode::Confined))
-                .is_ok()
+            {
+                println!("the mouse could not be captured ({e}); playing without the lock");
+            }
+            true
         } else {
             let _ = s.window.set_cursor_grab(CursorGrabMode::None);
             false
@@ -297,7 +305,8 @@ impl App {
             right: i.is_active(fps::MOVE_RIGHT),
             jump: i.is_active(fps::JUMP),
             crouch: i.is_active(fps::CROUCH),
-            sprint: i.is_active(fps::SPRINT),
+            // `FPSController`: with cl_autorun (on by default) the sprint key walks.
+            sprint: i.is_active(fps::SPRINT) != with_cvars(|c| c.get_bool("cl_autorun")),
             // The first click captures the mouse rather than firing.
             fire: self.captured && i.is_active(fps::FIRE),
             alt_fire: i.is_active(fps::AIM),
@@ -386,7 +395,31 @@ impl App {
                 let hud = self.demo_hud.get_or_insert_with(|| DemoOverlay::new(demo));
                 hud.update(f64::from(dt), demo.paused());
             }
+            let playhead = match &*feed {
+                Feed::Demo(d) => Some(d.playhead_tick()),
+                _ => None,
+            };
             let view = feed.advance(f64::from(dt));
+            // `_syncDemoPresentationClock`: in a demo the effects and the
+            // HUD's timed entries run on the demo clock (still while paused,
+            // slow at a quarter speed), and a seek drops them.
+            let mut effect_dt = f64::from(dt);
+            if let (Feed::Demo(d), Some(before)) = (&*feed, playhead) {
+                effect_dt = ((d.playhead_tick() - before) / d.tick_rate()).clamp(0.0, 0.25);
+                if d.discontinuity() != self.demo_discontinuity {
+                    self.demo_discontinuity = d.discontinuity();
+                    effect_dt = 0.0;
+                    s.renderer.discontinuity();
+                    if let Some(audio) = &mut self.audio {
+                        audio.discontinuity();
+                    }
+                    if let Some(hud) = &mut s.hud {
+                        hud.state.kill_feed.clear();
+                        hud.state.powerups.clear();
+                        hud.chat.clear_messages();
+                    }
+                }
+            }
             if let Feed::Play(p, _) = feed {
                 // First person: the eye where prediction puts it.
                 if let Some(yaw) = p.take_spawn_facing() {
@@ -446,13 +479,20 @@ impl App {
                 .collect();
             s.renderer.set_live_weapons(&view.weapons);
             s.renderer.set_live_players(&drawn, f64::from(dt));
-            if self.reel.is_none() {
+            // Our own camera in play; a frame without players keeps
+            // `--follow N` for the first frame that has them.
+            if self.reel.is_none() && !matches!(feed, Feed::Play(..)) && !players.is_empty() {
                 // `--follow N` names a place in the first frame's list.
                 if let (Some(i), None) = (self.follow, &self.follow_id) {
                     self.follow_id = players.get(i).map(|(id, _, _)| id.clone());
                 }
-                // A demo watches someone until the viewer flies free.
-                if self.follow_id.is_none() && !self.free_camera && matches!(feed, Feed::Demo(_)) {
+                // A demo watches someone until the viewer flies free, and
+                // someone else when the one watched leaves.
+                let gone = self
+                    .follow_id
+                    .as_ref()
+                    .is_some_and(|id| !players.iter().any(|(p, _, _)| p == id));
+                if (self.follow_id.is_none() || gone) && !self.free_camera && matches!(feed, Feed::Demo(_)) {
                     self.follow_id = name_order(feed.roster(), &players).into_iter().next();
                 }
                 self.follow = self
@@ -465,14 +505,14 @@ impl App {
             {
                 chase_camera(&mut self.camera, p);
             }
-            s.renderer.set_live_projectiles(&view.projectiles, f64::from(dt));
-            s.renderer.play_effects(&view.effects, &view.weapons, f64::from(dt));
+            s.renderer.set_live_projectiles(&view.projectiles, effect_dt);
+            s.renderer.play_effects(&view.effects, &view.weapons, effect_dt);
             let local = match feed {
                 Feed::Play(..) => feed.local_entity(),
                 _ => None,
             };
             s.renderer.set_local_player(local, f64::from(self.camera.yaw));
-            s.renderer.play_gibs(&view.effects, f64::from(dt));
+            s.renderer.play_gibs(&view.effects, effect_dt);
             // Our own death: the camera follows the corpse or the burst
             // until we are back (`applyDeathCamera`).
             if let Some((follow, at, yaw)) = s.renderer.take_local_death() {
@@ -545,7 +585,7 @@ impl App {
                     self.follow,
                     f64::from(self.camera.yaw),
                     &view.effects,
-                    f64::from(dt),
+                    effect_dt,
                     s.config.width as f32,
                     s.config.height as f32,
                 );
@@ -806,6 +846,17 @@ impl ApplicationHandler for App {
     }
 
     fn window_event(&mut self, event_loop: &ActiveEventLoop, _id: WindowId, event: WindowEvent) {
+        // Keys winit reports as held when focus returns were pressed
+        // elsewhere (Alt after Alt+Tab): they are not this window's.
+        if let WindowEvent::KeyboardInput {
+            event: key,
+            is_synthetic: true,
+            ..
+        } = &event
+            && key.state == ElementState::Pressed
+        {
+            return;
+        }
         if self.console_event(&event) {
             return;
         }
@@ -864,7 +915,9 @@ impl ApplicationHandler for App {
                     // A reel's keys do not repeat (`bindPlaybackKeys`).
                     ElementState::Pressed if event.repeat && self.reel.is_some() => {}
                     ElementState::Pressed if self.demo_key(code, event.repeat) => {}
-                    ElementState::Pressed if code == KeyCode::KeyF && !event.repeat => {
+                    ElementState::Pressed
+                        if code == KeyCode::KeyF && !event.repeat && !matches!(self.feed, Some(Feed::Play(..))) =>
+                    {
                         // Chase the next player by name, then back to the free camera.
                         let order = self
                             .feed
@@ -901,8 +954,9 @@ impl ApplicationHandler for App {
                     self.firing = state == ElementState::Pressed;
                 }
             }
-            WindowEvent::CursorMoved { .. } => {
-                // `DemoViewerHUD`: a move of the mouse brings the bar back.
+            // `DemoViewerHUD`: a move of the mouse brings the bar back
+            // (not looking around, which moves a confined cursor on Windows).
+            WindowEvent::CursorMoved { .. } if !self.captured => {
                 if let Some(hud) = &mut self.demo_hud {
                     hud.wake();
                 }
@@ -1068,6 +1122,7 @@ pub fn run(
         follow,
         follow_id: None,
         free_camera: false,
+        demo_discontinuity: 0,
         death_camera: DeathCamera::default(),
         death_follow: None,
         audio,

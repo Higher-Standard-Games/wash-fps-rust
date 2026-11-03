@@ -7,6 +7,9 @@ use shagger::ui::egui_layer::egui;
 
 use crate::client::lobby_welcome_dialog::{DialogEvent, LobbyWelcomeDialog, welcome_is_hidden};
 
+/// The guide was closed in this run (the browser keeps it per page load).
+static COMPLETED_THIS_RUN: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
 /// `LobbyWelcomeGuide`: when the dialog opens by itself, the `?` that
 /// reopens it, and the way back from keyboard setup. The boot state
 /// (`welcomeBootState`) is the guide's own: one per client run.
@@ -40,7 +43,8 @@ impl LobbyWelcomeGuide {
             manual: false,
             tab: 0,
             secondary_tip,
-            completed: false,
+            // One boot state per run: the menu after a match does not ask again.
+            completed: COMPLETED_THIS_RUN.load(std::sync::atomic::Ordering::Relaxed),
             suspended: false,
         }
     }
@@ -102,6 +106,7 @@ impl LobbyWelcomeGuide {
         match event {
             Some(DialogEvent::Close) => {
                 self.completed = true;
+                COMPLETED_THIS_RUN.store(true, std::sync::atomic::Ordering::Relaxed);
                 self.manual = false;
                 self.tab = 0;
                 self.dialog = None;

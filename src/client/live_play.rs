@@ -7,7 +7,9 @@
 //! Snapshots are stamped with their arrival on this machine's clock, as
 //! [`crate::client::live_watch`] does.
 
+use crate::client::game_events::canonical_weapon_id;
 use crate::liquid::client::local_air_tracker::{AirEvent, LocalAirTracker};
+use shagger::shared::js::{js_cos, js_sin};
 use std::cell::Cell;
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
@@ -98,7 +100,7 @@ pub fn command_for(input: &PlayInput, tick: u32) -> Command {
             b |= bit;
         }
     }
-    let (sin, cos) = (input.yaw.sin(), input.yaw.cos());
+    let (sin, cos) = (js_sin(input.yaw), js_cos(input.yaw));
     let (forward, right) = ([sin, cos], [cos, -sin]);
     let mut dir = [0.0f64; 2];
     let mut add = |v: [f64; 2], k: f64| {
@@ -173,6 +175,8 @@ pub struct LivePlay {
     pub air: LocalAirTracker,
     /// A respawn since the last [`LivePlay::take_local_liquid`].
     respawned: bool,
+    /// Our body has been in a snapshot: a player, not a spectator.
+    spawned: bool,
 }
 
 /// Our own prediction went through a teleporter (`onTeleport`): where
@@ -268,6 +272,7 @@ impl LivePlay {
                         was_jumppad_launching: false,
                         air: LocalAirTracker::default(),
                         respawned: false,
+                        spawned: false,
                     });
                 }
                 Some(SessionEvent::Host(HostEvent::Failed(why)) | SessionEvent::Closed(why)) => {
@@ -419,12 +424,15 @@ impl LivePlay {
                         } = event
                             && *entity_id == self.entity_id
                         {
-                            self.weapon.clone_from(current_weapon);
-                            self.predictor.set_speed_bonus(weapon_speed_bonus(current_weapon));
+                            // `canonicalWeaponId`: an old name for a weapon draws its model.
+                            let weapon = canonical_weapon_id(current_weapon);
+                            self.weapon = weapon.to_owned();
+                            self.predictor.set_speed_bonus(weapon_speed_bonus(weapon));
                         }
                     }
                     match prediction::server_snapshot(&state, &self.entity_id) {
                         Some(snapshot) => {
+                            self.spawned = true;
                             if !self.alive {
                                 // Back from the dead (or in for the first time).
                                 self.predictor.reset_for_respawn();
@@ -437,6 +445,7 @@ impl LivePlay {
                         None => {
                             if self.alive {
                                 self.died_at = now;
+                                self.respawn_requested = false;
                             }
                             self.alive = false;
                         }
@@ -464,7 +473,9 @@ impl LivePlay {
     fn send_commands(&mut self, input: &PlayInput, now: f64) {
         // `sendInput`: nothing is predicted or sent while the connection is
         // being restored, so the predictor's numbering stays the wire's.
-        if !self.joined || self.closed.is_some() || !self.connected {
+        // A spectator (queued, refused, before the first spawn) sends nothing
+        // (`Game.sendInput` returns for spectators).
+        if !self.joined || !self.spawned || self.closed.is_some() || !self.connected {
             if !self.connected {
                 self.next_command = now;
             }
@@ -480,9 +491,13 @@ impl LivePlay {
             }
         }
         if frozen || !self.alive {
+            // The dead and the frozen keep their aim, use and weapon choice
+            // (`Game.ts` strips movement and the attack buttons only).
             input = PlayInput {
                 yaw: input.yaw,
                 pitch: input.pitch,
+                use_key: input.use_key,
+                weapon_slot: input.weapon_slot,
                 ..PlayInput::default()
             };
         }
@@ -492,6 +507,16 @@ impl LivePlay {
         }
         while self.next_command <= now {
             self.next_command += COMMAND_MS;
+            // A spawn or a teleporter turns the view before the next
+            // command goes (`processSnapshots` runs before `sendInput`), not
+            // a frame later when the camera takes it.
+            if let Some(yaw) = self.spawn_facing.get() {
+                input.yaw = yaw;
+                input.pitch = 0.0;
+            }
+            if let Some(t) = self.teleport.get() {
+                input.yaw = t.exit_yaw;
+            }
             let command = command_for(&input, self.tick);
             // Every command sent is predicted, dead or alive (`sendInput`):
             // the server acks the wire's sequence, which counts them all.

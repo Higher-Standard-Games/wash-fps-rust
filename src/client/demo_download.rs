@@ -43,6 +43,7 @@ pub fn download_message(error: &FetchError) -> String {
         FetchError::Stalled => "The demo download stalled. Please try again.".to_owned(),
         FetchError::TooLong => "The demo download took too long. Please try again.".to_owned(),
         FetchError::Cancelled => "Demo loading cancelled".to_owned(),
+        FetchError::TooLarge => "The recording is larger than a demo can be.".to_owned(),
         FetchError::Network(e) => format!("Could not download the recording: {e}"),
     }
 }
