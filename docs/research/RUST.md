@@ -2582,6 +2582,35 @@ fit and did not count the parity harness.
 
 Newest first. Each entry names the commits and what proves them.
 
+### Milestone 11, nineteenth slice: players reflected in water (November 3, 2026)
+
+- **shagger 2f6651e.** `rendering/water/water_actor_reflection.rs` ports
+  `WaterActorReflection`: with `r_water_quality` 3 and `r_water_actors` on,
+  the nearest visible pool within 240 units whose surface is below the
+  camera, and the two nearest players over it within 160 (at most 32
+  parts), are drawn mirrored in the pool's plane into a target a quarter
+  of the screen, at most 320 pixels. The map's opaque batches above the
+  water in the mirrored frustum go first as transparent blockers (no
+  more than 256, else nothing), so a wall between a player and the pool
+  hides them. `LiquidSurfaceSystem::prepare` binds it to the pool's
+  surfaces (`actorReflection.bind`, linear) and `capture_actors` records
+  it. Changes: Babylon's `MirrorTexture` flips face winding; here the
+  mirrored view is also flipped left to right in clip space, so the
+  models' own pipelines draw it (`ModelRenderer::set_second_view` and
+  `draw_opaque_view`, outlines left out as there), and the matrix the
+  water samples with undoes the flip and wgpu's downward rows.
+- **wash-fps-rust.** `MapRenderer` keeps each player's box and run of
+  model draws (live and posed at load) and draws the chosen ones in
+  `capture`, beside the water's scene copy. `washoi view` prints the
+  reflection's status.
+- **Not yet.** Clipping the players at the water plane (Babylon's mirror
+  clips them; here only the blockers are), and the local player's
+  reflection-only body (`localBodyWanted`).
+- **Proof.** Unit tests: the mirror keeps winding and lands a point and
+  its image on one pixel, and the distance to a pool. Screenshots of
+  amphi1's pool with `r_water_actors` 0 and 1
+  (`rust-port/water-actor-reflection-amphi1.png`).
+
 ### Milestone 11, eighteenth slice: liquids' own cubemaps (November 3, 2026)
 
 - **shagger 9500dfd.** `loader/texture/skybox_loader.rs` ports

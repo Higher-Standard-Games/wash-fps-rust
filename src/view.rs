@@ -54,6 +54,7 @@ use shagger::loader::bsp::world_fog::parse_world_fog;
 use shagger::loader::texture::skybox_loader::load_environment_cubemap;
 use shagger::rendering::sky_renderer::{SkyRenderer, apply_skybox, upload_cube};
 use shagger::rendering::water::liquid_surface_system::{LiquidSurfaceSystem, WaterSettings};
+use shagger::rendering::water::water_actor_reflection::ReflectionActor;
 use shagger::rendering::wgpu;
 use shagger::rendering::world_culling::WorldCulling;
 use shagger::rendering::world_fog_controller::{FogUniforms, WorldFogController};
@@ -777,6 +778,12 @@ pub struct MapRenderer {
     pub remote_players: Option<RemotePlayerRenderer>,
     /// This frame's live players and projectiles.
     live_draws: Vec<ModelDraw>,
+    /// Each live player's box and their run of `live_draws`, for the
+    /// water's reflection, and this frame's reflected draws.
+    live_actors: Vec<(ReflectionActor, std::ops::Range<usize>)>,
+    /// The same for the players posed at load, in `model_draws`.
+    static_actors: Vec<(ReflectionActor, std::ops::Range<usize>)>,
+    actor_draws: Vec<ModelDraw>,
     /// Every projectile type's model, for projectiles that fly.
     live_projectile_models: Vec<(&'static ProjectileDef, ProjectileModel)>,
     /// The flying projectiles' trails, by entity, and finished ones kept
@@ -926,6 +933,7 @@ impl MapRenderer {
     pub fn set_live_players(&mut self, players: &[(String, InterpolatedEntity, PlayerModelVisualStyle)], dt: f64) {
         self.joints.truncate(self.static_joints);
         self.live_draws.clear();
+        self.live_actors.clear();
         let Some(renderer) = &mut self.remote_players else {
             return;
         };
@@ -964,6 +972,16 @@ impl MapRenderer {
                     mask_has_quad(interp.powerup_mask.unwrap_or(0)).then(|| get_quad_damage_pulse(self.item_time));
                 self.hand_weapons.draws(weapon, hand, quad, &mut self.live_draws);
             }
+            // The player's box (Q3's -15 -15 -24 to 15 15 32, Babylon order).
+            let at = DVec3::new(interp.x, interp.y, interp.z);
+            self.live_actors.push((
+                ReflectionActor {
+                    min: at + DVec3::new(-15.0, -24.0, -15.0),
+                    max: at + DVec3::new(15.0, 32.0, 15.0),
+                    meshes: self.live_draws.len() - first,
+                },
+                first..self.live_draws.len(),
+            ));
         }
         // RemotePlayerRenderer's teleport detection: a jump of more than
         // 256 units between frames. A player gone from the list (dead) is
@@ -1600,6 +1618,13 @@ impl MapRenderer {
                 detail: c.get_number("r_water_detail"),
                 contact: c.get_number("r_water_contact"),
             });
+            let actors_on = shagger::core::cvar::with_cvars(|c| c.get_number("r_water_actors") != 0.0);
+            let actors: Vec<ReflectionActor> = self
+                .static_actors
+                .iter()
+                .chain(&self.live_actors)
+                .map(|(a, _)| *a)
+                .collect();
             let visible = if self.cull { self.culling.visible() } else { &[] };
             water.prepare(
                 gpu,
@@ -1608,7 +1633,23 @@ impl MapRenderer {
                 &settings,
                 uniforms,
                 visible,
+                &actors,
+                actors_on,
             );
+            self.actor_draws.clear();
+            let reflection = water.actor_reflection();
+            if let Some((view_proj, eye)) = reflection.view() {
+                self.models.set_second_view(gpu, view_proj, eye);
+                let statics = self.static_actors.len();
+                for &i in reflection.selected() {
+                    let draws = if i < statics {
+                        &self.model_draws[self.static_actors[i].1.clone()]
+                    } else {
+                        &self.live_draws[self.live_actors[i - statics].1.clone()]
+                    };
+                    self.actor_draws.extend_from_slice(draws);
+                }
+            }
         }
         if let Some(view_model) = &mut self.view_model {
             view_model.prepare(gpu, camera, aspect);
@@ -1638,6 +1679,14 @@ impl MapRenderer {
     pub fn capture(&self, encoder: &mut wgpu::CommandEncoder, hdr: &HdrTarget) {
         if let Some(water) = &self.water {
             water.capture(encoder, &hdr.color_texture, &hdr.depth_texture);
+            let actor_draws = &self.actor_draws;
+            water.capture_actors(
+                encoder,
+                self.world.vertex_buffer(),
+                self.world.index_buffer(),
+                &self.models,
+                &|d| actor_draws.contains(d),
+            );
         }
         self.world.capture_soft_depth(encoder, &hdr.depth_texture);
     }
@@ -1885,6 +1934,7 @@ pub fn build_renderer(gpu: &Gpu, map: &mut LoadedMap, output_format: wgpu::Textu
     let mut joints = Vec::new();
     let mut remote_players = None;
     let mut hand_weapons = HandWeapons::default();
+    let mut static_actors = Vec::new();
     if !map.players.is_empty() || map.remote_players || !map.teleports.is_empty() || !map.ragdolls.is_empty() {
         let pk3 = &mut map.pk3;
         match RemotePlayerRenderer::load(gpu, &mut models, |path| pk3.get_file(path)) {
@@ -1904,6 +1954,15 @@ pub fn build_renderer(gpu: &Gpu, map: &mut LoadedMap, output_format: wgpu::Textu
                         let quad = player.quad.then_some(get_quad_damage_pulse(0.0));
                         hand_weapons.draws(weapon, hand, quad, &mut model_draws);
                     }
+                    let at = DVec3::new(interp.x, interp.y, interp.z);
+                    static_actors.push((
+                        ReflectionActor {
+                            min: at + DVec3::new(-15.0, -24.0, -15.0),
+                            max: at + DVec3::new(15.0, 32.0, 15.0),
+                            meshes: model_draws.len() - first,
+                        },
+                        first..model_draws.len(),
+                    ));
                 }
                 remote_players = Some(players);
             }
@@ -2181,6 +2240,9 @@ pub fn build_renderer(gpu: &Gpu, map: &mut LoadedMap, output_format: wgpu::Textu
         joints,
         remote_players,
         live_draws: Vec::new(),
+        live_actors: Vec::new(),
+        static_actors,
+        actor_draws: Vec::new(),
         live_projectile_models,
         live_projectile_lights: HashMap::new(),
         live_trails: HashMap::new(),
@@ -2650,6 +2712,13 @@ pub fn run(o: &ViewOptions) -> i32 {
     // One long step: a still is fully under or fully dry.
     renderer.update_underwater(&mut camera, 1.0);
     renderer.prepare(&gpu, &camera, [o.width as f32, o.height as f32]);
+    if let Some(water) = &renderer.water {
+        let reflection = water.actor_reflection();
+        println!(
+            "water: actor reflection {}, {} reflected",
+            reflection.status, reflection.actor_count
+        );
+    }
     match renderer.culling.pvs_stats() {
         Some(pvs) => println!(
             "culling: cluster {} sees {} of {} clusters; {} batches left out by the PVS, {} by the frustum",
