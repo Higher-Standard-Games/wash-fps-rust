@@ -50,6 +50,7 @@ use shagger::rendering::hdr_target::HdrTarget;
 use shagger::rendering::model_renderer::{ModelDraw, ModelRenderer};
 use shagger::rendering::offscreen::{OFFSCREEN_FORMAT, render_hdr_scene_with_ui_to_rgba};
 
+use shagger::effects::color_correction_post_process::active_color_matrix;
 use shagger::loader::bsp::liquid_classifier::{classify_liquids, liquid_kind_from_surface_parms};
 use shagger::loader::bsp::world_fog::parse_world_fog;
 use shagger::loader::texture::skybox_loader::load_environment_cubemap;
@@ -909,6 +910,7 @@ pub fn shag_image_processing() -> ImageProcessingConfiguration {
             blend_mode: VignetteBlendMode::Multiply,
             ..Vignette::default()
         }),
+        color_matrix: None,
     }
 }
 
@@ -1521,6 +1523,14 @@ impl MapRenderer {
             serial
         });
         self.fog_serial = Some(serial);
+        // `ColorCorrectionPostProcess`, live from its cvars.
+        self.image_processing.color_matrix = shagger::core::cvar::with_cvars(|c| {
+            active_color_matrix(
+                c.get_number("r_colorcorrection"),
+                c.get_number("r_colorcorrection_strength"),
+                c.get_number("r_colorsimulation"),
+            )
+        });
         let uniforms = self.frame_fog();
         if self.applied_fog != Some(uniforms) {
             self.applied_fog = Some(uniforms);

@@ -2582,6 +2582,31 @@ fit and did not count the parity harness.
 
 Newest first. Each entry names the commits and what proves them.
 
+### Milestone 11, twenty-first slice: colour-blindness correction (November 3, 2026)
+
+- **shagger e3b30ec.** `effects/color_correction_post_process.rs` ports
+  `ColorCorrectionPostProcess`'s matrices: `r_colorcorrection` 1 to 3
+  daltonizes for protanopia, deuteranopia or tritanopia at
+  `r_colorcorrection_strength`, and `r_colorsimulation` shows what that
+  eye sees after it. SHAG runs it as its own pass last on the camera; here
+  `ImageProcessingConfiguration::color_matrix` applies it to image
+  processing's encoded output last (decoded with 2.2, mapped, encoded),
+  the same per pixel (a change noted in the Babylon file's header).
+- **wash-fps-rust.** `MapRenderer::prepare` reads the three cvars each
+  frame, so the settings screen and the console apply at once.
+- **Skipped, with reasons.** Fog volumes (`BspFogVolume`) are built only by
+  the `bsp fog apply` console command, and no shipped map's shaders have
+  `fogparms`. No shipped map has a `misc_skyportal` or cloud layers
+  (every `skyparms` has `-` for its cloud height), so `SkyPortal` and the
+  sky clouds wait for a map that needs them. Bloom, glow, chromatic
+  aberration and cel outlines are all off at SHAG's defaults (`r_bloom`
+  0 zeroes the bloom weight, `r_glow` 0, chromatic aberration disabled,
+  `r_cel_outlines` 0).
+- **Proof.** Unit tests of the matrices (off, the correction's rows, the
+  simulation after the correction) and of the uniform rows. Screenshots
+  of amphi1 plain, simulated deuteranopia, and corrected then simulated
+  (`rust-port/color-correction-amphi1.png`).
+
 ### Milestone 11, twentieth slice: lava's ripple rings (November 3, 2026)
 
 - **wash-fps-rust.** `liquid/client/liquid_ring_renderer.rs` draws the
