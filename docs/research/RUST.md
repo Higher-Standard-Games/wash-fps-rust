@@ -2584,7 +2584,7 @@ Newest first. Each entry names the commits and what proves them.
 
 ### Milestone 11, first slice: world fog (November 3, 2026)
 
-- **shagger `480bc49`.** `loader/bsp/world_fog.rs` ports `WorldFog.ts`
+- **shagger `480bc49` and `917734c`.** `loader/bsp/world_fog.rs` ports `WorldFog.ts`
   (worldspawn `fog`, `fog_height`, `fog_sun` and `fog_sky`, read as
   Warfork's r_q3bsp.c reads them). `rendering/world_fog_controller.rs`
   ports `WorldFogController.ts` (`resolveWorldFog`, `r_fog` and the
@@ -2592,17 +2592,19 @@ Newest first. Each entry names the commits and what proves them.
   `atmFogFactorAt`. `fog.wgsl` is `AtmosphericFogGlsl.ts`'s evaluation and
   the plugin's apply: the world shader fogs every pass by its blend (mix,
   additive passes fade, filter passes go toward white) in display space,
-  and the sky blends into the fog at its shader's sky height. Scene fog is
-  Warfork's fog here; Babylon's EXP fog is not needed.
+  and the sky blends into the fog at its shader's sky height. Models fog
+  by their pipeline's blend (an override constant), the explosion fire
+  mixes toward the fog while its sparks fade, and every weapon effect fades
+  by the fog in front of it (`bindAtmosphericFog`, `atmFogFadeGlsl`). Scene
+  fog is Warfork's fog here; Babylon's EXP fog is not needed.
 - **wash-fps-rust.** The map renderer reads worldspawn and the first sky
   shader's height at load and re-resolves the fog when a cvar changes.
 - **Proof.** Unit tests on the parsing and the cvar rules. Screenshots of
   washoi_dm7 with `r_fog 1` and `0` differ only where the height band puts
   fog (up to 71 levels on the far walls and sky), and washoi_dm5 draws its
   violet fog.
-- **Not yet.** Fog on models, the view model and the effect batches
-  (`bindAtmosphericFog`), the sky portal's scale, and fog volumes and the
-  underwater view, which borrow the scene fog.
+- **Not yet.** The sky portal's scale, and fog volumes and the underwater
+  view, which borrow the scene fog.
 
 ### Milestone 12: highlight reels (November 3, 2026)
 

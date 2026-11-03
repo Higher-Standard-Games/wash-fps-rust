@@ -959,6 +959,8 @@ impl MapRenderer {
             self.fog_serial = Some(serial);
             let uniforms = self.fog.uniforms();
             self.world.set_fog(uniforms);
+            self.models.set_fog(uniforms);
+            self.explosions.set_fog(uniforms);
             if let Some(sky) = &mut self.sky {
                 sky.set_fog(uniforms);
             }
@@ -999,6 +1001,7 @@ impl MapRenderer {
             camera_position: camera.position,
             viewport: size,
             time: self.effect_time,
+            fog: self.fog.uniforms(),
         };
         self.hitscan.streaks.prepare(gpu, &frame);
         self.hitscan.muzzle_flashes.prepare(gpu, &frame);
