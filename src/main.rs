@@ -1,3 +1,7 @@
+// A release build on Windows is the game a player double-clicks: no console
+// window behind it. Debug builds keep the console for the tools' output.
+#![cfg_attr(all(windows, not(debug_assertions)), windows_subsystem = "windows")]
+
 //! The native client binary. Run without arguments, it is the game: it
 //! brings the game data up to date (`data_sync_screen`), then opens the
 //! menu on the region's lobby. The modes below are the tools the port was

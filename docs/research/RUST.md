@@ -2638,9 +2638,14 @@ Newest first. Each entry names the commits and what proves them.
   mid-download (`rust-port/data-download-screen.png`). The Linux package
   built here; the macOS and Windows jobs have not run yet (they need the
   `SHAGGER_READ_TOKEN` secret, like CI).
+- **Afterwards.** The window takes the game's icon (`assets/icon`), and a
+  release build on Windows has no console window behind it (debug builds
+  keep one for the tools' output). `washoi --offline` on Xvfb opened
+  straight onto the menu, logged in to `wss://eu.washoi.net/lobby` with a
+  new account (`rust-port/plain-start-menu.png`).
 - **Not yet.** An update check (where builds are published is the
-  user's call), Windows' exe icon and a console-free Windows build, and
-  per-map lazy downloads.
+  user's call), the Windows exe's own icon resource, and per-map lazy
+  downloads.
 
 ### Milestone 12, second slice: the demo player's own controls (November 3, 2026)
 

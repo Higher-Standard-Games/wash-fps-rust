@@ -884,10 +884,21 @@ pub struct OpenWindow {
 }
 
 /// Opens Washoi's window, 1280 × 720, with a non-sRGB surface in vsync.
+/// The game's icon for the title bar and the task bar (macOS takes the
+/// app bundle's instead).
+fn window_icon() -> Option<winit::window::Icon> {
+    let image = image::load_from_memory(include_bytes!("../assets/icon/washoi-128.png"))
+        .ok()?
+        .into_rgba8();
+    let (width, height) = image.dimensions();
+    winit::window::Icon::from_rgba(image.into_raw(), width, height).ok()
+}
+
 pub fn open_window(event_loop: &ActiveEventLoop) -> Result<OpenWindow, String> {
     let attributes = Window::default_attributes()
         .with_title("Washoi")
-        .with_inner_size(PhysicalSize::new(1280, 720));
+        .with_inner_size(PhysicalSize::new(1280, 720))
+        .with_window_icon(window_icon());
     let window = Arc::new(event_loop.create_window(attributes).map_err(|e| e.to_string())?);
     let instance = wgpu::Instance::new(wgpu::InstanceDescriptor::new_with_display_handle_from_env(Box::new(
         event_loop.owned_display_handle(),
