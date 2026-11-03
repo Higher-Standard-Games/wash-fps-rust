@@ -8,6 +8,7 @@ pub use shagger;
 pub mod client;
 pub mod console;
 pub mod liquid;
+pub mod regions;
 pub mod server;
 pub mod shared;
 pub mod simulation;
@@ -70,14 +71,19 @@ pub fn cache_dir() -> Option<std::path::PathBuf> {
     Some(base.join("washoi"))
 }
 
-/// The regions the game runs in (RUST.md 4, 20.1), the first the default.
+/// The regions built in (RUST.md 4, 20.1), the first the default; the game
+/// reads the current list from the site ([`regions`]).
 pub const REGIONS: [&str; 2] = ["eu", "us"];
 
-/// A region's lobby and published data.
+/// A region's lobby and published data: from the list read last from the
+/// site, else the built-in one.
 #[must_use]
-pub fn region_urls(region: &str) -> (String, String) {
-    (
-        format!("wss://{region}.washoi.net/lobby"),
-        format!("https://{region}.washoi.net/data"),
-    )
+pub fn region_urls(region: &str) -> Option<(String, String)> {
+    let dir = config_dir();
+    regions::cached(dir.as_deref())
+        .unwrap_or_else(regions::builtin)
+        .into_iter()
+        .chain(regions::builtin())
+        .find(|r| r.id == region && r.live())
+        .and_then(|r| Some((r.lobby_url?, r.data_url?)))
 }

@@ -80,6 +80,7 @@ mod data_sync_screen;
 mod demo_overlay;
 mod menu;
 mod reel_overlay;
+mod region_screen;
 mod view;
 mod window;
 
@@ -106,6 +107,7 @@ fn usage() -> ! {
         "washoi {}\n\
          usage: washoi [--region eu|us] [--data DIR] [--offline]\n\
          \x20      washoi sync [--region eu|us] [--data DIR]\n\
+         \x20      washoi regions [--screenshot FILE.png [--seconds N] [--size WxH]]\n\
          \x20      washoi --version\n\
          \x20      washoi view <map> [--data DIR] [--spawn N] [--screenshot FILE.png] [--size WxH] [--time T] [--at X,Y,Z,YAW] [--pitch DEG] [--player X,Y,Z,YAW[,CLIP[,FRAME[,quad][,WEAPON]]]]... [--projectile ID,X,Y,Z,YAW[,PITCH]]... [--explosion ID,X,Y,Z,AGE]... [--weapon ID [--aim] [--quad]] [--no-cull] [--no-lights] [--seconds N]\n\
          \x20      washoi demo <file.shagdemo> [--data DIR] [--screenshot FILE.png] [--size WxH] [--time T] [--at X,Y,Z,YAW] [--pitch DEG] [--follow N] [--reel MINUTES] [--audio-out FILE.wav] [--scoreboard] [--seconds N]\n\
@@ -426,7 +428,7 @@ fn main() {
         let version: &'static str = Box::leak(washoi::version_line().into_boxed_str());
         shagger::core::crash_report::install("washoi", version, dir.join("crashes"));
     }
-    let url = if matches!(mode.as_str(), "game" | "sync") {
+    let url = if matches!(mode.as_str(), "game" | "sync" | "regions") {
         String::new()
     } else {
         args.next().unwrap_or_else(|| usage())
@@ -455,6 +457,7 @@ fn main() {
         ),
         "lobby" => lobby(&url, &o),
         "game" => game(o),
+        "regions" => regions_mode(&o),
         "sync" => {
             let (_, data) = region(&o);
             let dir = game_data_dir(&o);
@@ -488,19 +491,45 @@ fn main() {
 /// The window's options from the command line.
 /// Where the menu keeps the account key when `--key-file` does not say: the
 /// browser keeps it in local storage, which outlives a session the same way.
-/// The region's lobby and data URLs: `--region`, else `WASHOI_REGION`,
-/// else the first of [`washoi::REGIONS`].
+/// The region named by `--region`, else `WASHOI_REGION`.
+fn named_region(o: &Options) -> Option<String> {
+    o.region.clone().or_else(|| std::env::var("WASHOI_REGION").ok())
+}
+
+/// The region's lobby and data URLs: the one named, else the one launched
+/// last time, else the first of [`washoi::REGIONS`].
 fn region(o: &Options) -> (String, String) {
-    let region = o
-        .region
-        .clone()
-        .or_else(|| std::env::var("WASHOI_REGION").ok())
+    let region = named_region(o)
+        .or_else(|| washoi::regions::saved_choice(config_dir().as_deref()))
         .unwrap_or_else(|| washoi::REGIONS[0].to_owned());
-    if !washoi::REGIONS.contains(&region.as_str()) {
-        eprintln!("unknown region {region}: one of {}", washoi::REGIONS.join(", "));
+    washoi::region_urls(&region).unwrap_or_else(|| {
+        eprintln!("unknown region {region}: `washoi regions` lists them");
         std::process::exit(2);
+    })
+}
+
+/// `washoi regions`: the list from the site and each region's ping, or the
+/// picker's screenshot.
+fn regions_mode(o: &Options) -> i32 {
+    let dir = config_dir();
+    if let Some(path) = &o.screenshot {
+        let size = o.size.unwrap_or((1280, 720));
+        return match region_screen::screenshot(dir.as_deref(), path, size, o.seconds.unwrap_or(4.0)) {
+            Ok(()) => 0,
+            Err(why) => {
+                eprintln!("region: {why}");
+                1
+            }
+        };
     }
-    washoi::region_urls(&region)
+    let cancel = std::sync::atomic::AtomicBool::new(false);
+    for r in washoi::regions::load(dir.as_deref(), &cancel) {
+        let ping = r.lobby_url.as_deref().map_or("not live".to_owned(), |url| {
+            washoi::regions::ping(url).map_or("no reply".to_owned(), |ms| format!("{ms} ms"))
+        });
+        println!("{} {} {} {ping}", r.id, r.name, r.host);
+    }
+    0
 }
 
 /// Where the game keeps its packages: `--data`, else the cache directory's
@@ -516,7 +545,22 @@ fn game_data_dir(o: &Options) -> PathBuf {
 /// The game as a player starts it: the data brought up to date, then the
 /// menu on the region's lobby, with the packages from that data.
 fn game(mut o: Options) -> i32 {
-    let (lobby, data) = region(&o);
+    // The region picker first, unless the command line names one.
+    let (lobby, data) = if named_region(&o).is_some() {
+        region(&o)
+    } else {
+        match region_screen::run(config_dir().as_deref(), o.offline) {
+            Ok(Some(r)) => match (r.lobby_url, r.data_url) {
+                (Some(lobby), Some(data)) => (lobby, data),
+                _ => return 1,
+            },
+            Ok(None) => return 0,
+            Err(why) => {
+                eprintln!("{why}");
+                return 1;
+            }
+        }
+    };
     let dir = game_data_dir(&o);
     // `--offline` never touches the network: whatever is on disk is played.
     if o.offline && !shagger::loader::pk3::package_store::has_packages(&dir) {

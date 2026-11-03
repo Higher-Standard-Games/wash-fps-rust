@@ -93,7 +93,8 @@ pub struct LobbyChoice {
     pub reel: Option<f64>,
 }
 
-fn hsl(h: f32, s: f32, l: f32) -> egui::Color32 {
+/// A CSS `hsl()` colour, saturation and lightness in percent.
+pub fn hsl(h: f32, s: f32, l: f32) -> egui::Color32 {
     rgba(washiki::hsla(h, s, l, 1.0))
 }
 

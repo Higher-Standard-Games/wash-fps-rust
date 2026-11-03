@@ -1725,6 +1725,16 @@ configs. 20.9 says what that settles.
 - **Which region.** Data is per region. A Rust client takes its data from the
   region whose lobby it joined, because each region's index only lists that
   region's packages.
+- **Region list and picker.** The site publishes its region list as
+  `https://washoi.net/regions.json` (`publishedRegions()` in
+  `src/data/regions.ts`, version 1: id, code, name, host, pin, label side,
+  `lobbyUrl`, `dataUrl`). The game starts on a picker drawn like the site's
+  `/play` screen (`src/region_screen.rs`): it shows the list read last time at
+  once, then the site's, pings each live lobby (best of three WebSocket
+  opens, as `use-region-ping.ts`), preselects the nearest and remembers a
+  pick (`<config>/region`). `--region` or `WASHOI_REGION` skips it. A built-in
+  copy of the list covers a first start without the network, and a region
+  whose addresses are not `wss://` and `https://` is shown but not used.
 
 ### 20.2 Startup: manifest, index, then lazy packages
 
@@ -2586,6 +2596,16 @@ fit and did not count the parity harness.
 ## 23. Progress log
 
 Newest first. Each entry names the commits and what proves them.
+
+### Region picker (November 3, 2026)
+
+The native client now starts on a region screen like washoi.net's `/play`:
+the site's dot map, a card per region with its address, whether it is live
+and its ping, the nearest preselected, and Launch. The list comes from the
+site's new `/regions.json` (washoi.net PR 2), with the last copy read and a
+built-in one as fallbacks (section 20.1). Proved by `regions` and
+`region_screen` tests and a screenshot of the window under Xvfb
+(`washoi regions --screenshot FILE` takes one without a window).
 
 ### Second review round: data flows (November 3, 2026)
 
