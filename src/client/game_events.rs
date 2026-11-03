@@ -27,6 +27,7 @@ use std::path::Path;
 use crate::client::fps_announcer::{FpsAnnouncer, Lead, MatchMoment, fps_announcer_sound_paths};
 use crate::client::fps_bomb_audio::{FPS_BOMB_SOUND_PATHS, FpsBombAudio};
 use crate::client::fps_combat_audio::{FpsCombatAudio, fps_combat_sound_paths};
+use crate::client::fps_liquid_audio::FPS_LIQUID_SOUND_PATHS;
 use crate::client::fps_movement_audio::{FPS_MOVEMENT_SOUND_PATHS, FpsMovementAudio};
 use crate::client::fps_pickup_audio::{
     FPS_PICKUP_SOUND_PATHS, is_powerup_label, play_pickup_sound, play_powerup_pickup_sound, play_powerup_spawn_sound,
@@ -356,6 +357,7 @@ impl GameAudio {
             .chain(FPS_MOVEMENT_SOUND_PATHS)
             .chain(FPS_PICKUP_SOUND_PATHS)
             .chain(FPS_BOMB_SOUND_PATHS)
+            .chain(FPS_LIQUID_SOUND_PATHS)
             .chain(announcer.iter().map(String::as_str));
         self.sfx.preload(paths, |p| pk3.get_file(p))
     }

@@ -13,6 +13,7 @@ pub mod fps_announcer;
 pub mod fps_bomb_audio;
 pub mod fps_combat_audio;
 pub mod fps_hud;
+pub mod fps_liquid_audio;
 pub mod fps_movement_audio;
 pub mod fps_pickup_audio;
 pub mod fps_player_audio;

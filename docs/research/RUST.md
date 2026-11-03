@@ -2582,6 +2582,30 @@ fit and did not count the parity harness.
 
 Newest first. Each entry names the commits and what proves them.
 
+### Milestone 11, fourth slice: ripples and splashes (November 3, 2026)
+
+- **shagger `e11fa3b`.** `rendering/water/water_disturbances.rs` ports
+  `WaterDisturbances.ts`. The map's `LiquidSurfaceSystem` owns the
+  impulses (the TypeScript keeps one per scene), snaps each to a pool by
+  `surface_at`, ages them on the wave clock and packs each surface's own.
+- **wash-fps-rust.** `liquid/client/liquid_interaction_system.rs` ports
+  `LiquidInteractionSystem.ts`: wakes from bodies moving through the
+  surface, a splash and ring where a body crosses it (the liquid read from
+  the map, not the wire), and a splash where a projectile enters one.
+  Ripples go to the water system through a `WaterRipples` trait; lava and
+  pools it does not draw keep the ring disc. The clock is the caller's.
+  `client/fps_liquid_audio.rs` ports `FPSLiquidAudio.ts`; the crossings
+  play with the frame's other sounds and the bank is preloaded. The map
+  renderer feeds it every player and projectile of a demo or match.
+- **Proof.** Unit tests port `LiquidInteractions.test.ts` (surface
+  snapping, wakes by level and frame rate, suppression, transitions,
+  rings at the waterline and the pool's edge, the liquid's kind,
+  projectiles) and the disturbances' cap, ageing and packing. A ripple on
+  washoi_dm11's lower pool rings on the surface in a screenshot.
+- **Not yet.** Drawing the ring discs (lava), the splash crowns
+  (`SplashDroplets`), the actor reflection pass, per-liquid environment
+  cubemaps, and the underwater view.
+
 ### Milestone 11, third slice: water highlights (November 3, 2026)
 
 - **shagger `1c3b6b3`.** `lighting/map_emissive_surfaces.rs` ports

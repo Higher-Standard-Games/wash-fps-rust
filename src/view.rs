@@ -5,8 +5,12 @@
 
 use shagger::lighting::map_emissive_surfaces::{SurfaceEmission, extract_emissive_surfaces};
 use shagger::rendering::water::water_surface_lighting::{water_map_lights, water_surface_lights};
+use shagger::shared::js::js_hypot;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
+use washoi::client::fps_liquid_audio::play_liquid_crossing;
+use washoi::liquid::client::liquid_interaction_system::{LiquidInteractionSystem, WaterRipples};
+use washoi::liquid::liquid_types::LiquidKind;
 
 use shagger::animation::player_model_manager::PlayerModelVisualStyle;
 use shagger::audio::audio_v2_sfx::AudioV2Sfx;
@@ -324,6 +328,9 @@ pub fn play_view_sounds(
             .map(|(_, e, _)| DVec3::new(e.x, e.y, e.z))
     };
     audio.play_event_sounds(effects, view_entity, teams, &position, now * 1000.0);
+    for sound in renderer.liquid.take_sounds() {
+        play_liquid_crossing(&mut audio.sfx, &sound);
+    }
     audio.play_movement_sounds(view.snapshots, view_entity, teams, &mut |at| {
         renderer.ground_surface_flags(at)
     });
@@ -693,6 +700,11 @@ pub struct MapRenderer {
     pub water: Option<LiquidSurfaceSystem>,
     /// `item_time` at the water's last frame, for its clock.
     water_time: f64,
+    /// Splashes, wakes and rings where bodies and shots cross a surface
+    /// (`LocalLiquid`'s `LiquidInteractionSystem`).
+    pub liquid: LiquidInteractionSystem,
+    /// The liquid interactions' clock, in seconds.
+    liquid_clock: f64,
     pub culling: WorldCulling,
     /// Off draws every batch (`--no-cull`), for comparing.
     pub cull: bool,
@@ -775,6 +787,38 @@ impl MapRenderer {
             renderer.update(id, interp, dt, 1.0, None);
             renderer.draws(id, interp, style, &mut self.joints, &mut self.live_draws);
         }
+        // Splashes come from the water level already on the wire
+        // (`RemotePlayerRenderer`): replicate causes, derive effects.
+        self.liquid_clock += dt;
+        let gone: Vec<String> = self
+            .liquid
+            .body_ids()
+            .filter(|id| !players.iter().any(|(p, _, _)| p == id))
+            .map(str::to_owned)
+            .collect();
+        for id in gone {
+            self.liquid.forget(&id);
+        }
+        let shot_world = self.shot_world.as_ref();
+        let contents = |p: DVec3| {
+            shot_world.map_or(0, |w| {
+                w.point_contents(shagger::babylon::maths::math_vector::Vector3::new(p.x, p.y, p.z), None) as u32
+            })
+        };
+        let collision: Option<&dyn Fn(DVec3) -> u32> = shot_world.is_some().then_some(&contents);
+        for (id, interp, _) in players {
+            self.liquid.notify(
+                id,
+                interp.water_level.unwrap_or(0),
+                LiquidKind::Water,
+                DVec3::new(interp.x, interp.y, interp.z),
+                interp.vy,
+                false,
+                self.liquid_clock,
+                collision,
+                self.water.as_mut().map(|w| w as &mut dyn WaterRipples),
+            );
+        }
     }
 
     /// Draws the projectiles in flight this frame, facing along their
@@ -803,6 +847,30 @@ impl MapRenderer {
             if let Some((def, mut trail)) = self.live_trails.remove(&id) {
                 trail.reset();
                 self.spare_trails.push((def.id, trail));
+            }
+        }
+        // A shot into a pool splashes (`ServerProjectiles`).
+        let gone: Vec<String> = self
+            .liquid
+            .projectile_ids()
+            .filter(|id| !projectiles.iter().any(|p| &p.id == id))
+            .map(str::to_owned)
+            .collect();
+        for id in gone {
+            self.liquid.forget_projectile(&id);
+        }
+        if let Some(world) = self.shot_world.as_ref() {
+            let contents = |p: DVec3| {
+                world.point_contents(shagger::babylon::maths::math_vector::Vector3::new(p.x, p.y, p.z), None) as u32
+            };
+            for p in projectiles {
+                self.liquid.notify_projectile(
+                    &p.id,
+                    DVec3::from(p.position),
+                    js_hypot(&p.velocity),
+                    Some(&contents),
+                    self.water.as_mut().map(|w| w as &mut dyn WaterRipples),
+                );
             }
         }
         for p in projectiles {
@@ -1021,6 +1089,7 @@ impl MapRenderer {
         if let Some(sky) = &self.sky {
             sky.prepare(gpu, camera, aspect);
         }
+        self.liquid.update(self.item_time - self.water_time);
         if let Some(water) = &mut self.water {
             water.update(self.item_time - self.water_time);
             self.water_time = self.item_time;
@@ -1518,6 +1587,8 @@ pub fn build_renderer(gpu: &Gpu, map: &mut LoadedMap, output_format: wgpu::Textu
         fog_serial: None,
         water,
         water_time: 0.0,
+        liquid: LiquidInteractionSystem::default(),
+        liquid_clock: 0.0,
         culling,
         cull: true,
         lights,
