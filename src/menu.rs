@@ -111,6 +111,12 @@ fn clear(encoder: &mut wgpu::CommandEncoder, view: &wgpu::TextureView) {
 }
 
 impl ApplicationHandler for MenuApp {
+    /// The loop is ending, perhaps with the process (Cmd+Q): the settings
+    /// upload and the lobby goodbye happen here, as when the menu closes.
+    fn exiting(&mut self, _: &ActiveEventLoop) {
+        self.panel.leave();
+    }
+
     fn resumed(&mut self, event_loop: &ActiveEventLoop) {
         if self.open.is_some() {
             return;

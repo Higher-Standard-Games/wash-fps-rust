@@ -519,15 +519,21 @@ impl LivePlay {
             return;
         }
         let mut input = *input;
-        let frozen = self.feed.match_state.is_movement_frozen();
+        // `Game.ts` order: the round freeze strips first, so no fire or
+        // jump during it asks a dead player back; then death strips.
+        if self.feed.match_state.is_movement_frozen() {
+            input = PlayInput {
+                yaw: input.yaw,
+                pitch: input.pitch,
+                ..PlayInput::default()
+            };
+        }
         if !self.alive {
             // Fire or jump asks to come back, once the cooldown is over.
             if (input.fire || input.jump) && !self.respawn_requested && now - self.died_at >= RESPAWN_COOLDOWN_MS {
                 self.session.send(SessionRequest::RequestSpawn);
                 self.respawn_requested = true;
             }
-        }
-        if !self.alive {
             // The dead keep their aim, use and weapon choice (`Game.ts`
             // strips the movement and attack buttons only).
             input = PlayInput {
@@ -535,14 +541,6 @@ impl LivePlay {
                 pitch: input.pitch,
                 use_key: input.use_key,
                 weapon_slot: input.weapon_slot,
-                ..PlayInput::default()
-            };
-        }
-        if frozen {
-            // The round freeze strips use and weapon switching too.
-            input = PlayInput {
-                yaw: input.yaw,
-                pitch: input.pitch,
                 ..PlayInput::default()
             };
         }

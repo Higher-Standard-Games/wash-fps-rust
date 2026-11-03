@@ -77,10 +77,22 @@ pub enum SyncOutcome {
 /// its own, reporting into `phase`.
 fn start(base_url: String, dir: PathBuf, cancel: Arc<AtomicBool>, phase: Arc<Mutex<Phase>>) {
     std::thread::spawn(move || {
-        let set = |p: Phase| *phase.lock().expect("sync phase") = p;
-        let result = sync_packages(&base_url, &dir, &PLAYLISTS, &cancel, &mut |p| {
-            set(Phase::Running(p.clone()));
-        });
+        let set = |p: Phase| {
+            if let Ok(mut slot) = phase.lock() {
+                *slot = p;
+            }
+        };
+        // A panic in the sync is a failure the screen can offer a retry
+        // for, not a spinner forever.
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            sync_packages(&base_url, &dir, &PLAYLISTS, &cancel, &mut |p| {
+                set(Phase::Running(p.clone()));
+            })
+        }));
+        let Ok(result) = result else {
+            set(Phase::Failed("the download stopped unexpectedly".into(), on_disk(&dir)));
+            return;
+        };
         let end = match result {
             Ok(report) => {
                 println!(

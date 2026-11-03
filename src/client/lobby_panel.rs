@@ -215,10 +215,10 @@ fn beside(file: &std::path::Path, suffix: &str) -> std::path::PathBuf {
 
 /// Writes the key through a file beside it, so a crash leaves the old key or
 /// the whole new one.
+/// Flushed to disk before the rename: an empty key file after a power cut
+/// would make a new account.
 pub fn save_key(file: &std::path::Path, key: &str) -> std::io::Result<()> {
-    let part = beside(file, "part");
-    std::fs::write(&part, key)?;
-    std::fs::rename(&part, file)
+    shagger::core::atomic_file::write_atomic(file, key.as_bytes())
 }
 
 fn now_seed() -> u64 {
@@ -304,12 +304,32 @@ pub struct LobbyPanel {
 /// The account key this run logged in with last, which outlives a panel:
 /// when the key file cannot be read or written, a return to the menu after
 /// a match still logs back into the same account.
-static RUN_KEY: std::sync::Mutex<Option<String>> = std::sync::Mutex::new(None);
+/// With it, what the key file held when the run's key could not be saved
+/// there: that stale key loses to the run's, any other key in the file (put
+/// there by hand) wins.
+static RUN_KEY: std::sync::Mutex<Option<(String, Option<String>)>> = std::sync::Mutex::new(None);
 
-fn remember_run_key(key: Option<&str>) {
+fn remember_run_key(key: Option<&str>, stale: Option<String>) {
     if let Ok(mut k) = RUN_KEY.lock() {
-        *k = key.map(str::to_owned);
+        *k = key.map(|key| (key.to_owned(), stale));
     }
+}
+
+/// The key to log in with: the file's, unless it is the stale one this
+/// run's key could not replace.
+fn choose_key(file: Option<String>, run: Option<(String, Option<String>)>) -> Option<String> {
+    match (file, run) {
+        (Some(file), Some((run, stale))) if stale.as_deref() == Some(file.as_str()) => Some(run),
+        (Some(file), _) => Some(file),
+        (None, run) => run.map(|(key, _)| key),
+    }
+}
+
+fn read_key(file: &std::path::Path) -> Option<String> {
+    std::fs::read_to_string(file)
+        .ok()
+        .map(|k| k.trim().to_owned())
+        .filter(|k| !k.is_empty())
 }
 
 impl LobbyPanel {
@@ -324,9 +344,7 @@ impl LobbyPanel {
             }
             _ => (None, false),
         };
-        // The file wins: a key put there by hand replaces this run's. The
-        // run's key stands in only when the file could not give one.
-        let key = key.or_else(|| RUN_KEY.lock().ok().and_then(|k| k.clone()));
+        let key = choose_key(key, RUN_KEY.lock().ok().and_then(|k| k.clone()));
         Self {
             client: LobbyClient::connect(url),
             key,
@@ -508,7 +526,7 @@ impl LobbyPanel {
                 }
                 _ => {
                     self.key = None;
-                    remember_run_key(None);
+                    remember_run_key(None, None);
                     self.client.auth(None);
                 }
             }
@@ -559,17 +577,20 @@ impl LobbyPanel {
                     // Kept for this run whatever the disk says (`writeStorage`),
                     // so a reconnect logs back in rather than making another account.
                     self.key = Some(new_key.clone());
-                    remember_run_key(Some(new_key));
+                    let mut stale = None;
                     if let Some(file) = &self.key_file {
                         if self.key_unreadable {
                             self.notice = format!(
                                 "{} could not be read, so this new account's key is not saved",
                                 file.display()
                             );
+                            stale = read_key(file);
                         } else if let Err(e) = save_key(file, new_key) {
                             self.notice = format!("Could not save the new account's key: {e}");
+                            stale = read_key(file);
                         }
                     }
+                    remember_run_key(Some(new_key), stale);
                 }
                 self.login_failures = 0;
                 self.retry_at = None;
@@ -1041,6 +1062,15 @@ impl LobbyPanel {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_stale_key_file_loses_to_the_run_and_a_new_one_wins() {
+        let run = || Some(("new".to_owned(), Some("old".to_owned())));
+        assert_eq!(choose_key(Some("old".into()), run()).as_deref(), Some("new"));
+        assert_eq!(choose_key(Some("by hand".into()), run()).as_deref(), Some("by hand"));
+        assert_eq!(choose_key(None, run()).as_deref(), Some("new"));
+        assert_eq!(choose_key(Some("file".into()), None).as_deref(), Some("file"));
+    }
 
     #[test]
     fn retry_waits_match_the_browsers() {

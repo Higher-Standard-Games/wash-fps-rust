@@ -162,10 +162,7 @@ pub fn save_choice(config_dir: Option<&Path>, id: &str) {
 }
 
 fn write_whole(path: &Path, text: &str) -> std::io::Result<()> {
-    let mut part = path.as_os_str().to_os_string();
-    part.push(".part");
-    std::fs::write(&part, text)?;
-    std::fs::rename(&part, path)
+    shagger::core::atomic_file::write_atomic(path, text.as_bytes())
 }
 
 /// `use-region-ping`'s attempts and how long each may take.

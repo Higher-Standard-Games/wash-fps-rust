@@ -1115,9 +1115,46 @@ pub fn run_on_event_loop(app: &mut impl ApplicationHandler) -> Result<(), String
         let event_loop = slot.as_mut().expect("made above");
         event_loop.set_control_flow(ControlFlow::Poll);
         event_loop
-            .run_app_on_demand(app)
+            .run_app_on_demand(&mut Exiting(app))
             .map_err(|e| format!("event loop: {e}"))
     })
+}
+
+/// Every screen's handler, with one addition: when the system ends the
+/// process from inside the loop (Cmd+Q on macOS terminates the app there,
+/// so nothing after the loop runs), the settings still on their way to
+/// disk land first.
+struct Exiting<'a, A>(&'a mut A);
+
+impl<A: ApplicationHandler> ApplicationHandler for Exiting<'_, A> {
+    fn new_events(&mut self, event_loop: &ActiveEventLoop, cause: winit::event::StartCause) {
+        self.0.new_events(event_loop, cause);
+    }
+    fn resumed(&mut self, event_loop: &ActiveEventLoop) {
+        self.0.resumed(event_loop);
+    }
+    fn user_event(&mut self, event_loop: &ActiveEventLoop, event: ()) {
+        self.0.user_event(event_loop, event);
+    }
+    fn window_event(&mut self, event_loop: &ActiveEventLoop, window_id: WindowId, event: WindowEvent) {
+        self.0.window_event(event_loop, window_id, event);
+    }
+    fn device_event(&mut self, event_loop: &ActiveEventLoop, device_id: DeviceId, event: DeviceEvent) {
+        self.0.device_event(event_loop, device_id, event);
+    }
+    fn about_to_wait(&mut self, event_loop: &ActiveEventLoop) {
+        self.0.about_to_wait(event_loop);
+    }
+    fn suspended(&mut self, event_loop: &ActiveEventLoop) {
+        self.0.suspended(event_loop);
+    }
+    fn exiting(&mut self, event_loop: &ActiveEventLoop) {
+        self.0.exiting(event_loop);
+        shagger::core::atomic_file::flush_pending(Duration::from_secs(2));
+    }
+    fn memory_warning(&mut self, event_loop: &ActiveEventLoop) {
+        self.0.memory_warning(event_loop);
+    }
 }
 
 /// A window with a wgpu surface on it, configured.
@@ -1365,6 +1402,8 @@ pub fn run(
         }
     }
     match app.error {
+        // Before a frame was drawn it never started (the window would not open).
+        Some(why) if app.frames == 0 => Err(why),
         Some(why) => Err(format!("The match stopped: {why}")),
         None => Ok(0),
     }

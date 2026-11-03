@@ -2643,6 +2643,43 @@ fit and did not count the parity harness.
 
 Newest first. Each entry names the commits and what proves them.
 
+### Fifth review round: round 4's fixes, threads and shutdown, more fuzzing (November 3, 2026)
+
+Two reviewers, one on round 4's commits and one across every thread the
+game starts, and fuzzing of what round 4 left out (shagger `bbae078`,
+wash-fps-rust after `7708648`):
+
+- **Threads and shutdown.** The lobby and network workers end their tokio
+  runtimes with `shutdown_background` and their `Drop`s wait at most
+  1.5 s (`core::join::join_within`): a name lookup the OS will not cut
+  short (offline, a captive portal) no longer freezes the window when the
+  menu reconnects or a match is left. Every screen's event loop goes
+  through a wrapper whose `exiting` flushes pending settings, and the
+  menu's `exiting` does its settings upload, so Cmd+Q on macOS (which ends
+  the process inside the loop) loses nothing. The crash hook flushes too,
+  and a worker's panic is reported as that thread's, not as the game's. A
+  panic in the data sync becomes a failure with Retry, not a spinner; a
+  music thread that ends any way marks its track ended. The key file,
+  the region choice and downloaded demos are flushed to disk before they
+  are renamed (`write_atomic`); part files carry the process id.
+- **Round 4's fixes.** The key-file rule is now exact: the file's key
+  wins unless it is the stale one this run's new key could not replace
+  (a failed save no longer makes a second new account). The round freeze
+  strips input before the respawn check, as `Game.ts` does, so a dead
+  player cannot ask back in during it. A window that fails to open says
+  the match could not start. The render path got the bounds the
+  collision path had: patch and mesh-vertex capacities capped by the
+  file, emissive surfaces through `record_range`, and collision traces
+  stop 1 024 nodes deep. Renames retry only on Windows access-denied or
+  sharing violations; repeated `StopAll` commands collapse.
+- **Fuzzing.** New targets: the package index (with a manifest that
+  matches its hash, so the records are reached), config files and console
+  lines, emissive surfaces, a lump-aware BSP mutator that writes boundary
+  values inside the lumps, and wash-fps-rust's `tests/fuzz_snapshots.rs`
+  (SHAG's golden encodings of every event kind, damaged, decoded with
+  and without a baseline and fed through `SnapshotFeed`). About 6.4
+  million inputs found nothing.
+
 ### Fourth review round: the round 3 fixes, fuzzing, soak (November 3, 2026)
 
 Three parts (shagger `3ceede6`, wash-fps-rust after `db33566`):

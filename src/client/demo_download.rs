@@ -165,9 +165,7 @@ impl DemoDownload {
         let dir = demo_cache_dir().ok_or_else(|| std::io::Error::other("no config folder"))?;
         std::fs::create_dir_all(&dir)?;
         let path = dir.join(&self.filename);
-        let partial = dir.join(format!("{}.part", self.filename));
-        std::fs::write(&partial, bytes)?;
-        std::fs::rename(&partial, &path)?;
+        shagger::core::atomic_file::write_atomic(&path, bytes)?;
         Ok(path)
     }
 
