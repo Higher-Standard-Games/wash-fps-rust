@@ -735,6 +735,10 @@ impl App {
                     s.config.height as f32,
                 );
                 hud.prepare(&s.gpu);
+                // `FPSHud`: `setAmmoCount(currentClip(state))`.
+                if let Some(view_model) = &mut s.renderer.view_model {
+                    view_model.ammo = hud.state.current_clip();
+                }
                 // The post-game opens up: the mouse comes back for the way
                 // home, and the chat is ready (`FPSHud`).
                 let offered = hud.scoreboard.return_offered();

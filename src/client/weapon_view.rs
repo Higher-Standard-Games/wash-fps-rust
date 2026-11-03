@@ -5,6 +5,7 @@
 //! [`ModelRenderer`] with the weapon camera's projection, lights and
 //! outlines.
 
+use shagger::core::cvar::with_cvars;
 use shagger::loader::model::gltf_model::GltfModel;
 use shagger::loader::pk3::pk3_loader::Pk3Loader;
 use shagger::rendering::camera::Camera;
@@ -13,6 +14,8 @@ use shagger::rendering::gpu::Gpu;
 use shagger::rendering::model_renderer::{ModelDraw, ModelHandle, ModelMaterialMode, ModelRenderer, Outline};
 use shagger::rendering::wgpu;
 use shagger::shared::js::js_round;
+use shagger::ui::font::Font;
+use shagger::weapon::ammo_counter_display::{AmmoCounterDisplay, AmmoCounterTuning, parse_ammo_counter};
 use shagger::weapon::weapon_view_manager::{
     ShotStyle, ViewModelDef, WEAPON_CAMERA_MAX_Z, WEAPON_CAMERA_MIN_Z, WEAPON_OUTLINE_WIDTH, WeaponView, blade_light,
     view_material_mode, weapon_light, weapon_outline,
@@ -90,6 +93,11 @@ pub struct WeaponViewModel {
     /// `setPowerupOutlineOverride`: the outline a powerup puts on the gun
     /// in place of the black one, its width before the root's scale.
     pub powerup_outline: Option<Outline>,
+    /// The on-gun counter and its `tag_ammo`, for a model with both and an
+    /// `ammoCounter` line in its `.cfg`.
+    counter: Option<(AmmoCounterDisplay, Mat4)>,
+    /// `setAmmoCount`: the clip the counter shows.
+    pub ammo: f64,
 }
 
 /// `FPSPlayer`'s quad outline on the gun: the quad colour, its width
@@ -118,6 +126,14 @@ impl WeaponViewModel {
         let mut renderer = ModelRenderer::new(gpu, color_format);
         let name = weapon.id;
         let handle = renderer.upload(gpu, &model, |m| view_material_mode(name, m));
+        // `setupAmmoCounter`: the cfg beside the model.
+        let counter = model.attachment_points.get("tag_ammo").and_then(|tag| {
+            let cfg = pk3.get_file(&package.replace(".glb", ".cfg"))?;
+            let config = parse_ammo_counter(&String::from_utf8_lossy(&cfg))?;
+            let font = Font::from_bytes(include_bytes!("../../assets/fonts/Orbitron-Black.ttf").to_vec()).ok()?;
+            let display = AmmoCounterDisplay::new(gpu, &mut renderer, config, &font);
+            Some((display, Mat4::from_rotation_translation(tag.rotation, tag.position)))
+        });
         Ok(Self {
             renderer,
             view: WeaponView::new(name, Some(view_model_def(weapon))),
@@ -125,6 +141,8 @@ impl WeaponViewModel {
             model,
             draws: Vec::new(),
             powerup_outline: None,
+            counter,
+            ammo: 0.0,
         })
     }
 
@@ -160,6 +178,12 @@ impl WeaponViewModel {
                 outline,
                 ..ModelDraw::new(self.handle, i, root * primitive.node_matrix)
             });
+        }
+        if let Some((counter, tag)) = &mut self.counter {
+            // `displayedAmmo | 0`.
+            counter.set_ammo(gpu, &mut self.renderer, self.ammo as i64);
+            let tuning = with_cvars(|c| AmmoCounterTuning::read(c));
+            counter.draws(root * *tag, &tuning, &mut self.draws);
         }
         let mut lights = vec![weapon_light()];
         if self.view.weapon == "blade" {

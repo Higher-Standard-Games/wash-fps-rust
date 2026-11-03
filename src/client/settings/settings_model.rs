@@ -1003,6 +1003,8 @@ pub fn register_client_cvars(cvars: &mut Cvars) {
     register_render_vars(cvars);
     // viewport/effects/*.ts: the first-person view effects.
     shagger::viewport::register_view_cvars(cvars);
+    // AmmoCounterDisplay.ts.
+    shagger::weapon::ammo_counter_display::register_ammo_counter_cvars(cvars);
     // WorldFogController.ts (MapLoader registers them at startup).
     register_fog_cvars(cvars);
     // Crosshair.ts.
