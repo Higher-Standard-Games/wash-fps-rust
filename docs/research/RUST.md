@@ -2582,6 +2582,36 @@ fit and did not count the parity harness.
 
 Newest first. Each entry names the commits and what proves them.
 
+### Milestone 11, eighth slice: the teleport effect (November 3, 2026)
+
+- **shagger 85d9a64.** `ModelDraw::alpha` overrides a blended
+  StandardMaterial's alpha per draw, and `standard.wgsl` has `vs_skinned`,
+  so a rigged mesh can wear a StandardMaterial.
+- **wash-fps-rust.** `client/teleport_effect.rs` ports `TeleportEffect.ts`:
+  a pool of four ghosts (the player model uploaded again with the flat,
+  unlit, two-sided silhouette material, each slot holding the idle clip)
+  fading in four alpha steps over 450 ms, and speed-line bursts (16-spike
+  star template, a billboarded fan and an interleaved child at 0.8 that
+  spins 0.9 rad) growing 0.5 to 1.6 at an exit or collapsing 1.9 to 0.2 at
+  an entry over 420 ms. Twelve effects at most; frames clamp at 100 ms.
+  `MapRenderer::set_live_players` spots a remote teleport as
+  RemotePlayerRenderer does (more than 256 units between frames) and marks
+  both ends with the entry sound in 3D; `LivePlay::take_teleport` carries
+  our own prediction's `onTeleport`, which turns the camera to the exit
+  yaw and plays `localTeleported` (our ghost and implosion at the entry,
+  the exit burst 90 units ahead at eye height, the sound in 2D).
+  `washoi view --teleport` holds one. CartoonHitEffect's random roll is
+  now dropped, since Babylon's billboard overrides a node's rotation (the
+  reason TeleportEffect spins a child).
+- **Approximations.** Remote ghosts are coloured by `legacyTeamColor` with
+  no team slot (the Rust renderer still draws everyone in the FFA style),
+  so by the id's character sum. The jump is measured on the interpolated
+  origin, not the hitbox's smoothed one.
+- **Proof.** Unit tests: both ends of a remote teleport, our own exit
+  burst's placement, the stepped fades, the pool's slots coming back, the
+  100 ms clamp, the bursts' growth and spin, the colour hash, the star's
+  geometry. A screenshot of a held teleport on washoi_amphi1.
+
 ### Milestone 11, seventh slice: damage numbers and cartoon hits (November 3, 2026)
 
 - **shagger 9dc9d35.** `EffectQuadBatch::textured` samples an RGBA8 image

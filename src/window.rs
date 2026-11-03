@@ -50,6 +50,7 @@ use shagger::ui::egui_layer::EguiLayer;
 use washoi::client::cinematic_demo_player::CinematicDemoPlayer;
 use washoi::client::game_events::GameAudio;
 use washoi::client::lobby_panel::install_style;
+use washoi::client::teleport_effect::TeamColor;
 use washoi::console::{ConsoleRequest, GameConsole};
 
 /// Units per second (Q3's run speed is 320).
@@ -321,6 +322,17 @@ impl App {
                     // `faceSpawn`: the spawn's facing, level.
                     self.camera.yaw = yaw as f32;
                     self.camera.pitch = 0.0;
+                }
+                if let Some(t) = p.take_teleport() {
+                    // `setViewYaw(exitYaw)`, then `localTeleported`.
+                    self.camera.yaw = t.exit_yaw as f32;
+                    s.renderer.teleports.local_teleported(
+                        DVec3::new(t.from.x, t.from.y, t.from.z),
+                        DVec3::new(t.to.x, t.to.y, t.to.z),
+                        t.entry_yaw,
+                        t.exit_yaw,
+                        TeamColor::Alpha,
+                    );
                 }
                 if let Some(eye) = p.eye() {
                     self.camera.position = Vec3::new(eye.x as f32, eye.y as f32, eye.z as f32);

@@ -207,7 +207,9 @@ impl CartoonHitRenderer {
             let p = effect.position();
             let mut instance = [0.0f32; 20];
             instance[..4].copy_from_slice(&[p.x as f32, p.y as f32, p.z as f32, effect.scale() as f32]);
-            instance[4..8].copy_from_slice(&[effect.rotation as f32, effect.visibility() as f32, 0.0, 0.0]);
+            // Babylon's billboard replaces the node's rotation, so the random
+            // roll never shows (TeleportEffect spins a child for that reason).
+            instance[4..8].copy_from_slice(&[0.0, effect.visibility() as f32, 0.0, 0.0]);
             instance[8..12].copy_from_slice(rect);
             self.instances.push(instance);
         }

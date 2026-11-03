@@ -39,5 +39,6 @@ pub mod remote_player_logic;
 pub mod remote_player_renderer;
 pub mod settings;
 pub mod snapshot_feed;
+pub mod teleport_effect;
 pub mod v2_network_client;
 pub mod weapon_view;

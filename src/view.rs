@@ -12,6 +12,7 @@ use std::path::{Path, PathBuf};
 use washoi::client::cartoon_hit_effect::{CartoonHitEffect, CartoonHitRenderer};
 use washoi::client::damage_numbers::{DamageNumberRenderer, DamageNumbers};
 use washoi::client::fps_liquid_audio::play_liquid_crossing;
+use washoi::client::teleport_effect::{TeamColor, TeleportEffect, TeleportRenderer, legacy_team_color, play_tele_in};
 use washoi::liquid::client::liquid_interaction_system::{LiquidInteractionSystem, WaterRipples};
 use washoi::liquid::client::splash_droplet_renderer::SplashDropletRenderer;
 use washoi::liquid::client::underwater_view::{UnderwaterFog, UnderwaterView};
@@ -154,6 +155,7 @@ pub struct ViewOptions {
     pub explosions: Vec<ExplosionView>,
     pub effects: Vec<EffectView>,
     pub hits: Vec<HitView>,
+    pub teleports: Vec<TeleportView>,
     /// The first-person weapon to hold (`--weapon`), and whether it is
     /// aimed down its sights (`--aim`).
     pub weapon: Option<String>,
@@ -343,6 +345,9 @@ pub fn play_view_sounds(
             .map(|(_, e, _)| DVec3::new(e.x, e.y, e.z))
     };
     audio.play_event_sounds(effects, view_entity, teams, &position, now * 1000.0);
+    for sound in renderer.teleports.take_sounds() {
+        play_tele_in(&mut audio.sfx, &sound);
+    }
     for sound in renderer.liquid.take_sounds() {
         play_liquid_crossing(&mut audio.sfx, &sound);
     }
@@ -443,6 +448,22 @@ pub struct ExplosionView {
     /// Its Quake origin.
     pub origin: [f32; 3],
     /// Seconds since it went off.
+    pub age: f64,
+}
+
+/// `RemotePlayerRenderer.TELEPORT_FX_DIST_SQ`.
+const TELEPORT_FX_DIST_SQ: f64 = 256.0 * 256.0;
+
+/// A teleport held at an age (`--teleport`): a ghost and a burst at both
+/// ends, the entry's collapsing.
+#[derive(Debug, Clone, PartialEq)]
+pub struct TeleportView {
+    /// Quake origins.
+    pub from: [f64; 3],
+    pub to: [f64; 3],
+    /// Babylon yaw, radians.
+    pub yaw: f64,
+    /// Seconds since it happened.
     pub age: f64,
 }
 
@@ -600,6 +621,8 @@ pub struct LoadedMap {
     pub effects: Vec<EffectView>,
     /// Hits to hold on the map.
     pub hits: Vec<HitView>,
+    /// Teleports to hold on the map.
+    pub teleports: Vec<TeleportView>,
     /// The first-person weapon, if any.
     pub weapon: Option<String>,
     /// Load the player model for players that move (a demo or a match).
@@ -662,6 +685,7 @@ pub fn load_map(data: &Path, map: &str) -> Result<LoadedMap, String> {
         projectiles: Vec::new(),
         explosions: Vec::new(),
         hits: Vec::new(),
+        teleports: Vec::new(),
         effects: Vec::new(),
         weapon: None,
         remote_players: false,
@@ -737,6 +761,11 @@ pub struct MapRenderer {
     liquid_clock: f64,
     /// The splash crowns' spray.
     splash: SplashDropletRenderer,
+    /// Ghosts and speed-line bursts where players teleport.
+    pub teleports: TeleportEffect,
+    teleport_renderer: TeleportRenderer,
+    /// Each live player's last origin and yaw, for spotting a teleport.
+    teleport_last: HashMap<String, (DVec3, f64)>,
     /// Numbers floating over the players the one on screen hurts.
     pub damage_numbers: DamageNumbers,
     damage_number_renderer: DamageNumberRenderer,
@@ -831,6 +860,28 @@ impl MapRenderer {
             renderer.update(id, interp, dt, 1.0, None);
             renderer.draws(id, interp, style, &mut self.joints, &mut self.live_draws);
         }
+        // RemotePlayerRenderer's teleport detection: a jump of more than
+        // 256 units between frames. A player gone from the list (dead) is
+        // forgotten, so a respawn starts afresh.
+        self.teleports.update(dt);
+        self.teleport_last
+            .retain(|id, _| players.iter().any(|(p, _, _)| p == id));
+        for (id, interp, _) in players {
+            let at = DVec3::new(interp.x, interp.y, interp.z);
+            if let Some((last, last_yaw)) = self.teleport_last.insert(id.clone(), (at, interp.yaw))
+                && at.distance_squared(last) > TELEPORT_FX_DIST_SQ
+            {
+                self.teleports
+                    .player_teleported(last, at, last_yaw, interp.yaw, legacy_team_color(None, id));
+            }
+        }
+        self.teleport_renderer.advance(Some(&renderer.model), dt);
+        self.teleport_renderer.ghost_draws(
+            Some(&renderer.model),
+            &self.teleports,
+            &mut self.joints,
+            &mut self.live_draws,
+        );
         // Splashes come from the water level already on the wire
         // (`RemotePlayerRenderer`): replicate causes, derive effects.
         self.liquid_clock += dt;
@@ -1229,6 +1280,7 @@ impl MapRenderer {
         }
         self.splash
             .prepare(gpu, &frame, self.liquid.droplets().map_or(&[], |d| d.sprites()));
+        self.teleport_renderer.prepare(gpu, &frame, &self.teleports);
         self.damage_number_renderer.prepare(gpu, &frame, &self.damage_numbers);
         if let Some(cartoon) = &mut self.cartoon_hit_renderer {
             cartoon.prepare(gpu, &frame, &self.cartoon_hits);
@@ -1304,6 +1356,7 @@ impl MapRenderer {
         self.hitscan.muzzle_flashes.draw(pass);
         self.hitscan.impact_sparks.draw(pass);
         self.splash.draw(pass);
+        self.teleport_renderer.draw(pass);
         self.explosions.draw(pass);
         self.models.draw_blended(pass);
         self.damage_number_renderer.draw(pass);
@@ -1499,7 +1552,7 @@ pub fn build_renderer(gpu: &Gpu, map: &mut LoadedMap, output_format: wgpu::Textu
     }
     let mut joints = Vec::new();
     let mut remote_players = None;
-    if !map.players.is_empty() || map.remote_players {
+    if !map.players.is_empty() || map.remote_players || !map.teleports.is_empty() {
         let pk3 = &mut map.pk3;
         match RemotePlayerRenderer::load(gpu, &mut models, |path| pk3.get_file(path)) {
             Ok(mut players) => {
@@ -1516,6 +1569,27 @@ pub fn build_renderer(gpu: &Gpu, map: &mut LoadedMap, output_format: wgpu::Textu
             Err(why) => eprintln!("player model: {why}"),
         }
     }
+    let mut teleport_renderer = TeleportRenderer::new(
+        gpu,
+        format,
+        &mut models,
+        remote_players.as_ref().map(|r: &RemotePlayerRenderer| &r.model),
+    );
+    let mut teleports = TeleportEffect::new(teleport_renderer.has_ghosts());
+    for held in &map.teleports {
+        let from = babylon(held.from);
+        let to = babylon(held.to);
+        teleports.player_teleported(from, to, held.yaw, held.yaw, legacy_team_color(None, "player"));
+    }
+    if let Some(age) = map.teleports.iter().map(|t| t.age).reduce(f64::min) {
+        // Held: the clamp on a frame would cut a long age short.
+        for _ in 0..(age * 100.0).ceil() as usize {
+            teleports.update(age / (age * 100.0).ceil());
+        }
+    }
+    let player_model = remote_players.as_ref().map(|r: &RemotePlayerRenderer| &r.model);
+    teleport_renderer.advance(player_model, 0.0);
+    teleport_renderer.ghost_draws(player_model, &teleports, &mut joints, &mut model_draws);
     let mut projectiles = Vec::new();
     let mut trails = Vec::new();
     let mut lights = PointLightPool::new();
@@ -1768,6 +1842,9 @@ pub fn build_renderer(gpu: &Gpu, map: &mut LoadedMap, output_format: wgpu::Textu
         liquid,
         liquid_clock: 0.0,
         splash: SplashDropletRenderer::new(gpu, format),
+        teleports,
+        teleport_renderer,
+        teleport_last: HashMap::new(),
         damage_numbers,
         damage_number_renderer: DamageNumberRenderer::new(gpu, format, &damage_font),
         cartoon_hits,
@@ -1857,6 +1934,7 @@ pub fn run(o: &ViewOptions) -> i32 {
     map.explosions.clone_from(&o.explosions);
     map.effects.clone_from(&o.effects);
     map.hits.clone_from(&o.hits);
+    map.teleports.clone_from(&o.teleports);
     map.weapon.clone_from(&o.weapon);
     map.remote_players = feed.is_some();
     // The highlight reel: analyzed and cut before the first frame, its
@@ -1989,6 +2067,17 @@ pub fn run(o: &ViewOptions) -> i32 {
                 if let Some(yaw) = p.take_spawn_facing() {
                     camera.yaw = yaw as f32;
                     camera.pitch = 0.0;
+                }
+                if let Some(t) = p.take_teleport() {
+                    // `setViewYaw(exitYaw)`, then `localTeleported`.
+                    camera.yaw = t.exit_yaw as f32;
+                    renderer.teleports.local_teleported(
+                        DVec3::new(t.from.x, t.from.y, t.from.z),
+                        DVec3::new(t.to.x, t.to.y, t.to.z),
+                        t.entry_yaw,
+                        t.exit_yaw,
+                        TeamColor::Alpha,
+                    );
                 }
                 if let Some(eye) = p.eye() {
                     camera.position = Vec3::new(eye.x as f32, eye.y as f32, eye.z as f32);

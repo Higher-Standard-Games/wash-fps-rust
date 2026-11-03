@@ -149,11 +149,22 @@ pub struct LivePlay {
     pub weapon: String,
     pub closed: Option<String>,
     spawn_facing: Rc<Cell<Option<f64>>>,
+    teleport: Rc<Cell<Option<LocalTeleport>>>,
     was_jumppad_launching: bool,
     /// The local air, mirrored for the HUD and the gasp (`LocalLiquid`).
     pub air: LocalAirTracker,
     /// A respawn since the last [`LivePlay::take_local_liquid`].
     respawned: bool,
+}
+
+/// Our own prediction went through a teleporter (`onTeleport`): where
+/// from and to, the yaw we came in at and the exit's.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct LocalTeleport {
+    pub exit_yaw: f64,
+    pub from: Vec3,
+    pub to: Vec3,
+    pub entry_yaw: f64,
 }
 
 /// `LocalLiquid.emitLocalCrossing`'s frame: the predicted body's water level
@@ -203,6 +214,18 @@ impl LivePlay {
                     let spawn_facing = Rc::new(Cell::new(None));
                     let facing = Rc::clone(&spawn_facing);
                     predictor.on_spawn_facing(Box::new(move |yaw| facing.set(Some(yaw))));
+                    // MatchMapLoader's `onTeleport`: turn to the exit and
+                    // play the effect, on fresh predictions only.
+                    let teleport = Rc::new(Cell::new(None));
+                    let teleported = Rc::clone(&teleport);
+                    predictor.on_teleport(Box::new(move |exit_yaw, from, to, entry_yaw| {
+                        teleported.set(Some(LocalTeleport {
+                            exit_yaw,
+                            from,
+                            to,
+                            entry_yaw,
+                        }));
+                    }));
                     return Ok(Self {
                         session,
                         feed: SnapshotFeed::new(),
@@ -221,6 +244,7 @@ impl LivePlay {
                         weapon: String::new(),
                         closed: None,
                         spawn_facing,
+                        teleport,
                         was_jumppad_launching: false,
                         air: LocalAirTracker::default(),
                         respawned: false,
@@ -275,6 +299,11 @@ impl LivePlay {
     /// spawn point.
     pub fn take_spawn_facing(&self) -> Option<f64> {
         self.spawn_facing.take()
+    }
+
+    /// Our last teleport since the last call, once.
+    pub fn take_teleport(&self) -> Option<LocalTeleport> {
+        self.teleport.take()
     }
 
     /// Says `text` to everyone, or the team (`sendChat`).
