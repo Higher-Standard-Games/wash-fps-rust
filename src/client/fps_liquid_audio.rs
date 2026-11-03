@@ -3,7 +3,10 @@
 //! everyone else's in the world.
 
 use shagger::audio::audio_v2_sfx::{AudioV2Sfx, SfxPlayOptions};
+use shagger::audio::mixer::SfxChannel;
 use shagger::rendering::glam::DVec3;
+
+use crate::client::fps_player_audio::{PlayerVoiceSide, player_voice_set, player_voice_sound};
 
 use crate::liquid::liquid_types::LiquidKind;
 
@@ -51,6 +54,29 @@ pub fn splash_volume(vertical_speed: f64) -> f64 {
         return 0.0;
     }
     1f64.min(0.25 + (speed / 700.0) * 0.75)
+}
+
+/// `playDrownGasp`: 2D and local, the gasp when the lungs empty.
+pub fn play_drown_gasp(audio: &mut AudioV2Sfx) {
+    play_drown(audio, 1.0);
+}
+
+/// `playDrownTick`: quieter, each drowning hit after.
+pub fn play_drown_tick(audio: &mut AudioV2Sfx) {
+    play_drown(audio, 0.55);
+}
+
+fn play_drown(audio: &mut AudioV2Sfx, volume: f32) {
+    let path = player_voice_sound("drown", player_voice_set(PlayerVoiceSide::Ally));
+    audio.play_2d(
+        &path,
+        &SfxPlayOptions {
+            volume: Some(volume),
+            max_instances: Some(1),
+            channel: SfxChannel::Players,
+            ..SfxPlayOptions::default()
+        },
+    );
 }
 
 /// A crossing to play (`playLiquidCrossing`'s arguments).

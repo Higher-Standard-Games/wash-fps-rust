@@ -11,6 +11,8 @@
 
 use std::sync::Arc;
 use std::time::{Duration, Instant};
+use washoi::client::fps_liquid_audio::{play_drown_gasp, play_drown_tick};
+use washoi::liquid::client::local_air_tracker::AirEvent;
 
 use shagger::rendering::camera::Camera;
 use shagger::rendering::glam::{DVec3, Vec3};
@@ -332,6 +334,20 @@ impl App {
                     && let Some(audio) = &mut self.audio
                 {
                     play_jumppad_launch(&mut audio.sfx, DVec3::new(at.x, at.y, at.z), true);
+                }
+                // `LocalLiquid.emitLocalCrossing`: our own splash and air.
+                let local = p.take_local_liquid(f64::from(dt));
+                if local.respawned {
+                    s.renderer.liquid.forget("local");
+                }
+                let at = DVec3::new(local.position.x, local.position.y, local.position.z);
+                s.renderer
+                    .notify_liquid("local", local.level, at, local.vertical_speed, true);
+                if let (Some(event), Some(audio)) = (local.air, &mut self.audio) {
+                    match event {
+                        AirEvent::StartedDrowning => play_drown_gasp(&mut audio.sfx),
+                        AirEvent::DrownTick => play_drown_tick(&mut audio.sfx),
+                    }
                 }
             }
             let players = styled_players(view.players);

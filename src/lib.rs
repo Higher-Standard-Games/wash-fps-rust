@@ -8,6 +8,7 @@ pub use shagger;
 pub mod client;
 pub mod console;
 pub mod liquid;
+pub mod server;
 pub mod shared;
 pub mod simulation;
 pub mod world;

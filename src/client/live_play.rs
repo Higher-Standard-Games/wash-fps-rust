@@ -7,6 +7,7 @@
 //! Snapshots are stamped with their arrival on this machine's clock, as
 //! [`crate::client::live_watch`] does.
 
+use crate::liquid::client::local_air_tracker::{AirEvent, LocalAirTracker};
 use std::cell::Cell;
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
@@ -149,6 +150,22 @@ pub struct LivePlay {
     pub closed: Option<String>,
     spawn_facing: Rc<Cell<Option<f64>>>,
     was_jumppad_launching: bool,
+    /// The local air, mirrored for the HUD and the gasp (`LocalLiquid`).
+    pub air: LocalAirTracker,
+    /// A respawn since the last [`LivePlay::take_local_liquid`].
+    respawned: bool,
+}
+
+/// `LocalLiquid.emitLocalCrossing`'s frame: the predicted body's water level
+/// for its own splash, and what the air asks to be heard.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct LocalLiquidFrame {
+    pub level: u8,
+    pub position: Vec3,
+    pub vertical_speed: f64,
+    pub air: Option<AirEvent>,
+    /// Back from the dead: forget the body's level and refill the air.
+    pub respawned: bool,
 }
 
 impl LivePlay {
@@ -205,6 +222,8 @@ impl LivePlay {
                         closed: None,
                         spawn_facing,
                         was_jumppad_launching: false,
+                        air: LocalAirTracker::default(),
+                        respawned: false,
                     });
                 }
                 Some(SessionEvent::Host(HostEvent::Failed(why)) | SessionEvent::Closed(why)) => {
@@ -276,6 +295,29 @@ impl LivePlay {
         rising.then(|| self.predictor.position())
     }
 
+    /// The local body's liquid this frame, read from prediction rather than
+    /// the snapshot so the splash and the gasp land when the water is felt.
+    /// The dead don't breathe.
+    pub fn take_local_liquid(&mut self, dt: f64) -> LocalLiquidFrame {
+        let respawned = std::mem::take(&mut self.respawned);
+        if respawned {
+            self.air.reset();
+        }
+        let level = self.predictor.movement_state().water_level;
+        let air = if self.alive {
+            self.air.update(level, dt.min(0.1))
+        } else {
+            None
+        };
+        LocalLiquidFrame {
+            level,
+            position: self.predictor.position(),
+            vertical_speed: self.predictor.velocity().y,
+            air,
+            respawned,
+        }
+    }
+
     /// The weapon to draw in hand: none while dead or before the server
     /// says which.
     #[must_use]
@@ -332,6 +374,7 @@ impl LivePlay {
                             if !self.alive {
                                 // Back from the dead (or in for the first time).
                                 self.predictor.reset_for_respawn();
+                                self.respawned = true;
                                 self.alive = true;
                                 self.respawn_requested = false;
                             }

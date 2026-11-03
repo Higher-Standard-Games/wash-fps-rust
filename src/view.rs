@@ -807,6 +807,21 @@ impl MapRenderer {
         for id in gone {
             self.liquid.forget(&id);
         }
+        for (id, interp, _) in players {
+            self.notify_liquid(
+                id,
+                interp.water_level.unwrap_or(0),
+                DVec3::new(interp.x, interp.y, interp.z),
+                interp.vy,
+                false,
+            );
+        }
+    }
+
+    /// A body's water level this frame (`LiquidInteractionSystem.notify`),
+    /// against the map's liquids and pools: `local` is our own predicted
+    /// body, heard at our ears.
+    pub fn notify_liquid(&mut self, id: &str, level: u8, position: DVec3, vertical_speed: f64, local: bool) {
         let shot_world = self.shot_world.as_ref();
         let contents = |p: DVec3| {
             shot_world.map_or(0, |w| {
@@ -816,19 +831,17 @@ impl MapRenderer {
             })
         };
         let collision: Option<&dyn Fn(DVec3) -> u32> = shot_world.is_some().then_some(&contents);
-        for (id, interp, _) in players {
-            self.liquid.notify(
-                id,
-                interp.water_level.unwrap_or(0),
-                LiquidKind::Water,
-                DVec3::new(interp.x, interp.y, interp.z),
-                interp.vy,
-                false,
-                self.liquid_clock,
-                collision,
-                self.water.as_mut().map(|w| w as &mut dyn WaterRipples),
-            );
-        }
+        self.liquid.notify(
+            id,
+            level,
+            LiquidKind::Water,
+            position,
+            vertical_speed,
+            local,
+            self.liquid_clock,
+            collision,
+            self.water.as_mut().map(|w| w as &mut dyn WaterRipples),
+        );
     }
 
     /// Draws the projectiles in flight this frame, facing along their

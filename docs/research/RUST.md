@@ -2601,8 +2601,13 @@ Newest first. Each entry names the commits and what proves them.
 - **Proof.** Unit tests port `UnderwaterLook.test.ts` and the view's
   restore rules. A screenshot under washoi_amphi1's slime, and one just
   above it.
+- **Then.** `server/systems/liquid_world_effects.rs` ports
+  `LiquidWorldEffects.ts` (air, drowning, burns), and
+  `liquid/client/local_air_tracker.rs` mirrors the local player's air
+  from prediction: the gasp and the gurgle play, and our own body splashes
+  through `MapRenderer::notify_liquid` as `LocalLiquid` reports it.
 - **Not yet.** The weapon's underwater float (`WeaponViewManager`'s
-  `submersionAmount`), the local air tracker and drowning sounds.
+  `submersionAmount`) and the HUD's air meter.
 
 ### Milestone 11, fourth slice: ripples and splashes (November 3, 2026)
 
