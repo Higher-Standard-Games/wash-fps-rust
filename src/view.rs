@@ -83,7 +83,7 @@ use washoi::client::game_events::{EffectTargets, GameAudio, play_remote_shots};
 use washoi::client::live_play::{LivePlay, PlayInput};
 use washoi::client::live_watch::LiveWatch;
 use washoi::client::match_state_manager::MatchStateManager;
-use washoi::client::weapon_view::WeaponViewModel;
+use washoi::client::weapon_view::{WeaponViewModel, quad_view_weapon_outline};
 use washoi::shared::entities::definitions::projectiles::{PROJECTILES, projectile_def};
 use washoi::shared::net::snapshot_events::SnapshotEvent;
 
@@ -167,6 +167,8 @@ pub struct ViewOptions {
     /// aimed down its sights (`--aim`).
     pub weapon: Option<String>,
     pub aim: bool,
+    /// The gun wears the quad outline (`--quad`).
+    pub quad: bool,
     /// A demo to play on its map (`washoi demo`); `time` seeks it.
     pub demo: Option<PathBuf>,
     /// A live match to spectate (`washoi watch`): server, name, ticket.
@@ -2561,6 +2563,7 @@ pub fn run(o: &ViewOptions) -> i32 {
         }
     }
     if let Some(view_model) = &mut renderer.view_model {
+        view_model.powerup_outline = o.quad.then(|| quad_view_weapon_outline(0.0));
         // Settle the aim (and the bob, standing still) over two seconds.
         for _ in 0..120 {
             view_model.view.update(&ViewModelInput {

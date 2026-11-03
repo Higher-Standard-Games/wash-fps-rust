@@ -52,6 +52,7 @@ use washoi::client::death_camera::{DeathCamera, look_angles};
 use washoi::client::game_events::GameAudio;
 use washoi::client::lobby_panel::install_style;
 use washoi::client::teleport_effect::TeamColor;
+use washoi::client::weapon_view::quad_view_weapon_outline;
 use washoi::console::{ConsoleRequest, GameConsole};
 
 /// Units per second (Q3's run speed is 320).
@@ -435,6 +436,16 @@ impl App {
                     self.follow,
                     f64::from(dt),
                 );
+            }
+            // `FPSPlayer`: our quad puts its outline on the gun.
+            let quad = matches!(feed, Feed::Play(..))
+                && s.hud.as_mut().is_some_and(|h| {
+                    let now = h.state.now;
+                    h.state.powerups.is_active("quad", now)
+                });
+            let outline = quad.then(|| quad_view_weapon_outline(s.renderer.item_time));
+            if let Some(view_model) = &mut s.renderer.view_model {
+                view_model.powerup_outline = outline;
             }
             if let Some(hud) = &mut s.hud {
                 hud.scoreboard.held = self.held.contains(&KeyCode::Tab);

@@ -10,13 +10,16 @@ use shagger::loader::pk3::pk3_loader::Pk3Loader;
 use shagger::rendering::camera::Camera;
 use shagger::rendering::glam::{DVec3, Mat4};
 use shagger::rendering::gpu::Gpu;
-use shagger::rendering::model_renderer::{ModelDraw, ModelHandle, ModelMaterialMode, ModelRenderer};
+use shagger::rendering::model_renderer::{ModelDraw, ModelHandle, ModelMaterialMode, ModelRenderer, Outline};
 use shagger::rendering::wgpu;
 use shagger::weapon::weapon_view_manager::{
-    ViewModelDef, WEAPON_CAMERA_MAX_Z, WEAPON_CAMERA_MIN_Z, WeaponView, blade_light, view_material_mode, weapon_light,
-    weapon_outline,
+    ViewModelDef, WEAPON_CAMERA_MAX_Z, WEAPON_CAMERA_MIN_Z, WEAPON_OUTLINE_WIDTH, WeaponView, blade_light,
+    view_material_mode, weapon_light, weapon_outline,
 };
 
+use crate::client::quad_damage_visual::{
+    QUAD_DAMAGE_COLOR, QUAD_VIEW_WEAPON_OUTLINE_MIN, QUAD_VIEW_WEAPON_OUTLINE_RANGE, get_quad_damage_pulse,
+};
 use crate::shared::entities::definitions::weapons::weapons_table::{WeaponModel, weapon_model};
 use crate::world::fps_pickup::package_path;
 
@@ -41,6 +44,20 @@ pub struct WeaponViewModel {
     handle: ModelHandle,
     model: GltfModel,
     draws: Vec<ModelDraw>,
+    /// `setPowerupOutlineOverride`: the outline a powerup puts on the gun
+    /// in place of the black one, its width before the root's scale.
+    pub powerup_outline: Option<Outline>,
+}
+
+/// `FPSPlayer`'s quad outline on the gun: the quad colour, its width
+/// pulsing 0.24 to 0.48 with the body's glow.
+#[must_use]
+pub fn quad_view_weapon_outline(elapsed: f64) -> Outline {
+    let pulse = get_quad_damage_pulse(elapsed);
+    Outline {
+        color: QUAD_DAMAGE_COLOR,
+        width: (QUAD_VIEW_WEAPON_OUTLINE_MIN + QUAD_VIEW_WEAPON_OUTLINE_RANGE * pulse).max(0.001) as f32,
+    }
 }
 
 impl WeaponViewModel {
@@ -64,6 +81,7 @@ impl WeaponViewModel {
             handle,
             model,
             draws: Vec::new(),
+            powerup_outline: None,
         })
     }
 
@@ -86,8 +104,17 @@ impl WeaponViewModel {
                 .material
                 .and_then(|m| self.model.materials.get(m))
                 .map_or(ModelMaterialMode::Lit, |m| view_material_mode(name, m));
+            // `applyWeaponOutlines`: the powerup's colour and width when
+            // one is on, divided by the root's scale like the black one.
+            let outline = weapon_outline(&mode, self.view.scale).map(|black| match self.powerup_outline {
+                Some(powerup) => Outline {
+                    color: powerup.color,
+                    width: black.width / WEAPON_OUTLINE_WIDTH * powerup.width,
+                },
+                None => black,
+            });
             self.draws.push(ModelDraw {
-                outline: weapon_outline(&mode, self.view.scale),
+                outline,
                 ..ModelDraw::new(self.handle, i, root * primitive.node_matrix)
             });
         }

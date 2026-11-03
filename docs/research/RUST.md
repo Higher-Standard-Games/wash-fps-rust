@@ -2582,6 +2582,18 @@ fit and did not count the parity harness.
 
 Newest first. Each entry names the commits and what proves them.
 
+### Milestone 11, fifteenth slice: the gun's quad outline (November 3, 2026)
+
+- **wash-fps-rust.** `WeaponViewModel::powerup_outline` ports
+  `setPowerupOutlineOverride`: while our quad runs (the HUD's
+  `LocalPowerupState`), the first-person gun's black outline turns the quad
+  colour at 0.24 to 0.48 pulsing with the body's glow, divided by the
+  root's scale as the black one is. `washoi view --weapon ID --quad` holds
+  it.
+- **Not yet.** Weapons in remote players' hands, and so their quad outline.
+- **Proof.** A screenshot of the plasmagun with the outline
+  (`rust-port/weapon-quad-outline.png`).
+
 ### Milestone 11, fourteenth slice: the ragdoll speed trail (November 3, 2026)
 
 - **shagger 2b92c7e.** `babylon/meshes/trail_mesh.rs` ports Babylon's
