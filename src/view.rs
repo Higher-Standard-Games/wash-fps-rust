@@ -4,12 +4,14 @@
 //! given with `--player` stand on the map as the Vanguard model.
 
 use shagger::lighting::map_emissive_surfaces::{SurfaceEmission, extract_emissive_surfaces};
+use shagger::physics::sweep_backend_adapter::to_shared_contents;
 use shagger::rendering::water::water_surface_lighting::{water_map_lights, water_surface_lights};
 use shagger::shared::js::js_hypot;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use washoi::client::fps_liquid_audio::play_liquid_crossing;
 use washoi::liquid::client::liquid_interaction_system::{LiquidInteractionSystem, WaterRipples};
+use washoi::liquid::client::underwater_view::{UnderwaterFog, UnderwaterView};
 use washoi::liquid::liquid_types::LiquidKind;
 
 use shagger::animation::player_model_manager::PlayerModelVisualStyle;
@@ -43,7 +45,7 @@ use shagger::rendering::sky_renderer::{SkyRenderer, apply_skybox};
 use shagger::rendering::water::liquid_surface_system::{LiquidSurfaceSystem, WaterSettings};
 use shagger::rendering::wgpu;
 use shagger::rendering::world_culling::WorldCulling;
-use shagger::rendering::world_fog_controller::WorldFogController;
+use shagger::rendering::world_fog_controller::{FogUniforms, WorldFogController};
 use shagger::rendering::world_geometry::build_world_geometry;
 use shagger::rendering::world_renderer::{Rgba8Image, WorldRenderer};
 use shagger::shared::collision::shared_collision_world::SharedCollisionWorld;
@@ -705,6 +707,12 @@ pub struct MapRenderer {
     pub liquid: LiquidInteractionSystem,
     /// The liquid interactions' clock, in seconds.
     liquid_clock: f64,
+    /// Tint, fog and view warp while the camera is under a surface.
+    pub underwater: UnderwaterView,
+    /// The scene fog the underwater view holds this frame.
+    underwater_fog: Option<UnderwaterFog>,
+    /// The fog last handed to the materials.
+    applied_fog: Option<FogUniforms>,
     pub culling: WorldCulling,
     /// Off draws every batch (`--no-cull`), for comparing.
     pub cull: bool,
@@ -802,7 +810,9 @@ impl MapRenderer {
         let shot_world = self.shot_world.as_ref();
         let contents = |p: DVec3| {
             shot_world.map_or(0, |w| {
-                w.point_contents(shagger::babylon::maths::math_vector::Vector3::new(p.x, p.y, p.z), None) as u32
+                to_shared_contents(
+                    w.point_contents(shagger::babylon::maths::math_vector::Vector3::new(p.x, p.y, p.z), None),
+                )
             })
         };
         let collision: Option<&dyn Fn(DVec3) -> u32> = shot_world.is_some().then_some(&contents);
@@ -861,7 +871,9 @@ impl MapRenderer {
         }
         if let Some(world) = self.shot_world.as_ref() {
             let contents = |p: DVec3| {
-                world.point_contents(shagger::babylon::maths::math_vector::Vector3::new(p.x, p.y, p.z), None) as u32
+                to_shared_contents(
+                    world.point_contents(shagger::babylon::maths::math_vector::Vector3::new(p.x, p.y, p.z), None),
+                )
             };
             for p in projectiles {
                 self.liquid.notify_projectile(
@@ -1016,6 +1028,37 @@ impl MapRenderer {
             });
     }
 
+    /// The underwater view (`UnderwaterView`, run before the camera renders):
+    /// asks what the camera's eye is in, eases the tint and fog, and warps
+    /// `camera`'s field of view. Call before [`Self::prepare`].
+    pub fn update_underwater(&mut self, camera: &mut Camera, dt: f64) {
+        let shot_world = self.shot_world.as_ref();
+        let contents = |p: DVec3| {
+            shot_world.map_or(0, |w| {
+                to_shared_contents(
+                    w.point_contents(shagger::babylon::maths::math_vector::Vector3::new(p.x, p.y, p.z), None),
+                )
+            })
+        };
+        let comfort = shagger::core::cvar::with_cvars(|c| c.get_number("r_underwater_distortion"));
+        self.underwater_fog = self.underwater.update(
+            camera,
+            dt.min(0.1),
+            shot_world.is_some().then_some(&contents as &dyn Fn(DVec3) -> u32),
+            self.fog.scene_color(),
+            comfort,
+        );
+    }
+
+    /// The fog every material draws with this frame: the underwater view's
+    /// while it holds the scene fog, else world fog.
+    fn frame_fog(&self) -> FogUniforms {
+        self.underwater_fog.map_or_else(
+            || self.fog.uniforms(),
+            |f| FogUniforms::scene_exp2(f.color, f.density, self.fog.sky_height()),
+        )
+    }
+
     pub fn prepare(&mut self, gpu: &Gpu, camera: &Camera, size: [f32; 2]) {
         let aspect = size[0] / size[1];
         self.culling.update(camera, aspect);
@@ -1033,9 +1076,10 @@ impl MapRenderer {
             }
             serial
         });
-        if self.fog_serial != Some(serial) {
-            self.fog_serial = Some(serial);
-            let uniforms = self.fog.uniforms();
+        self.fog_serial = Some(serial);
+        let uniforms = self.frame_fog();
+        if self.applied_fog != Some(uniforms) {
+            self.applied_fog = Some(uniforms);
             self.world.set_fog(uniforms);
             self.models.set_fog(uniforms);
             self.explosions.set_fog(uniforms);
@@ -1079,7 +1123,7 @@ impl MapRenderer {
             camera_position: camera.position,
             viewport: size,
             time: self.effect_time,
-            fog: self.fog.uniforms(),
+            fog: uniforms,
         };
         self.hitscan.streaks.prepare(gpu, &frame);
         self.hitscan.muzzle_flashes.prepare(gpu, &frame);
@@ -1109,7 +1153,7 @@ impl MapRenderer {
                 camera,
                 (size[0] as u32, size[1] as u32),
                 &settings,
-                self.fog.uniforms(),
+                uniforms,
                 visible,
             );
         }
@@ -1589,6 +1633,9 @@ pub fn build_renderer(gpu: &Gpu, map: &mut LoadedMap, output_format: wgpu::Textu
         water_time: 0.0,
         liquid: LiquidInteractionSystem::default(),
         liquid_clock: 0.0,
+        underwater: UnderwaterView::default(),
+        underwater_fog: None,
+        applied_fog: None,
         culling,
         cull: true,
         lights,
@@ -1957,6 +2004,8 @@ pub fn run(o: &ViewOptions) -> i32 {
             });
         }
     }
+    // One long step: a still is fully under or fully dry.
+    renderer.update_underwater(&mut camera, 1.0);
     renderer.prepare(&gpu, &camera, [o.width as f32, o.height as f32]);
     match renderer.culling.pvs_stats() {
         Some(pvs) => println!(

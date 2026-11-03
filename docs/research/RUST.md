@@ -2582,6 +2582,28 @@ fit and did not count the parity harness.
 
 Newest first. Each entry names the commits and what proves them.
 
+### Milestone 11, fifth slice: the underwater view (November 3, 2026)
+
+- **shagger `aa57050`.** `FogUniforms::scene_exp2` and a mode in
+  `fog.wgsl` give every material Babylon's `FOGMODE_EXP2` scene fog,
+  mixed in display space as StandardMaterial mixes it, for a system that
+  borrows the scene fog while world fog stands aside (`suspend`).
+- **wash-fps-rust.** `liquid/client/underwater_look.rs` and
+  `underwater_view.rs` port `UnderwaterLook.ts` and `UnderwaterView.ts`:
+  the camera's eye is sampled each frame, the mix eases in and out over
+  about 150 ms, the fog blends from the scene's colour toward the
+  liquid's, and the field of view warps by `r_underwater_distortion`
+  (restored when dry, and a zoom under water becomes the new base).
+  `MapRenderer::update_underwater` runs before `prepare`, which hands the
+  frame's fog to the world, models, effects, sky and water. The liquid
+  interactions now read shared content flags (`to_shared_contents`), as
+  the TypeScript's collision world returns them.
+- **Proof.** Unit tests port `UnderwaterLook.test.ts` and the view's
+  restore rules. A screenshot under washoi_amphi1's slime, and one just
+  above it.
+- **Not yet.** The weapon's underwater float (`WeaponViewManager`'s
+  `submersionAmount`), the local air tracker and drowning sounds.
+
 ### Milestone 11, fourth slice: ripples and splashes (November 3, 2026)
 
 - **shagger `e11fa3b`.** `rendering/water/water_disturbances.rs` ports
