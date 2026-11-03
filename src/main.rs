@@ -356,6 +356,10 @@ use washoi::config_dir;
 fn menu_mode(url: &str, o: &Options) -> i32 {
     let key_file = o.key_file.clone().or_else(default_key_file);
     let go = |c: &washoi::client::lobby_panel::LobbyChoice| {
+        if let Some(demo) = &c.demo {
+            println!("lobby: demo {}", demo.display());
+            return;
+        }
         let how = if c.play { "play" } else { "watch" };
         println!("lobby: {how} at {} on {}", c.server_url, c.map);
     };
@@ -387,6 +391,10 @@ fn menu_mode(url: &str, o: &Options) -> i32 {
         match menu::choose(url, key_file.clone()) {
             Ok(Some(c)) => {
                 go(&c);
+                if let Some(demo) = &c.demo {
+                    view::run(&view_options(o, c.map.clone(), Some(demo.clone()), None, false));
+                    continue;
+                }
                 let watch = Some((c.server_url.clone(), c.name.clone(), c.admission_ticket.clone()));
                 view::run(&view_options(o, c.server_url.clone(), None, watch, c.play));
             }

@@ -2582,6 +2582,30 @@ fit and did not count the parity harness.
 
 Newest first. Each entry names the commits and what proves them.
 
+### Milestone 10, eighth slice: the Demos page (November 2, 2026)
+
+- **shagger `a78fcf7` and `ad414b9`.** `network/client/http_fetch.rs`:
+  a file over HTTP(S) on reqwest (the plan's choice, section 12), with
+  rustls on ring and the same roots as the websocket, an idle and a total
+  deadline, progress, and cancelling; it runs on a thread of its own and
+  the frame loop polls it. `LobbyClient` gains `request_featured_demos`.
+- **wash-fps-rust.** `client/demo_download.rs` ports `DemoDownload.ts` (its
+  deadlines and messages) and `DemoService.demoBaseUrl`
+  (`WASHOI_DEMO_BASE_URL`, else `/data/demos` on the lobby's host), and
+  keeps recordings in `<config>/demos`. `client/demos_view.rs` ports
+  `DemosView.ts`: Featured, Latest and Yours (when the lobby can prove
+  ownership), the mode and map filters, the search, six cards a page with
+  the pager, each card's header facts, and the transfer line with Cancel
+  and Try again. Play downloads the recording and the menu hands it to the
+  demo player, then comes back to the menu. Not yet: the highlight reels
+  (their key is there, disabled), level shots and the featured hero.
+- **Proof.** Unit tests for the fetch (a file, a 404, the background
+  thread), the base URL and file names, and `reelLengths`, `clock`, `ago`
+  and `pageKeys`. On the local lobby with the recordings served over HTTP:
+  the Latest tab listed the archive, and `--tab demos:play` downloaded the
+  newest recording into the cache and handed it to the demo player.
+- Milestone 10 is complete apart from the parts named "not yet" above.
+
 ### Milestone 10, seventh slice: the welcome guide (November 2, 2026)
 
 - **wash-fps-rust.** `client/credits/markdown_lite.rs` ports
@@ -2598,10 +2622,6 @@ Newest first. Each entry names the commits and what proves them.
 - **Proof.** Unit tests for the inline marks, the blocks, the terms file,
   the terms gate on hiding the guide, and the guide's open, hide and `?`
   states. A screenshot with a fresh config directory opens on the terms.
-- **Next.** The Demos tab needs demo downloads over HTTPS, which comes
-  with milestone 12 (demo playback, highlight reels); milestone 10 is
-  otherwise complete.
-
 ### Milestone 10, sixth slice: team colours, voices and the video page (November 2, 2026)
 
 - **shagger `0079a47`, `c06a960`.** `rendering/render_vars.rs` ports

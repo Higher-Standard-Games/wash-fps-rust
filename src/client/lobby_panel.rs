@@ -17,6 +17,8 @@ use shagger::lobby::types::{ChatMessage, GametypeInfo, LiveMatchInfo, LobbyConne
 use shagger::ui::components::match_lobby_view::{MatchLobbyView, RoomAction};
 use shagger::ui::egui_layer::egui;
 
+use crate::client::demo_download::demo_base_url;
+use crate::client::demos_view::DemosView;
 use crate::client::hud::washiki;
 use crate::client::leaderboard_view::LeaderboardView;
 use crate::client::lobby_welcome_guide::LobbyWelcomeGuide;
@@ -84,6 +86,8 @@ pub struct LobbyChoice {
     pub name: String,
     /// True to play; false to watch.
     pub play: bool,
+    /// A recording to play instead (the Demos page), saved on disk.
+    pub demo: Option<std::path::PathBuf>,
 }
 
 fn hsl(h: f32, s: f32, l: f32) -> egui::Color32 {
@@ -174,12 +178,14 @@ fn now_seed() -> u64 {
 pub enum Tab {
     Play,
     Leaderboard,
+    Demos,
     Profile,
 }
 
 /// `LobbyPanel`.
 pub struct LobbyPanel {
-    client: LobbyClient,
+    /// The lobby connection.
+    pub client: LobbyClient,
     key: Option<String>,
     /// Where a new account's key is saved.
     key_file: Option<std::path::PathBuf>,
@@ -207,6 +213,8 @@ pub struct LobbyPanel {
     /// The page in the middle (`switchTab`).
     pub tab: Tab,
     leaderboard: LeaderboardView,
+    /// The Demos page.
+    pub demos: DemosView,
     profile: ProfileView,
     /// The account's settings, kept in step while logged in.
     settings_sync: Option<SettingsSync>,
@@ -251,6 +259,7 @@ impl LobbyPanel {
             console_pressed: false,
             tab: Tab::Play,
             leaderboard: LeaderboardView::default(),
+            demos: DemosView::new(demo_base_url(url)),
             profile: ProfileView::default(),
             settings_sync: None,
             closed: None,
@@ -280,6 +289,18 @@ impl LobbyPanel {
         }
         if let Some(sync) = &mut self.settings_sync {
             with_cvars(|c| sync.tick(&mut self.client, c, std::time::Instant::now()));
+        }
+        self.demos.tick();
+        // A recording is in: the menu gets out of the way.
+        if let Some(path) = self.demos.ready.take() {
+            self.choice = Some(LobbyChoice {
+                server_url: String::new(),
+                map: path.display().to_string(),
+                admission_ticket: None,
+                name: self.name.clone(),
+                play: false,
+                demo: Some(path),
+            });
         }
     }
 
@@ -317,6 +338,7 @@ impl LobbyPanel {
         }
         if let LobbyIn::Other { kind, message } = &message {
             self.leaderboard.on_message(kind, message);
+            self.demos.on_message(kind, message);
             self.profile.on_message(kind, message);
         }
         match message {
@@ -343,6 +365,14 @@ impl LobbyPanel {
                 self.chat_log = w.chat_history.iter().cloned().collect();
                 self.trim_chat();
                 self.guide.set_authenticated(true);
+                let feature = |name: &str| {
+                    w.features
+                        .as_ref()
+                        .and_then(|f| f.get(name))
+                        .and_then(serde_json::Value::as_bool)
+                        == Some(true)
+                };
+                self.demos.connected(feature("demoOwnership"), feature("featuredDemos"));
                 // `startSettingsSync`.
                 if let Some(dir) = crate::config_dir() {
                     self.settings_sync = with_cvars(|c| SettingsSync::start(&mut self.client, &w, c, &dir));
@@ -367,6 +397,7 @@ impl LobbyPanel {
                     admission_ticket,
                     name: self.name.clone(),
                     play: true,
+                    demo: None,
                 });
             }
             LobbyIn::LobbyError(e) => {
@@ -434,6 +465,7 @@ impl LobbyPanel {
             match tab {
                 Tab::Leaderboard => self.leaderboard.refresh(&mut self.client),
                 Tab::Profile => self.profile.refresh(&mut self.client),
+                Tab::Demos => self.demos.open(&mut self.client),
                 Tab::Play => {}
             }
         }
@@ -461,6 +493,7 @@ impl LobbyPanel {
                 admission_ticket: None,
                 name: self.name.clone(),
                 play: false,
+                demo: None,
             });
         }
     }
@@ -492,6 +525,10 @@ impl LobbyPanel {
                 }
                 Tab::Profile => {
                     self.profile.ui(ui, &mut self.client, &self.name);
+                    return;
+                }
+                Tab::Demos => {
+                    self.demos.ui(ui, &mut self.client, self.connected);
                     return;
                 }
                 Tab::Play => {}
@@ -538,6 +575,7 @@ impl LobbyPanel {
         for (tab, name) in [
             (Tab::Play, "Play"),
             (Tab::Leaderboard, "Leaderboard"),
+            (Tab::Demos, "Demos"),
             (Tab::Profile, "Profile"),
         ] {
             if ui.selectable_label(self.tab == tab, name).clicked() {

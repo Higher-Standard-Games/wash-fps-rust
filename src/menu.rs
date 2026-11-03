@@ -238,7 +238,9 @@ pub struct Shot {
     /// Open this settings page (`controls`, `gameplay`, `video`, `audio`),
     /// and with `video/effects` a video section.
     pub settings: Option<String>,
-    /// Open this rail page (`play`, `leaderboard`, `profile`) once logged in.
+    /// Open this rail page (`play`, `leaderboard`, `demos`, `profile`) once
+    /// logged in; `demos:latest` opens the Latest tab, and `demos:play` also
+    /// plays the newest recording.
     pub tab: Option<String>,
     /// Open the console and run these commands (`;` between them).
     pub console: Option<String>,
@@ -317,8 +319,17 @@ pub fn screenshot(
             panel.open_tab(match tab.as_str() {
                 "leaderboard" => Tab::Leaderboard,
                 "profile" => Tab::Profile,
+                "demos" | "demos:latest" | "demos:play" => Tab::Demos,
                 _ => Tab::Play,
             });
+            if tab.starts_with("demos:") {
+                panel.demos.show_latest(&mut panel.client);
+            }
+        }
+        // `demos:play` presses Play on the newest recording once it is listed.
+        if shot.tab.as_deref() == Some("demos:play") && !pressed && panel.demos.play_newest() {
+            println!("menu: playing the newest demo");
+            pressed = true;
         }
         if let Some(room) = panel.in_room() {
             let now = format!("{} {}: {}", room.gametype_label, room.lobby_id, room.status());
