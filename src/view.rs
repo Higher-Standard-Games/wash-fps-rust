@@ -1493,6 +1493,21 @@ impl MapRenderer {
                 sky.set_fog(uniforms);
             }
         }
+        // `Q3SoftParticleDepth`: the scene depth, while `r_softhalos` is on
+        // and a soft halo is in view.
+        let soft =
+            shagger::core::cvar::with_cvars(|c| c.get("r_softhalos").is_none() || c.get_number("r_softhalos") != 0.0)
+                && self
+                    .world
+                    .has_visible_soft_particles(if self.cull { self.culling.visible() } else { &[] });
+        self.world.set_soft_particles(
+            gpu,
+            camera.view(),
+            camera.near,
+            camera.far,
+            (size[0].round() as u32, size[1].round() as u32),
+            soft,
+        );
         self.world.prepare(gpu, camera.view_projection(aspect), camera.position);
         self.frame_draws.clone_from(&self.model_draws);
         self.frame_draws.extend_from_slice(&self.live_draws);
@@ -1623,6 +1638,7 @@ impl MapRenderer {
         if let Some(water) = &self.water {
             water.capture(encoder, &hdr.color_texture, &hdr.depth_texture);
         }
+        self.world.capture_soft_depth(encoder, &hdr.depth_texture);
     }
 
     /// Records the water, the blended world, the effects and the blended

@@ -2582,6 +2582,29 @@ fit and did not count the parity harness.
 
 Newest first. Each entry names the commits and what proves them.
 
+### Milestone 11, seventeenth slice: soft particles (November 3, 2026)
+
+- **shagger 8330c7f.** `rendering/world_renderer.rs` and `world.wgsl` port
+  `Q3SoftParticlePlugin`: a transparent pass whose shader says
+  `softParticle` fades over 50 units of view depth (`Q3_SOFT_FADE_RATE`
+  0.02) in front of the opaque scene, as `1 - (1 - d)^4`, in alpha or, for
+  a `GL_ONE` source, in colour (by `softness^2.2`, since Babylon fades the
+  gamma-space colour and ours is linear). Where `Q3SoftParticleDepth`
+  renders a view-Z map of its own, `WorldRenderer::capture_soft_depth`
+  copies the main pass's depth between the opaque and blended passes
+  (RUST.md 3a) and the shader linearises it with the camera's near and
+  far; the cleared far plane counts as no scene, as zero does there. The
+  copy is taken only while a soft batch survives culling.
+- **wash-fps-rust.** `MapRenderer::prepare` turns it on while
+  `r_softhalos` is (default 1) and `capture` takes the copy beside the
+  water's.
+- **Not yet.** `Q3SoftParticleDepth`'s per-box screen bounds, which limit
+  its depth render to the pixels a halo covers; the full copy is cheap
+  enough here.
+- **Proof.** Screenshots of amphi1's ceiling halos with `r_softhalos` 0
+  and 1 (`rust-port/soft-halos-amphi1.png`): the flat halos fade where
+  they meet the ceiling.
+
 ### Milestone 11, sixteenth slice: guns in players' hands (November 3, 2026)
 
 - **wash-fps-rust.** `HandWeapons` in `client/remote_player_renderer.rs`
