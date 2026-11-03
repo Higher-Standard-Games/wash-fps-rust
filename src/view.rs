@@ -27,11 +27,14 @@ use shagger::rendering::effect_quad_batch::EffectFrame;
 use shagger::rendering::glam::{DVec3, Mat4, Vec3};
 use shagger::rendering::gpu::Gpu;
 use shagger::rendering::hdr_target::HDR_FORMAT;
+use shagger::rendering::hdr_target::HdrTarget;
 use shagger::rendering::model_renderer::{ModelDraw, ModelRenderer};
-use shagger::rendering::offscreen::{OFFSCREEN_FORMAT, render_hdr_with_ui_to_rgba};
+use shagger::rendering::offscreen::{OFFSCREEN_FORMAT, render_hdr_scene_with_ui_to_rgba};
 
+use shagger::loader::bsp::liquid_classifier::{classify_liquids, liquid_kind_from_surface_parms};
 use shagger::loader::bsp::world_fog::parse_world_fog;
 use shagger::rendering::sky_renderer::{SkyRenderer, apply_skybox};
+use shagger::rendering::water::liquid_surface_system::{LiquidSurfaceSystem, WaterSettings};
 use shagger::rendering::wgpu;
 use shagger::rendering::world_culling::WorldCulling;
 use shagger::rendering::world_fog_controller::WorldFogController;
@@ -683,6 +686,11 @@ pub struct MapRenderer {
     pub fog: WorldFogController,
     /// The cvars' serial the fog was last resolved at.
     fog_serial: Option<u64>,
+    /// The liquid surfaces, drawn with the unified water material
+    /// (MapLoader's `claimLiquidSurfaces`); none with `r_water 0`.
+    pub water: Option<LiquidSurfaceSystem>,
+    /// `item_time` at the water's last frame, for its clock.
+    water_time: f64,
     pub culling: WorldCulling,
     /// Off draws every batch (`--no-cull`), for comparing.
     pub cull: bool,
@@ -1011,6 +1019,29 @@ impl MapRenderer {
         if let Some(sky) = &self.sky {
             sky.prepare(gpu, camera, aspect);
         }
+        if let Some(water) = &mut self.water {
+            water.update(self.item_time - self.water_time);
+            self.water_time = self.item_time;
+            let settings = shagger::core::cvar::with_cvars(|c| WaterSettings {
+                quality: c.get_number("r_water_quality"),
+                debug: c.get_number("r_water_debug"),
+                highlights: c.get_number("r_water_highlights"),
+                roughness: c.get_number("r_water_roughness"),
+                reflection: c.get_number("r_water_reflection"),
+                blur: c.get_number("r_water_blur"),
+                detail: c.get_number("r_water_detail"),
+                contact: c.get_number("r_water_contact"),
+            });
+            let visible = if self.cull { self.culling.visible() } else { &[] };
+            water.prepare(
+                gpu,
+                camera,
+                (size[0] as u32, size[1] as u32),
+                &settings,
+                self.fog.uniforms(),
+                visible,
+            );
+        }
         if let Some(view_model) = &mut self.view_model {
             view_model.prepare(gpu, camera, aspect);
         }
@@ -1024,14 +1055,31 @@ impl MapRenderer {
         }
     }
 
-    /// Records the sky, the opaque world and models, then the blended ones.
-    pub fn draw(&self, pass: &mut wgpu::RenderPass<'_>) {
+    /// Records the sky and the opaque world and models.
+    pub fn draw_opaque(&self, pass: &mut wgpu::RenderPass<'_>) {
         if let Some(sky) = &self.sky {
             sky.draw(pass);
         }
         let visible = if self.cull { self.culling.visible() } else { &[] };
         self.world.draw_visible_opaque(pass, visible);
         self.models.draw_opaque(pass);
+    }
+
+    /// Copies the opaque scene for the water to look through, between
+    /// [`Self::draw_opaque`] and [`Self::draw_transparent`].
+    pub fn capture(&self, encoder: &mut wgpu::CommandEncoder, hdr: &HdrTarget) {
+        if let Some(water) = &self.water {
+            water.capture(encoder, &hdr.color_texture, &hdr.depth_texture);
+        }
+    }
+
+    /// Records the water, the blended world, the effects and the blended
+    /// models, over what [`Self::draw_opaque`] drew.
+    pub fn draw_transparent(&self, pass: &mut wgpu::RenderPass<'_>) {
+        let visible = if self.cull { self.culling.visible() } else { &[] };
+        if let Some(water) = &self.water {
+            water.draw(pass, self.world.vertex_buffer(), self.world.index_buffer(), visible);
+        }
         self.world.draw_visible_blended(pass, visible);
         // The effects' alpha indices (40 to 46) put them before the models'.
         self.hitscan.voltaic.draw_beams(pass);
@@ -1046,6 +1094,60 @@ impl MapRenderer {
     }
 }
 
+/// MapLoader's `claimLiquidSurfaces`: the liquid batches the classifier
+/// finds (content flags, then the shader's `surfaceparm`), drawn with the
+/// unified water material over the map's sky cube, unless `r_water` is 0.
+fn claim_liquid_surfaces(
+    gpu: &Gpu,
+    map: &LoadedMap,
+    geometry: &shagger::rendering::world_geometry::WorldGeometry,
+    sky: Option<&SkyRenderer>,
+    format: wgpu::TextureFormat,
+) -> Option<LiquidSurfaceSystem> {
+    if shagger::core::cvar::with_cvars(|c| c.get("r_water").is_some() && c.get_number("r_water") == 0.0) {
+        println!("water: r_water 0, liquid surfaces left on the legacy renderer");
+        return None;
+    }
+    let liquids = classify_liquids(
+        &map.bsp,
+        &std::collections::HashMap::new(),
+        |name| {
+            map.shaders
+                .get_shader(name)
+                .and_then(|s| liquid_kind_from_surface_parms(s.surface_parms.iter().map(String::as_str)))
+        },
+        |name| {
+            let shader = map.shaders.get_shader(name)?;
+            let unconditional = if shader.unconditional_stages.is_empty() {
+                &shader.stages
+            } else {
+                &shader.unconditional_stages
+            };
+            unconditional
+                .iter()
+                .chain(shader.conditional_blocks.iter().flatten().flat_map(|b| &b.stages))
+                .find_map(|stage| stage.cube_map.clone())
+        },
+    );
+    let water = LiquidSurfaceSystem::new(gpu, geometry, &liquids, sky.map(SkyRenderer::cube), format)?;
+    let kinds: Vec<String> = liquids
+        .iter()
+        .filter(|l| l.drawn)
+        .map(|l| format!("{} ({})", l.shader_name, l.kind.as_str()))
+        .collect();
+    println!(
+        "water: {} surfaces of {}{}",
+        water.claimed_count(),
+        kinds.join(", "),
+        if water.has_environment() {
+            ", reflecting the sky"
+        } else {
+            ""
+        }
+    );
+    Some(water)
+}
+
 /// Builds the world and its sky and uploads them with their textures. The
 /// scene draws into an HDR target; image processing writes `output_format`.
 pub fn build_renderer(gpu: &Gpu, map: &mut LoadedMap, output_format: wgpu::TextureFormat) -> MapRenderer {
@@ -1054,7 +1156,7 @@ pub fn build_renderer(gpu: &Gpu, map: &mut LoadedMap, output_format: wgpu::Textu
         map.shaders.resolve_material_passes(&map.pk3, name, options)
     });
     let pk3 = &mut map.pk3;
-    let renderer = WorldRenderer::new(
+    let mut renderer = WorldRenderer::new(
         gpu,
         &map.bsp,
         &geometry,
@@ -1117,6 +1219,10 @@ pub fn build_renderer(gpu: &Gpu, map: &mut LoadedMap, output_format: wgpu::Textu
         );
     }
     let fog = WorldFogController::new(world_fog, sky_height);
+    let water = claim_liquid_surfaces(gpu, map, &geometry, sky.as_ref(), format);
+    if let Some(water) = &water {
+        renderer.set_hidden_batches(water.hidden_batches());
+    }
     let culling = WorldCulling::new(&map.bsp, &geometry);
     let mut models = ModelRenderer::new(gpu, format);
     // SHAG's lights for a BSP map, with r_bsp_pbr at its default.
@@ -1368,6 +1474,8 @@ pub fn build_renderer(gpu: &Gpu, map: &mut LoadedMap, output_format: wgpu::Textu
         sky,
         fog,
         fog_serial: None,
+        water,
+        water_time: 0.0,
         culling,
         cull: true,
         lights,
@@ -1767,14 +1875,16 @@ pub fn run(o: &ViewOptions) -> i32 {
             info.reel_total_ms / 1000.0
         );
     }
-    let mut pixels = render_hdr_with_ui_to_rgba(
+    let mut pixels = render_hdr_scene_with_ui_to_rgba(
         &gpu,
         o.width,
         o.height,
         CLEAR,
         &renderer.post,
         &renderer.image_processing,
-        |pass| renderer.draw(pass),
+        |pass| renderer.draw_opaque(pass),
+        |encoder, hdr| renderer.capture(encoder, hdr),
+        |pass| renderer.draw_transparent(pass),
         |pass| renderer.draw_overlay(pass),
         |pass| {
             if let Some(hud) = &hud {

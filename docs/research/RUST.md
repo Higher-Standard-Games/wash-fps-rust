@@ -2582,6 +2582,37 @@ fit and did not count the parity harness.
 
 Newest first. Each entry names the commits and what proves them.
 
+### Milestone 11, second slice: water (November 3, 2026)
+
+- **shagger `ce7b320`.** `loader/bsp/liquid_classifier.rs` ports
+  `LiquidClassifier.ts` (content flags, then `surfaceparm`, then
+  overrides). `rendering/water/water_noise.rs` ports `WaterNoise.ts`;
+  `unified_water_material.rs` ports `UnifiedWaterMaterial.ts`, its three
+  liquid profiles and its whole shader (`unified_water.wgsl`: the swirled
+  noise layers, calm water's broad waves, impulses, Fresnel over the
+  environment, per-channel absorption, foam, caustics, contact shade,
+  refraction, highlights, debug views, world fog).
+  `liquid_surface_system.rs` ports the core of `LiquidSurfaceSystem.ts`:
+  it claims the liquid batches (the world renderer leaves them out), keeps
+  the wave clock and feeds the `r_water_*` cvars. Where the TypeScript
+  renders its own depth pass and a half-resolution colour capture, the
+  water here draws after the opaque pass and reads copies of the HDR
+  target's depth and colour taken between the two passes
+  (`render_hdr_scene_with_ui_to_rgba`, `begin_continue_pass`).
+- **wash-fps-rust.** The map renderer claims the liquids at load unless
+  `r_water` is 0, and draws opaque, copy, then water and the blended rest,
+  in the window and in screenshots.
+- **Proof.** `water_noise_golden.rs`: 400 heights and every byte of the
+  128 by 128 normal map agree with V8. The five maps with liquids claim
+  them (washoi_dm11 three pools, washoi_dm7 lava and oil as slime,
+  washoi_amphi1 water and slime). A screenshot of washoi_dm11's canal at
+  quality 2 and 3: the sky in the ripples, the floor through the water.
+- **Not yet.** The cached room probes (`WaterProbeCache`; until then every
+  pool reflects the map's sky), static light highlights
+  (`WaterSurfaceLighting`), the actor reflection pass, ripples from bodies
+  (`WaterDisturbances`), per-liquid environment cubemaps from the shaders,
+  and the underwater view.
+
 ### Milestone 11, first slice: world fog (November 3, 2026)
 
 - **shagger `480bc49` and `917734c`.** `loader/bsp/world_fog.rs` ports `WorldFog.ts`

@@ -16,7 +16,7 @@ use shagger::rendering::camera::Camera;
 use shagger::rendering::glam::{DVec3, Vec3};
 use shagger::rendering::gpu::Gpu;
 use shagger::rendering::hdr_target::HdrTarget;
-use shagger::rendering::offscreen::{begin_main_pass, begin_overlay_pass, begin_ui_pass};
+use shagger::rendering::offscreen::{begin_continue_pass, begin_main_pass, begin_overlay_pass, begin_ui_pass};
 
 use shagger::camera::fov_settings::current_base_fov;
 use shagger::core::cvar::with_cvars;
@@ -415,7 +415,12 @@ impl App {
             .create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some("frame") });
         {
             let mut pass = begin_main_pass(&mut encoder, &s.hdr.color, &s.hdr.depth, CLEAR);
-            s.renderer.draw(&mut pass);
+            s.renderer.draw_opaque(&mut pass);
+        }
+        s.renderer.capture(&mut encoder, &s.hdr);
+        {
+            let mut pass = begin_continue_pass(&mut encoder, &s.hdr.color, &s.hdr.depth);
+            s.renderer.draw_transparent(&mut pass);
         }
         {
             let mut pass = begin_overlay_pass(&mut encoder, &s.hdr.color, &s.hdr.depth);
