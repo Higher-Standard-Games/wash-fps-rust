@@ -92,6 +92,11 @@ struct App {
     surface: Option<Surface>,
     held: std::collections::HashSet<KeyCode>,
     captured: bool,
+    /// The cursor, in window pixels, for the post-game's way home.
+    cursor: Option<(f64, f64)>,
+    /// The post-game has opened up (`FPSHud`'s open-up beat).
+    opened_up: bool,
+    open_up_due: bool,
     last: Instant,
     started: Instant,
     seconds: Option<f64>,
@@ -633,6 +638,13 @@ impl App {
                     s.config.height as f32,
                 );
                 hud.prepare(&s.gpu);
+                // The post-game opens up: the mouse comes back for the way
+                // home, and the chat is ready (`FPSHud`).
+                let offered = hud.scoreboard.return_offered();
+                if offered && !self.opened_up {
+                    self.open_up_due = true;
+                }
+                self.opened_up = offered;
             }
             self.drawn = players;
             // Hold the last frame; the title says so, until a seek goes back.
@@ -774,6 +786,14 @@ impl App {
             }
             if let Some(hud) = &mut self.demo_hud {
                 hud.wake();
+            }
+        }
+        if std::mem::take(&mut self.open_up_due) {
+            self.set_captured(false);
+            if let Some(hud) = self.surface.as_mut().and_then(|s| s.hud.as_mut())
+                && !hud.chat.is_input_active()
+            {
+                hud.chat.open_input(false);
             }
         }
         self.serve_console();
@@ -1036,7 +1056,17 @@ impl ApplicationHandler for App {
                 button: MouseButton::Left,
                 ..
             } => {
-                if !self.captured && state == ElementState::Pressed {
+                // The post-game's way home (`setReturnAction`).
+                let home = state == ElementState::Pressed
+                    && !self.captured
+                    && self.surface.as_ref().and_then(|s| s.hud.as_ref()).is_some_and(|h| {
+                        self.cursor
+                            .is_some_and(|(x, y)| h.scoreboard.return_hit(x as f32, y as f32))
+                    });
+                if home {
+                    println!("lobby: back to the lobby");
+                    event_loop.exit();
+                } else if !self.captured && state == ElementState::Pressed && !self.opened_up {
                     self.set_captured(true);
                 } else {
                     self.firing = state == ElementState::Pressed;
@@ -1044,8 +1074,11 @@ impl ApplicationHandler for App {
             }
             // `DemoViewerHUD`: a move of the mouse brings the bar back
             // (not looking around, which moves a confined cursor on Windows).
-            WindowEvent::CursorMoved { .. } if !self.captured => {
-                if let Some(hud) = &mut self.demo_hud {
+            WindowEvent::CursorMoved { position, .. } => {
+                self.cursor = Some((position.x, position.y));
+                if !self.captured
+                    && let Some(hud) = &mut self.demo_hud
+                {
                     hud.wake();
                 }
             }
@@ -1396,6 +1429,9 @@ pub fn run(
         surface: None,
         held: std::collections::HashSet::new(),
         captured: false,
+        cursor: None,
+        opened_up: false,
+        open_up_due: false,
         last: Instant::now(),
         started: Instant::now(),
         seconds,

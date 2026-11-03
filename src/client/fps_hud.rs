@@ -283,7 +283,21 @@ impl FpsHud {
         self.hud.begin(width, height, 1.0);
         let fonts = self.fonts;
         let s = UI_SCALE;
-        let [vw, _] = self.hud.size();
+        let [vw, vh] = self.hud.size();
+        // `FPSHud`'s post-game: the result owns the screen; the gameplay
+        // HUD is hidden, the board and the chat stay.
+        if self.scoreboard.post_game() {
+            self.scoreboard.draw(&mut self.hud, &fonts, 0.0, 0.0);
+            self.chat.draw(
+                &mut self.hud,
+                &fonts,
+                20.0 * s,
+                vh - 236.0 * s,
+                (460.0 * s).min(vw / 2.0),
+            );
+            self.frame_rate.draw(&mut self.hud, &fonts, vw);
+            return;
+        }
         // The top-centre row.
         let frags = self.frags.size(&self.hud, &fonts);
         let timer = self.timer.size(&self.hud, &fonts);
@@ -300,7 +314,6 @@ impl FpsHud {
         // `.fps-phase-message`: top 88 px, centred.
         self.phase.draw(&mut self.hud, &fonts, vw / 2.0, 88.0 * s);
         // `.fps-frag-container`: 31 % down, centred.
-        let [_, vh] = self.hud.size();
         self.frag_message.draw(&mut self.hud, &fonts, vw / 2.0, vh * 0.31);
         // `.fps-hud-bottom-bar`: 16 px up, 28 px in; nobody's to show for
         // a spectator flying free.
