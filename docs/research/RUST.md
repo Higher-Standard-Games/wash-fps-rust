@@ -2582,6 +2582,24 @@ fit and did not count the parity harness.
 
 Newest first. Each entry names the commits and what proves them.
 
+### Milestone 11, ninth slice: the quad carrier's glow (November 3, 2026)
+
+- **shagger b1ccbca.** A lit (glTF) model adds its draw's emissive, as PBR
+  adds its own: what `applyPowerupGlow` lifts.
+- **wash-fps-rust.** `client/quad_damage_visual.rs` ports
+  `QuadDamageVisual.ts` (the colour, the 1.5 Hz pulse in V8's sine, the
+  outline ranges), and `update_powerup_glow` in `remote_player_renderer.rs`
+  ports `updatePowerupGlow`: a player whose snapshot carries the quad bit
+  glows 0.35 to 0.95 of the quad colour with its outline breathing from 28
+  to 52 on the outline scale; others keep their style. `washoi view
+  --player ...,quad` holds a carrier.
+- **Not yet.** The attached and first-person weapons' quad outlines (the
+  Rust renderer draws no weapon in a remote player's hand yet), and
+  `LocalPowerupState` with the HUD's powerup timer.
+- **Proof.** Unit tests: the pulse and the mask bit, a carrier's emissive
+  and outline half way through the pulse. A screenshot of a carrier beside
+  a plain player on washoi_amphi1.
+
 ### Milestone 11, eighth slice: the teleport effect (November 3, 2026)
 
 - **shagger 85d9a64.** `ModelDraw::alpha` overrides a blended

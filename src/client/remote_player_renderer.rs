@@ -5,8 +5,9 @@
 //! Ported so far: the body's placement (an anchor at the feet, turned by
 //! the yaw, the model scaled [`MODEL_SCALE`]), the clip choice and its
 //! speed ratio (`updateModel`), and the visual style (team tint and
-//! outline). Not yet: the hitbox, the weapon in hand, one-shot clips,
-//! powerup glow, teleport effects, PVS and animation LOD.
+//! outline), and the quad carrier's glow (`updatePowerupGlow`). Teleport
+//! effects live in `teleport_effect`. Not yet: the hitbox, the weapon in
+//! hand, one-shot clips, PVS and animation LOD.
 
 use std::collections::HashMap;
 
@@ -18,6 +19,10 @@ use shagger::rendering::glam::{Mat4, Quat, Vec3};
 use shagger::rendering::gpu::Gpu;
 use shagger::rendering::model_renderer::{ModelDraw, ModelHandle, ModelMaterialMode, ModelRenderer, Outline};
 
+use super::quad_damage_visual::{
+    QUAD_DAMAGE_COLOR, QUAD_EMISSIVE_MIN, QUAD_EMISSIVE_RANGE, QUAD_PLAYER_OUTLINE_MIN, QUAD_PLAYER_OUTLINE_RANGE,
+    get_quad_damage_pulse, mask_has_quad,
+};
 use super::remote_player_logic::{IDLE_SPEED_THRESHOLD, derive_animation};
 
 /// Mixamo metres to Quake units.
@@ -46,6 +51,26 @@ pub fn feet_y(interp: &InterpolatedEntity) -> f64 {
         feet -= 10.0;
     }
     feet
+}
+
+/// `updatePowerupGlow`: a quad carrier's body draws glow in the quad colour,
+/// lifted from no emissive of their own, and wear its outline, both
+/// pulsing at `elapsed` seconds. Anything else is left in its style.
+pub fn update_powerup_glow(draws: &mut [ModelDraw], powerup_mask: u32, elapsed: f64) {
+    if !mask_has_quad(powerup_mask) {
+        return;
+    }
+    let pulse = get_quad_damage_pulse(elapsed);
+    let intensity = (QUAD_EMISSIVE_MIN + QUAD_EMISSIVE_RANGE * pulse) as f32;
+    let outline_size = QUAD_PLAYER_OUTLINE_MIN + QUAD_PLAYER_OUTLINE_RANGE * pulse;
+    let width = (outline_size / f64::from(MODEL_SCALE * 16.0).max(1.0)) as f32;
+    for draw in draws {
+        draw.emissive = Some(QUAD_DAMAGE_COLOR * intensity);
+        draw.outline = Some(Outline {
+            color: QUAD_DAMAGE_COLOR,
+            width,
+        });
+    }
 }
 
 /// The model's world matrix: anchor at the feet turned by the yaw, the
@@ -217,6 +242,18 @@ mod tests {
         let up = InterpolatedEntity { vy: 160.0, ..run };
         assert_eq!(animation_speed_ratio("jump", &up, 0.5), 0.5);
         assert_eq!(animation_speed_ratio("idle", &run, 1.0), 1.0);
+    }
+
+    #[test]
+    fn a_quad_carrier_glows() {
+        let mut draws = vec![ModelDraw::new(ModelHandle::default(), 0, Mat4::IDENTITY)];
+        update_powerup_glow(&mut draws, 0, 0.0);
+        assert_eq!(draws[0].emissive, None);
+        update_powerup_glow(&mut draws, 1, 0.0);
+        // Half way through the pulse: 0.35 + 0.3, outline 40 / 576.
+        let e = draws[0].emissive.unwrap();
+        assert!((e.x - 0.65).abs() < 1e-6 && (e.y - 0.28 * 0.65).abs() < 1e-6);
+        assert!((draws[0].outline.unwrap().width - 40.0 / 576.0).abs() < 1e-7);
     }
 
     #[test]

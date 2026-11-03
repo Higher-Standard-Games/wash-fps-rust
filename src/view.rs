@@ -12,6 +12,7 @@ use std::path::{Path, PathBuf};
 use washoi::client::cartoon_hit_effect::{CartoonHitEffect, CartoonHitRenderer};
 use washoi::client::damage_numbers::{DamageNumberRenderer, DamageNumbers};
 use washoi::client::fps_liquid_audio::play_liquid_crossing;
+use washoi::client::remote_player_renderer::update_powerup_glow;
 use washoi::client::teleport_effect::{TeamColor, TeleportEffect, TeleportRenderer, legacy_team_color, play_tele_in};
 use washoi::liquid::client::liquid_interaction_system::{LiquidInteractionSystem, WaterRipples};
 use washoi::liquid::client::splash_droplet_renderer::SplashDropletRenderer;
@@ -584,6 +585,8 @@ pub struct PlayerView {
     pub clip: String,
     /// The clip's frame, held.
     pub frame: f64,
+    /// Carrying Quad Damage (its glow, half way through the pulse).
+    pub quad: bool,
 }
 
 impl PlayerView {
@@ -598,6 +601,7 @@ impl PlayerView {
             z: y,
             yaw: (90.0 - f64::from(self.angle)).to_radians(),
             grounded: true,
+            powerup_mask: self.quad.then_some(1),
             ..Default::default()
         }
     }
@@ -858,7 +862,13 @@ impl MapRenderer {
         renderer.retain(|id| players.iter().any(|(p, _, _)| p == id));
         for (id, interp, style) in players {
             renderer.update(id, interp, dt, 1.0, None);
+            let first = self.live_draws.len();
             renderer.draws(id, interp, style, &mut self.joints, &mut self.live_draws);
+            update_powerup_glow(
+                &mut self.live_draws[first..],
+                interp.powerup_mask.unwrap_or(0),
+                self.item_time,
+            );
         }
         // RemotePlayerRenderer's teleport detection: a jump of more than
         // 256 units between frames. A player gone from the list (dead) is
@@ -1562,7 +1572,9 @@ pub fn build_renderer(gpu: &Gpu, map: &mut LoadedMap, output_format: wgpu::Textu
                     let interp = player.interpolated();
                     players.update(&id, &interp, 0.0, 1.0, Some(&player.clip));
                     players.go_to_frame(&id, player.frame);
+                    let first = model_draws.len();
                     players.draws(&id, &interp, &style, &mut joints, &mut model_draws);
+                    update_powerup_glow(&mut model_draws[first..], interp.powerup_mask.unwrap_or(0), 0.0);
                 }
                 remote_players = Some(players);
             }
