@@ -4,8 +4,8 @@
 //! long, when, how big); a header has no score, so a card has none either.
 //!
 //! Play downloads the recording ([`super::demo_download`]) and hands it to
-//! the demo player. Not yet: the highlight reels (milestone 12) and the
-//! level shots.
+//! the demo player; Highlights picks a reel length and hands the reel's
+//! length along too. Not yet: the level shots.
 
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
@@ -25,6 +25,8 @@ pub const DEMO_ARCHIVE_TIMEOUT: Duration = Duration::from_secs(10);
 const FEATURED_LIMIT: u32 = 6;
 /// The narrowest card before the grid drops a column.
 const CARD_MIN_WIDTH: f32 = 220.0;
+
+const TOO_SHORT: &str = "Too short for a highlight reel";
 
 /// `reelLengths`: the reel lengths a demo can make, at most a third of it.
 #[must_use]
@@ -218,8 +220,13 @@ pub struct DemosView {
     featured_request: Option<String>,
     /// The recording being fetched.
     pub download: Option<DemoDownload>,
-    /// A recording ready to play, for the menu to take.
-    pub ready: Option<std::path::PathBuf>,
+    /// A recording ready to play, for the menu to take, and the length of
+    /// the highlight reel asked for (minutes), if one was.
+    pub ready: Option<(std::path::PathBuf, Option<f64>)>,
+    /// The reel length the download is for.
+    reel: Option<f64>,
+    /// `reelMinutes`: the length last picked.
+    reel_minutes: u32,
     /// Where recordings are fetched from.
     pub base: String,
 }
@@ -245,6 +252,8 @@ impl DemosView {
             featured_request: None,
             download: None,
             ready: None,
+            reel: None,
+            reel_minutes: 2,
             base,
         }
     }
@@ -358,7 +367,7 @@ impl DemosView {
         if let Some(download) = &mut self.download {
             download.poll();
             if let DemoDownloadState::Ready(path) = &download.state {
-                self.ready = Some(path.clone());
+                self.ready = Some((path.clone(), self.reel.take()));
                 self.download = None;
             }
         }
@@ -378,7 +387,19 @@ impl DemosView {
         let Some(demo) = self.shown_list().first().map(|d| (*d).clone()) else {
             return false;
         };
-        self.play(&demo);
+        self.play(&demo, None);
+        true
+    }
+
+    /// The newest recording's highlight reel at its longest length.
+    pub fn play_newest_reel(&mut self) -> bool {
+        let Some(demo) = self.shown_list().first().map(|d| (*d).clone()) else {
+            return false;
+        };
+        let Some(&minutes) = reel_lengths(demo.duration_ms).last() else {
+            return false;
+        };
+        self.play(&demo, Some(minutes));
         true
     }
 
@@ -427,11 +448,37 @@ impl DemosView {
             .map_or_else(|| id.to_uppercase(), |m| m.title.to_owned())
     }
 
-    fn play(&mut self, demo: &DemoInfo) {
+    /// Fetches the recording, then plays it, or its reel of `reel` minutes.
+    fn play(&mut self, demo: &DemoInfo, reel: Option<u32>) {
         if self.download.is_some() {
             return;
         }
+        self.reel = reel.map(f64::from);
         self.download = Some(DemoDownload::start(&self.base, &demo.filename));
+    }
+
+    /// The Highlights key and its lengths (`reelKey`, the reel menu).
+    fn highlights(&mut self, ui: &mut egui::Ui, demo: &DemoInfo, busy: bool) {
+        let reels = reel_lengths(demo.duration_ms);
+        if reels.is_empty() {
+            ui.add_enabled(false, egui::Button::new("Highlights"))
+                .on_disabled_hover_text(TOO_SHORT);
+            return;
+        }
+        ui.add_enabled_ui(!busy, |ui| {
+            ui.menu_button("Highlights", |ui| {
+                ui.weak("A cut of its best moments");
+                for minutes in reels {
+                    let label = format!("{minutes} min");
+                    let chosen = minutes == self.reel_minutes;
+                    if ui.selectable_label(chosen, label).clicked() {
+                        self.reel_minutes = minutes;
+                        self.play(demo, Some(minutes));
+                        ui.close();
+                    }
+                }
+            });
+        });
     }
 
     /// A card: who, where, how long, when, how big, and Play.
@@ -464,16 +511,9 @@ impl DemosView {
                 ui.horizontal(|ui| {
                     let busy = self.download.is_some();
                     if ui.add_enabled(!busy, egui::Button::new("Play")).clicked() {
-                        self.play(demo);
+                        self.play(demo, None);
                     }
-                    let reels = reel_lengths(demo.duration_ms);
-                    let tip = if reels.is_empty() {
-                        "Too short for a highlight reel"
-                    } else {
-                        "Highlight reels come with the demo player's reel cut"
-                    };
-                    ui.add_enabled(false, egui::Button::new("Highlights"))
-                        .on_disabled_hover_text(tip);
+                    self.highlights(ui, demo, busy);
                 });
             });
         });

@@ -2,6 +2,7 @@
 //! local first-person weapon so far).
 
 pub mod ammo_status;
+pub mod cinematic_demo_player;
 pub mod credits;
 pub mod crosshair;
 pub mod demo_download;
@@ -30,6 +31,7 @@ pub mod match_state_manager;
 pub mod player_model_visual_settings;
 pub mod prediction;
 pub mod profile_view;
+pub mod reel_cards;
 pub mod remote_player_logic;
 pub mod remote_player_renderer;
 pub mod settings;

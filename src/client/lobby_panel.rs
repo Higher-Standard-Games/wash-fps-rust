@@ -88,6 +88,8 @@ pub struct LobbyChoice {
     pub play: bool,
     /// A recording to play instead (the Demos page), saved on disk.
     pub demo: Option<std::path::PathBuf>,
+    /// Its highlight reel instead, about this many minutes long.
+    pub reel: Option<f64>,
 }
 
 fn hsl(h: f32, s: f32, l: f32) -> egui::Color32 {
@@ -292,7 +294,7 @@ impl LobbyPanel {
         }
         self.demos.tick();
         // A recording is in: the menu gets out of the way.
-        if let Some(path) = self.demos.ready.take() {
+        if let Some((path, reel)) = self.demos.ready.take() {
             self.choice = Some(LobbyChoice {
                 server_url: String::new(),
                 map: path.display().to_string(),
@@ -300,6 +302,7 @@ impl LobbyPanel {
                 name: self.name.clone(),
                 play: false,
                 demo: Some(path),
+                reel,
             });
         }
     }
@@ -398,6 +401,7 @@ impl LobbyPanel {
                     name: self.name.clone(),
                     play: true,
                     demo: None,
+                    reel: None,
                 });
             }
             LobbyIn::LobbyError(e) => {
@@ -494,6 +498,7 @@ impl LobbyPanel {
                 name: self.name.clone(),
                 play: false,
                 demo: None,
+                reel: None,
             });
         }
     }

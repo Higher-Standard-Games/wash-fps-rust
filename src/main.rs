@@ -5,7 +5,7 @@
 //!
 //! ```text
 //! washoi view <map> [--data DIR] [--spawn N] [--screenshot FILE.png] [--size WxH] [--time T] [--at X,Y,Z,YAW] [--pitch DEG] [--player X,Y,Z,YAW[,CLIP[,FRAME]]]... [--projectile ID,X,Y,Z,YAW[,PITCH]]... [--explosion ID,X,Y,Z,AGE]... [--tracer X,Y,Z,X2,Y2,Z2,R,G,B,AGE]... [--muzzle X,Y,Z,R,G,B,STYLE,SCALE,DURATION,AGE]... [--impact X,Y,Z,NX,NY,NZ,IX,IY,IZ,R,G,B,HEAVY,AGE]... [--rail X,Y,Z,X2,Y2,Z2,R,G,B,KIND,NX,NY,NZ,AGE]... [--lightning MODE,X,Y,Z,X2,Y2,Z2,R,G,B,KIND,AGE]... [--weapon ID [--aim]] [--no-cull] [--no-lights] [--seconds N]
-//! washoi demo <file.shagdemo> [--data DIR] [--screenshot FILE.png] [--size WxH] [--time T] [--at X,Y,Z,YAW] [--pitch DEG] [--follow N] [--audio-out FILE.wav] [--scoreboard] [--seconds N]
+//! washoi demo <file.shagdemo> [--data DIR] [--screenshot FILE.png] [--size WxH] [--time T] [--at X,Y,Z,YAW] [--pitch DEG] [--follow N] [--reel MINUTES] [--audio-out FILE.wav] [--scoreboard] [--seconds N]
 //! washoi watch <ws://game-server> [--name NAME] [--ticket TICKET] [--data DIR] [--screenshot FILE.png] [--time T] [--at X,Y,Z,YAW] [--follow N] [--seconds N]
 //! washoi play <ws://game-server> [--name NAME] [--ticket TICKET] [--data DIR] [--screenshot FILE.png] [--time T] [--say TEXT] [--seconds N]
 //! washoi connect <ws://game-server> [--name NAME] [--ticket TICKET] [--seconds N] [--play]
@@ -24,6 +24,10 @@
 //! `demo` plays a recorded match on its map in the window (or, with
 //! `--screenshot`, draws it `--time` seconds in): the players move,
 //! animate and turn as recorded.
+//!
+//! `--reel MINUTES` plays the demo's highlight reel of about that length
+//! instead: its shots, slow motion, fly-bys, fades and cards. In the window,
+//! Space pauses, Left and Right step through the shots and R replays it.
 //!
 //! `--follow N` puts the camera behind the Nth player (by id); in the
 //! window F cycles through the players and back to the free camera. The
@@ -56,6 +60,7 @@
 //! id such as `plasmagun`), at the hip or, with `--aim`, down its sights.
 
 mod menu;
+mod reel_overlay;
 mod view;
 mod window;
 
@@ -81,7 +86,7 @@ fn usage() -> ! {
     eprintln!(
         "washoi {}\n\
          usage: washoi view <map> [--data DIR] [--spawn N] [--screenshot FILE.png] [--size WxH] [--time T] [--at X,Y,Z,YAW] [--pitch DEG] [--player X,Y,Z,YAW[,CLIP[,FRAME]]]... [--projectile ID,X,Y,Z,YAW[,PITCH]]... [--explosion ID,X,Y,Z,AGE]... [--weapon ID [--aim]] [--no-cull] [--no-lights] [--seconds N]\n\
-         \x20      washoi demo <file.shagdemo> [--data DIR] [--screenshot FILE.png] [--size WxH] [--time T] [--at X,Y,Z,YAW] [--pitch DEG] [--follow N] [--audio-out FILE.wav] [--scoreboard] [--seconds N]\n\
+         \x20      washoi demo <file.shagdemo> [--data DIR] [--screenshot FILE.png] [--size WxH] [--time T] [--at X,Y,Z,YAW] [--pitch DEG] [--follow N] [--reel MINUTES] [--audio-out FILE.wav] [--scoreboard] [--seconds N]\n\
          \x20      washoi watch <ws://game-server> [--name NAME] [--ticket TICKET] [--data DIR] [--screenshot FILE.png] [--time T] [--at X,Y,Z,YAW] [--follow N] [--seconds N]\n\
          \x20      washoi play <ws://game-server> [--name NAME] [--ticket TICKET] [--data DIR] [--screenshot FILE.png] [--time T] [--say TEXT] [--seconds N]\n\
          \x20      washoi connect <ws://game-server> [--name NAME] [--ticket TICKET] [--seconds N] [--play]\n\
@@ -115,6 +120,7 @@ struct Options {
     weapon: Option<String>,
     aim: bool,
     follow: Option<usize>,
+    reel: Option<f64>,
     audio_out: Option<PathBuf>,
     scoreboard: bool,
     say: Option<String>,
@@ -159,6 +165,7 @@ fn parse_options(args: impl Iterator<Item = String>) -> Options {
             "--weapon" => o.weapon = Some(value()),
             "--aim" => o.aim = true,
             "--follow" => o.follow = Some(value().parse().unwrap_or_else(|_| usage())),
+            "--reel" => o.reel = Some(value().parse().unwrap_or_else(|_| usage())),
             "--audio-out" => o.audio_out = Some(PathBuf::from(value())),
             "--scoreboard" => o.scoreboard = true,
             "--say" => o.say = Some(value()),
@@ -357,7 +364,10 @@ fn menu_mode(url: &str, o: &Options) -> i32 {
     let key_file = o.key_file.clone().or_else(default_key_file);
     let go = |c: &washoi::client::lobby_panel::LobbyChoice| {
         if let Some(demo) = &c.demo {
-            println!("lobby: demo {}", demo.display());
+            match c.reel {
+                Some(minutes) => println!("lobby: demo {} as a {minutes} min reel", demo.display()),
+                None => println!("lobby: demo {}", demo.display()),
+            }
             return;
         }
         let how = if c.play { "play" } else { "watch" };
@@ -392,7 +402,9 @@ fn menu_mode(url: &str, o: &Options) -> i32 {
             Ok(Some(c)) => {
                 go(&c);
                 if let Some(demo) = &c.demo {
-                    view::run(&view_options(o, c.map.clone(), Some(demo.clone()), None, false));
+                    let mut v = view_options(o, c.map.clone(), Some(demo.clone()), None, false);
+                    v.reel = c.reel.or(o.reel);
+                    view::run(&v);
                     continue;
                 }
                 let watch = Some((c.server_url.clone(), c.name.clone(), c.admission_ticket.clone()));
@@ -437,6 +449,7 @@ fn view_options(
         demo,
         watch,
         follow: o.follow,
+        reel: o.reel,
         audio_out: o.audio_out.clone(),
         scoreboard: o.scoreboard,
         join,

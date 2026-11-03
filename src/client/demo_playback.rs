@@ -5,8 +5,9 @@
 //! wash-fps plays demos through its deterministic `DemoTimeline`, which is
 //! not ported yet; here each frame enters the [`SnapshotBuffer`] at the
 //! moment it was recorded, so the buffer brackets it the way a live
-//! connection with no jitter would. Seeking, pausing and time scale are
-//! not ported either.
+//! connection with no jitter would. A seek replays the frames up to its
+//! tick into fresh buffers (so the match state is right) and drops their
+//! effects; pausing and time scale are the highlight reel's.
 
 use std::path::Path;
 
@@ -24,6 +25,11 @@ pub struct DemoPlayback {
     /// Demo time in ms since the first frame.
     clock_ms: f64,
     feed: SnapshotFeed,
+    /// Demo time per real time (`DemoViewer.setSpeed`).
+    speed: f64,
+    paused: bool,
+    /// The index's `durationMs`.
+    pub duration_ms: f64,
 }
 
 impl DemoPlayback {
@@ -35,6 +41,7 @@ impl DemoPlayback {
             .read_header()
             .map_err(|e| format!("{}: {e}", path.display()))?
             .clone();
+        let duration_ms = reader.read_index().map_or(0.0, |i| f64::from(i.duration_ms));
         let frames = reader
             .read_all_frames(&WashoiEvents)
             .map_err(|e| format!("{}: {e}", path.display()))?;
@@ -47,7 +54,60 @@ impl DemoPlayback {
             next: 0,
             clock_ms: 0.0,
             feed: SnapshotFeed::new(),
+            speed: 1.0,
+            paused: false,
+            duration_ms,
         })
+    }
+
+    /// Every recorded frame, for the highlight analysis.
+    pub fn frames(&self) -> &[DemoFrame<SnapshotEvent>] {
+        &self.frames
+    }
+
+    /// The header's tick rate (20 when it says 0).
+    pub fn tick_rate(&self) -> f64 {
+        if self.header.tick_rate > 0 {
+            f64::from(self.header.tick_rate)
+        } else {
+            20.0
+        }
+    }
+
+    /// `playheadTick`: the tick the demo clock is at, between frames.
+    pub fn playhead_tick(&self) -> f64 {
+        f64::from(self.frames[0].tick) + self.clock_ms * self.tick_rate() / 1000.0
+    }
+
+    pub fn set_speed(&mut self, speed: f64) {
+        self.speed = speed.max(0.0);
+    }
+
+    pub fn speed(&self) -> f64 {
+        self.speed
+    }
+
+    pub fn play(&mut self) {
+        self.paused = false;
+    }
+
+    pub fn pause(&mut self) {
+        self.paused = true;
+    }
+
+    /// `seekToTick`: the buffers as they would be had the demo played up
+    /// to `tick`, without the effects of the frames on the way.
+    pub fn seek_to_tick(&mut self, tick: f64) {
+        let first = f64::from(self.frames[0].tick);
+        self.clock_ms = ((tick - first) * 1000.0 / self.tick_rate()).max(0.0);
+        self.feed = SnapshotFeed::new();
+        self.next = 0;
+        while self.next < self.frames.len() && self.frame_time(self.next) <= self.clock_ms {
+            let at = self.frame_time(self.next);
+            self.feed.push(at, &self.frames[self.next].state, "");
+            self.next += 1;
+        }
+        let _ = self.feed.sample(self.clock_ms);
     }
 
     pub fn frame_count(&self) -> usize {
@@ -62,7 +122,7 @@ impl DemoPlayback {
     /// When frame `i` was recorded, in ms after the first.
     fn frame_time(&self, i: usize) -> f64 {
         let first = f64::from(self.frames[0].tick);
-        (f64::from(self.frames[i].tick) - first) * 1000.0 / f64::from(self.header.tick_rate.max(1))
+        (f64::from(self.frames[i].tick) - first) * 1000.0 / self.tick_rate()
     }
 
     /// Demo time in seconds.
@@ -93,7 +153,9 @@ impl DemoPlayback {
     }
 
     pub fn advance(&mut self, dt: f64) -> DemoView {
-        self.clock_ms += dt * 1000.0;
+        if !self.paused {
+            self.clock_ms += dt * 1000.0 * self.speed;
+        }
         while self.next < self.frames.len() && self.frame_time(self.next) <= self.clock_ms {
             let at = self.frame_time(self.next);
             self.feed.push(at, &self.frames[self.next].state, "");

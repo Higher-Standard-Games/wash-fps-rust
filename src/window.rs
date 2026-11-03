@@ -5,7 +5,9 @@
 //! Mouse looks (click to capture it, Escape to let go or quit), W A S D move,
 //! F chases the next player of a demo or match (and back to free),
 //! Space and C go up and down, Shift is faster. `--seconds` closes the window
-//! after that long, for unattended runs.
+//! after that long, for unattended runs. A highlight reel drives the camera
+//! itself: Space pauses it, Left and Right step through its shots, R
+//! replays it.
 
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -35,11 +37,15 @@ use winit::keyboard::{KeyCode, PhysicalKey};
 use winit::platform::run_on_demand::EventLoopExtRunOnDemand;
 use winit::window::{CursorGrabMode, Window, WindowId};
 
+use crate::reel_overlay::ReelOverlay;
 use crate::view::{
-    CLEAR, DemoViewSounds, Feed, LoadedMap, MapRenderer, build_renderer, chase_camera, play_view_sounds,
-    styled_players, update_watch_hud,
+    CLEAR, DemoViewSounds, Feed, LoadedMap, MapRenderer, SceneReelWorld, apply_reel_camera, build_renderer,
+    chase_camera, play_view_sounds, styled_players, update_watch_hud,
 };
+use shagger::animation::player_model_manager::PlayerModelVisualStyle;
+use shagger::network::client::snapshot_buffer::InterpolatedEntity;
 use shagger::ui::egui_layer::EguiLayer;
+use washoi::client::cinematic_demo_player::CinematicDemoPlayer;
 use washoi::client::game_events::GameAudio;
 use washoi::client::lobby_panel::install_style;
 use washoi::console::{ConsoleRequest, GameConsole};
@@ -94,6 +100,11 @@ struct App {
     console: GameConsole,
     /// A command asked to leave (`quit`, `disconnect`).
     leave: bool,
+    /// A demo's highlight reel, driving the demo and the camera.
+    reel: Option<CinematicDemoPlayer>,
+    overlay: ReelOverlay,
+    /// The players as drawn last frame, for the reel to aim at.
+    drawn: Vec<(String, InterpolatedEntity, PlayerModelVisualStyle)>,
 }
 
 impl App {
@@ -107,13 +118,18 @@ impl App {
         let map = self.map.as_mut().expect("the map is loaded before the window opens");
         let renderer = build_renderer(&gpu, map, config.format);
         let hdr = HdrTarget::new(&gpu, config.width, config.height);
-        let hud = self.feed.as_ref().and_then(|_| match FpsHud::new(&gpu, config.format) {
-            Ok(hud) => Some(hud),
-            Err(why) => {
-                println!("no HUD: {why}");
-                None
-            }
-        });
+        // A reel is in movie mode: its own cards, no HUD.
+        let hud =
+            self.feed
+                .as_ref()
+                .filter(|_| self.reel.is_none())
+                .and_then(|_| match FpsHud::new(&gpu, config.format) {
+                    Ok(hud) => Some(hud),
+                    Err(why) => {
+                        println!("no HUD: {why}");
+                        None
+                    }
+                });
         let egui = EguiLayer::new(&gpu, &window, config.format);
         install_style(&egui.ctx);
         self.surface = Some(Surface {
@@ -285,6 +301,17 @@ impl App {
         s.renderer.world.animate(&s.gpu, f64::from(dt));
         s.renderer.item_time += f64::from(dt);
         if let Some(feed) = &mut self.feed {
+            if let (Some(reel), Feed::Demo(demo)) = (&mut self.reel, &mut *feed) {
+                reel.update(
+                    f64::from(dt) * 1000.0,
+                    demo,
+                    &mut SceneReelWorld {
+                        shots: s.renderer.shot_world_mut(),
+                        players: &self.drawn,
+                    },
+                );
+                self.overlay.update(reel, f64::from(dt));
+            }
             let view = feed.advance(f64::from(dt));
             if let Feed::Play(p, _) = feed {
                 // First person: the eye where prediction puts it.
@@ -308,7 +335,17 @@ impl App {
                 }
             }
             let players = styled_players(view.players);
-            s.renderer.set_live_players(&players, f64::from(dt));
+            let base_fov = self.camera.fov_y;
+            let eyes = self.reel.as_ref().and_then(|r| {
+                self.follow = None;
+                apply_reel_camera(&mut self.camera, r, &players, base_fov)
+            });
+            let drawn: Vec<_> = players
+                .iter()
+                .filter(|(id, _, _)| Some(id) != eyes.as_ref())
+                .cloned()
+                .collect();
+            s.renderer.set_live_players(&drawn, f64::from(dt));
             if let Some(i) = self.follow {
                 match players.get(i) {
                     Some((_, p, _)) => chase_camera(&mut self.camera, p),
@@ -349,6 +386,7 @@ impl App {
                 );
                 hud.prepare(&s.gpu);
             }
+            self.drawn = players;
             if let Some(why) = feed.ended() {
                 // Hold the last frame; the title says so.
                 s.window.set_title(&format!("Washoi ({why})"));
@@ -395,7 +433,13 @@ impl App {
             hud.draw(&mut pass);
         }
         let console = &mut self.console;
-        let ui = s.egui.run(&s.window, |ui| console.ui(ui.ctx()));
+        let (overlay, reel, feed) = (&self.overlay, &self.reel, &self.feed);
+        let ui = s.egui.run(&s.window, |ui| {
+            if let (Some(reel), Some(Feed::Demo(demo))) = (reel, feed) {
+                overlay.ui(ui.ctx(), reel, demo);
+            }
+            console.ui(ui.ctx());
+        });
         s.egui
             .paint(&s.gpu, &mut encoder, &view, [s.config.width, s.config.height], ui);
         s.gpu.queue.submit([encoder.finish()]);
@@ -403,6 +447,27 @@ impl App {
         s.gpu.queue.present(frame);
         self.frames += 1;
         self.serve_console();
+    }
+
+    /// The reel's keys (`DemoPlaybackKeys` in reel mode): Space pauses,
+    /// Left and Right step through the shots, R plays it again.
+    fn reel_key(&mut self, code: KeyCode) -> bool {
+        let (Some(reel), Some(Feed::Demo(demo))) = (&mut self.reel, &mut self.feed) else {
+            return false;
+        };
+        let shots = self.surface.as_mut().and_then(|s| s.renderer.shot_world_mut());
+        let mut world = SceneReelWorld {
+            shots,
+            players: &self.drawn,
+        };
+        match code {
+            KeyCode::Space => reel.toggle_play_pause(demo),
+            KeyCode::ArrowRight => reel.next_segment(demo, &mut world),
+            KeyCode::ArrowLeft => reel.prev_segment(demo, &mut world),
+            KeyCode::KeyR => reel.replay(demo, &mut world),
+            _ => return false,
+        }
+        true
     }
 
     /// What the console's commands asked for this frame.
@@ -487,6 +552,7 @@ impl ApplicationHandler for App {
                             event_loop.exit();
                         }
                     }
+                    ElementState::Pressed if self.reel_key(code) && !event.repeat => {}
                     ElementState::Pressed if code == KeyCode::KeyF && !event.repeat => {
                         // Chase the next player, then back to the free camera.
                         self.follow = match self.follow {
@@ -634,6 +700,7 @@ pub fn run(
     feed: Option<Feed>,
     follow: Option<usize>,
     audio: Option<GameAudio>,
+    reel: Option<CinematicDemoPlayer>,
 ) -> i32 {
     let mut app = App {
         map: Some(map),
@@ -660,6 +727,9 @@ pub fn run(
         follow,
         audio,
         leave: false,
+        reel,
+        overlay: ReelOverlay::default(),
+        drawn: Vec::new(),
     };
     let ran = run_on_event_loop(&mut app);
     // Close the window before the next one opens on the same loop.

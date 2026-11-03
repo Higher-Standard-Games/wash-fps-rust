@@ -5,9 +5,11 @@
 //! here it is the [`EventCodec`] Washoi hands to the engine (RUST.md 14.2).
 //! The bytes on the wire are unchanged.
 
+use shagger::shared::demo::demo_analyzer::{AnalyzerEvent, HighlightEvent};
 use shagger::shared::json::{self, Value};
 use shagger::shared::net::DecodeError;
 use shagger::shared::net::binary_protocol::BinaryDecoder;
+use shagger::shared::net::game_state::Vec3;
 use shagger::shared::net::snapshot::EventCodec;
 
 /// `EVT_NAME_MAP`: the event name for each wire code. Codes 23 and 25 are
@@ -234,6 +236,35 @@ impl SnapshotEvent {
             Self::AgentDirectives { .. } => "agent_directives",
             Self::LiftState { .. } => "lift_state",
             Self::KnockbackState { .. } => "knockback_state",
+        }
+    }
+}
+
+/// What `DemoAnalyzer` reads of an event: `combat_state`'s health,
+/// `award`'s player and kind, and `death`'s victim, killer, weapon and spot.
+impl HighlightEvent for SnapshotEvent {
+    fn analyzer_event(&self) -> AnalyzerEvent<'_> {
+        match self {
+            Self::CombatState { entity_id, health, .. } => AnalyzerEvent::CombatState {
+                entity_id,
+                health: f64::from(*health),
+            },
+            Self::Award {
+                award_type, player_id, ..
+            } => AnalyzerEvent::Award { player_id, award_type },
+            Self::Death {
+                entity_id,
+                killer_id,
+                weapon_id,
+                at,
+                ..
+            } => AnalyzerEvent::Death {
+                entity_id,
+                killer_id,
+                weapon_id,
+                at: Vec3::new(at.x, at.y, at.z),
+            },
+            _ => AnalyzerEvent::Other,
         }
     }
 }

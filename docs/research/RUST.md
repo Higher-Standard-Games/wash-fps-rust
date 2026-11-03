@@ -2582,6 +2582,45 @@ fit and did not count the parity harness.
 
 Newest first. Each entry names the commits and what proves them.
 
+### Milestone 12: highlight reels (November 3, 2026)
+
+- **shagger `c748a8e` and `0291a00`.** `shagger_shared::demo` gains
+  `demo_analyzer` (`DemoAnalyzer.ts`: frags, multi-kills, airborne and
+  rocket-jump frags, the movement runs, their tags and scores),
+  `sequence_builder` (`SequenceBuilder.ts`: the selection, the three shots
+  of a frag scene, the movement clips between them, speed keyframes and
+  transitions) and `cinematic_camera_paths` (`CinematicCameraPaths.ts`). A
+  game's events reach the analyzer through the `HighlightEvent` trait,
+  which Washoi's `SnapshotEvent` implements. `Math.atan2` joins `sin` and
+  `cos` as an fdlibm port (`js_atan2`), so the orbits' angles match V8.
+- **Golden vectors.** `tools/golden/highlights.mjs` runs SHAG's own three
+  modules on 32 synthetic matches (players bunny-hopping, sliding,
+  wall-jumping and rocket-jumping, kills with awards and revenge, dropped
+  frames, a ground probe); the analysis, every shot and every camera
+  keyframe and sample agree bit for bit. `js_atan2.txt` checks atan2 on
+  12,500 pairs.
+- **wash-fps-rust.** `client/cinematic_demo_player.rs` ports
+  `CinematicDemoPlayer.ts`: the title hold, moving through the shots on the
+  playhead, the eased slow motion, the chase target that gives way when a
+  player leaves the recording, the fly-by aimed at the players and pulled
+  in front of walls (traced against the map's brushes, as are the airborne
+  frags' ground probe), the veils, `getReelInfo` and the shot starts.
+  `client/reel_cards.rs` ports `ReelCards.ts` and `shotCard`.
+  `DemoPlayback` gains seeking (replaying the frames to the tick into fresh
+  buffers, dropping their effects), pausing and speed. `reel_overlay.rs`
+  draws the veil, the title card, each scene's card, the closing card and
+  the timeline. `washoi demo FILE --reel MINUTES` plays a reel (Space, Left,
+  Right and R in the window); the Demos page's Highlights key offers the
+  lengths `reelLengths` allows, then downloads and plays the reel.
+- **Proof.** A unit test plays a one-minute reel of each recorded golden
+  demo to its end: every shot in order, the title and closing black, its
+  running time as the shot list says. Screenshots of a four-minute
+  deathmatch's reel: the title card, a fly-by with the shot card, the
+  victim's eyes, the replay orbit and the closing card.
+- **Not yet.** The demo player's own transport bar and keys outside a reel
+  (`DemoViewerHUD`, `DemoPlaybackKeys`), and the console's `demo
+  highlights` listing.
+
 ### Milestone 10, eighth slice: the Demos page (November 2, 2026)
 
 - **shagger `a78fcf7` and `ad414b9`.** `network/client/http_fetch.rs`:
@@ -2597,8 +2636,8 @@ Newest first. Each entry names the commits and what proves them.
   ownership), the mode and map filters, the search, six cards a page with
   the pager, each card's header facts, and the transfer line with Cancel
   and Try again. Play downloads the recording and the menu hands it to the
-  demo player, then comes back to the menu. Not yet: the highlight reels
-  (their key is there, disabled), level shots and the featured hero.
+  demo player, then comes back to the menu. Not yet: level shots and the
+  featured hero (the highlight reels followed, see milestone 12).
 - **Proof.** Unit tests for the fetch (a file, a 404, the background
   thread), the base URL and file names, and `reelLengths`, `clock`, `ago`
   and `pageKeys`. On the local lobby with the recordings served over HTTP:

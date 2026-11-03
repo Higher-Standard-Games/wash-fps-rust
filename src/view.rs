@@ -39,6 +39,7 @@ use shagger::shared::collision::shared_collision_world::SharedCollisionWorld;
 use shagger::shared::entities::projectile_def::ProjectileDef;
 use shagger::shared::net::game_state::PlayerState;
 use shagger::shared::spread_utils::mulberry32;
+use shagger::ui::egui_layer::egui;
 use shagger::weapon::explosion::explosion_batch_renderer::{ExplosionBatchRenderer, ExplosionLook};
 use shagger::weapon::explosion_effect::{explosion_flash, explosion_for};
 use shagger::weapon::hitscan_effects::{HitscanEffects, ShotWorld};
@@ -51,6 +52,9 @@ use shagger::weapon::projectile_manager::{
 use shagger::weapon::rail::rail_profiles::{RailEffectSample, RailImpactKind};
 use shagger::weapon::tracer::streak_tracer_renderer::StreakTracerShot;
 use shagger::weapon::weapon_view_manager::ViewModelInput;
+use washoi::client::cinematic_demo_player::{
+    CinematicDemoPlayer, REEL_TITLE_MS, ReelCamera, ReelWorld, look_at_rotation,
+};
 use washoi::client::demo_playback::{DemoPlayback, DemoView, LiveProjectile};
 use washoi::client::fps_hud::{FpsHud, WatchFrame};
 use washoi::client::game_events::{EffectTargets, GameAudio, play_remote_shots};
@@ -143,6 +147,8 @@ pub struct ViewOptions {
     pub watch: Option<(String, String, Option<String>)>,
     /// The player (by place in id order) to put the camera behind.
     pub follow: Option<usize>,
+    /// Play the demo's highlight reel of about this many minutes instead.
+    pub reel: Option<f64>,
     /// Where to write the demo's or match's sound (`--audio-out`), mixed
     /// offline as heard from the camera.
     pub audio_out: Option<PathBuf>,
@@ -206,6 +212,76 @@ pub fn update_watch_hud(
 
 /// A chase camera behind a player: 150 units back and 40 up along the
 /// player's yaw, looking slightly down.
+/// `reelWorld` (`DemoService.ts`): the players as drawn, and where a line
+/// meets solid map (what the server's shots stop on; the browser picks the
+/// drawn brushes of the same contents).
+pub struct SceneReelWorld<'a> {
+    pub shots: Option<&'a mut SweepCollisionBackend>,
+    pub players: &'a [(String, InterpolatedEntity, PlayerModelVisualStyle)],
+}
+
+impl ReelWorld for SceneReelWorld<'_> {
+    fn position_of(&mut self, entity_id: &str) -> Option<shagger::shared::net::game_state::Vec3> {
+        self.players
+            .iter()
+            .find(|(id, _, _)| id == entity_id)
+            .map(|(_, p, _)| shagger::shared::net::game_state::Vec3::new(p.x, p.y, p.z))
+    }
+
+    fn blocked_at(
+        &mut self,
+        from: shagger::shared::net::game_state::Vec3,
+        to: shagger::shared::net::game_state::Vec3,
+    ) -> Option<shagger::shared::net::game_state::Vec3> {
+        let world = self.shots.as_deref_mut()?;
+        let along = DVec3::new(to.x - from.x, to.y - from.y, to.z - from.z);
+        let length = along.length();
+        if length < 1.0 {
+            return None;
+        }
+        let hit = world.trace_shot(DVec3::new(from.x, from.y, from.z), along / length, length)?;
+        Some(shagger::shared::net::game_state::Vec3::new(
+            hit.point.x,
+            hit.point.y,
+            hit.point.z,
+        ))
+    }
+}
+
+/// Puts `camera` where the reel says: on its fly-by, or behind a player's
+/// eyes. Returns the player whose eyes it is, whose body is then left out.
+/// `base_fov` is the camera's own, for shots that do not set one.
+pub fn apply_reel_camera(
+    camera: &mut Camera,
+    reel: &CinematicDemoPlayer,
+    players: &[(String, InterpolatedEntity, PlayerModelVisualStyle)],
+    base_fov: f32,
+) -> Option<String> {
+    match reel.camera()? {
+        ReelCamera::Freefly {
+            position,
+            look_at,
+            fov_degrees,
+        } => {
+            let (pitch, yaw) = look_at_rotation(*position, *look_at);
+            camera.position = Vec3::new(position.x as f32, position.y as f32, position.z as f32);
+            camera.pitch = pitch as f32;
+            camera.yaw = yaw as f32;
+            camera.fov_y = fov_degrees.map_or(base_fov, |f| f.to_radians() as f32);
+            None
+        }
+        ReelCamera::Chase(id) => {
+            camera.fov_y = base_fov;
+            let (_, p, _) = players.iter().find(|(pid, _, _)| pid == id)?;
+            let lift = DEFAULT_VIEWHEIGHT + p.crouch_view_offset.unwrap_or(0.0);
+            camera.position = Vec3::new(p.x as f32, (p.y + lift) as f32, p.z as f32);
+            camera.yaw = p.yaw as f32;
+            camera.pitch = p.pitch.unwrap_or(0.0) as f32;
+            Some(id.clone())
+        }
+    }
+}
+
 pub fn chase_camera(camera: &mut Camera, player: &InterpolatedEntity) {
     let yaw = player.yaw as f32;
     let forward = Vec3::new(yaw.sin(), 0.0, yaw.cos());
@@ -647,6 +723,11 @@ const HELD_WEAPONS: [&str; 8] = [
 ];
 
 impl MapRenderer {
+    /// What a reel's cameras and the ground probe trace against.
+    pub fn shot_world_mut(&mut self) -> Option<&mut SweepCollisionBackend> {
+        self.shot_world.as_mut()
+    }
+
     /// Puts `id` in hand from the holster (the view model's weapon switch),
     /// or nothing when dead. The weapon in hand keeps its sway when it
     /// stays.
@@ -1319,6 +1400,24 @@ pub fn run(o: &ViewOptions) -> i32 {
     map.effects.clone_from(&o.effects);
     map.weapon.clone_from(&o.weapon);
     map.remote_players = feed.is_some();
+    // The highlight reel: analyzed and cut before the first frame, its
+    // ground probe against the map's brushes.
+    let mut reel = match (&mut feed, o.reel) {
+        (Some(Feed::Demo(demo)), Some(minutes)) => {
+            let mut reel = CinematicDemoPlayer::new(REEL_TITLE_MS);
+            reel.load_and_play(
+                demo,
+                &mut SceneReelWorld {
+                    shots: map.shot_world.as_mut(),
+                    players: &[],
+                },
+                minutes,
+            );
+            print_reel(&reel);
+            Some(reel)
+        }
+        _ => None,
+    };
     map.hands = o.join;
     let at = o.at.map(|[x, y, z, angle]| Camera::from_q3([x, y, z], angle));
     let Some(mut camera) = at.or_else(|| map.spawns.get(o.spawn).or(map.spawns.first()).copied()) else {
@@ -1351,7 +1450,7 @@ pub fn run(o: &ViewOptions) -> i32 {
                 None
             }
         });
-        return crate::window::run(map, camera, o.seconds, feed, o.follow, audio);
+        return crate::window::run(map, camera, o.seconds, feed, o.follow, audio, reel);
     };
     let gpu = match Gpu::headless() {
         Ok(g) => g,
@@ -1368,6 +1467,7 @@ pub fn run(o: &ViewOptions) -> i32 {
     renderer.world.animate(&gpu, o.time);
     renderer.item_time = o.time;
     let mut hud: Option<FpsHud> = None;
+    let mut overlay = crate::reel_overlay::ReelOverlay::default();
     if let Some(feed) = &mut feed {
         // Play up to `--time` at 60 frames a second (live: in real time).
         let steps = (o.time * 60.0).round() as usize;
@@ -1394,6 +1494,11 @@ pub fn run(o: &ViewOptions) -> i32 {
             }
         };
         let mut said = o.say.as_deref();
+        let base_fov = camera.fov_y;
+        if reel.is_some() {
+            // Movie mode: the reel draws its own cards.
+            hud = None;
+        }
         for step in 0..steps.max(1) {
             if live {
                 std::thread::sleep(std::time::Duration::from_micros(16_667));
@@ -1408,6 +1513,17 @@ pub fn run(o: &ViewOptions) -> i32 {
                     pitch: f64::from(camera.pitch),
                     ..PlayInput::default()
                 };
+            }
+            if let (Some(reel), Feed::Demo(demo)) = (&mut reel, &mut *feed) {
+                reel.update(
+                    1000.0 / 60.0,
+                    demo,
+                    &mut SceneReelWorld {
+                        shots: renderer.shot_world_mut(),
+                        players: &players,
+                    },
+                );
+                overlay.update(reel, 1.0 / 60.0);
             }
             let view = feed.advance(1.0 / 60.0);
             if let Feed::Play(p, _) = feed {
@@ -1427,7 +1543,15 @@ pub fn run(o: &ViewOptions) -> i32 {
             }
             players = styled_players(view.players);
             projectiles = view.projectiles;
-            renderer.set_live_players(&players, 1.0 / 60.0);
+            let eyes = reel
+                .as_ref()
+                .and_then(|r| apply_reel_camera(&mut camera, r, &players, base_fov));
+            let drawn: Vec<_> = players
+                .iter()
+                .filter(|(id, _, _)| Some(id) != eyes.as_ref())
+                .cloned()
+                .collect();
+            renderer.set_live_players(&drawn, 1.0 / 60.0);
             renderer.set_live_projectiles(&projectiles, 1.0 / 60.0);
             renderer.play_effects(&view.effects, &view.weapons, 1.0 / 60.0);
             if let Some(hud) = &mut hud {
@@ -1579,7 +1703,20 @@ pub fn run(o: &ViewOptions) -> i32 {
     if let Some(hud) = &mut hud {
         hud.prepare(&gpu);
     }
-    let pixels = render_hdr_with_ui_to_rgba(
+    if let (Some(reel), Some(Feed::Demo(demo))) = (&reel, &feed) {
+        let info = reel.reel_info(demo);
+        println!(
+            "reel: {:?}, shot {} of {}, scene {} of {}, {:.1} of {:.1} s",
+            info.state,
+            (info.current_segment + 1).min(info.total_segments),
+            info.total_segments,
+            info.current_scene + 1,
+            info.total_scenes,
+            info.reel_elapsed_ms / 1000.0,
+            info.reel_total_ms / 1000.0
+        );
+    }
+    let mut pixels = render_hdr_with_ui_to_rgba(
         &gpu,
         o.width,
         o.height,
@@ -1594,6 +1731,9 @@ pub fn run(o: &ViewOptions) -> i32 {
             }
         },
     );
+    if let (Some(reel), Some(Feed::Demo(demo))) = (&reel, &feed) {
+        composite_reel_overlay(&gpu, &mut pixels, o.width, o.height, &overlay, reel, demo);
+    }
     match image::save_buffer(path, &pixels, o.width, o.height, image::ExtendedColorType::Rgba8) {
         Ok(()) => {
             println!("wrote {}", path.display());
@@ -1602,6 +1742,70 @@ pub fn run(o: &ViewOptions) -> i32 {
         Err(e) => {
             eprintln!("{}: {e}", path.display());
             1
+        }
+    }
+}
+
+/// The reel's shot list, as `demo highlights` prints it.
+fn print_reel(reel: &CinematicDemoPlayer) {
+    let Some(r) = reel.reel() else { return };
+    println!(
+        "reel: {} shots in {} scenes, {:.1} s",
+        r.total_segments,
+        r.total_scenes,
+        r.total_duration_ms / 1000.0
+    );
+    for s in &r.segments {
+        let card = washoi::client::reel_cards::shot_card(s, r.total_scenes);
+        println!(
+            "  {:>2}. ticks {}-{} {:<16} {:<6} {} by {} ({:.1} s)",
+            s.segment_index + 1,
+            s.start_tick,
+            s.end_tick,
+            s.camera_preset.as_str(),
+            s.role.as_str(),
+            card.title,
+            card.player,
+            s.duration_ms / 1000.0
+        );
+    }
+}
+
+/// Draws the reel's overlay offscreen and lays it over `pixels`.
+fn composite_reel_overlay(
+    gpu: &Gpu,
+    pixels: &mut [u8],
+    width: u32,
+    height: u32,
+    overlay: &crate::reel_overlay::ReelOverlay,
+    reel: &CinematicDemoPlayer,
+    demo: &DemoPlayback,
+) {
+    use shagger::ui::egui_layer::EguiLayer;
+    let mut layer = EguiLayer::offscreen(gpu, OFFSCREEN_FORMAT);
+    washoi::client::lobby_panel::install_style(&layer.ctx);
+    let input = || egui::RawInput {
+        screen_rect: Some(egui::Rect::from_min_size(
+            egui::Pos2::ZERO,
+            egui::vec2(width as f32, height as f32),
+        )),
+        ..Default::default()
+    };
+    // Twice: egui lays text out on its first frame, which also brings the
+    // font atlas the second one draws with.
+    let clear = wgpu::Color::TRANSPARENT;
+    let mut ui = Vec::new();
+    for _ in 0..2 {
+        let frame = layer.run_input(input(), |ui| overlay.ui(ui.ctx(), reel, demo));
+        ui = shagger::rendering::offscreen::render_encoded_to_rgba(gpu, width, height, clear, |encoder, view| {
+            layer.paint(gpu, encoder, view, [width, height], frame);
+        });
+    }
+    // egui's colours are premultiplied: over = ui + scene * (1 - alpha).
+    for (dst, src) in pixels.as_chunks_mut::<4>().0.iter_mut().zip(ui.as_chunks::<4>().0) {
+        let keep = 255 - u16::from(src[3]);
+        for c in 0..3 {
+            dst[c] = (u16::from(src[c]) + u16::from(dst[c]) * keep / 255).min(255) as u8;
         }
     }
 }
