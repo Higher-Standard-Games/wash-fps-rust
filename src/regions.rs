@@ -198,9 +198,11 @@ pub fn probe(lobby_url: &str) -> Option<f64> {
 
 /// Best of [`PING_ATTEMPTS`], one after another so the first connection's DNS
 /// lookup does not count against it.
+/// Stops between attempts once `cancel` is set (a region was chosen).
 #[must_use]
-pub fn ping(lobby_url: &str) -> Option<f64> {
+pub fn ping(lobby_url: &str, cancel: &AtomicBool) -> Option<f64> {
     (0..PING_ATTEMPTS)
+        .take_while(|_| !cancel.load(std::sync::atomic::Ordering::Relaxed))
         .filter_map(|_| probe(lobby_url))
         .min_by(f64::total_cmp)
 }

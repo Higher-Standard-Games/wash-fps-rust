@@ -149,11 +149,14 @@ jobs:
           name: washoi-${{ matrix.runner }}
           path: dist/*
       # The symbols for reading a crash's backtrace; not for players.
+      # In a folder of its own, so the download keeps the bundle's name.
+      - if: runner.os == 'macOS'
+        run: mkdir -p symbols && cp -R target/release/washoi.dSYM symbols/
       - if: runner.os == 'macOS'
         uses: actions/upload-artifact@v4
         with:
           name: symbols-${{ matrix.runner }}
-          path: target/release/washoi.dSYM
+          path: symbols
 
   release:
     if: startsWith(github.ref, 'refs/tags/v')
@@ -165,6 +168,7 @@ jobs:
       - uses: actions/download-artifact@v4
         with:
           path: dist
+          pattern: washoi-*
           merge-multiple: true
       - uses: softprops/action-gh-release@v2
         with:

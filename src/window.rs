@@ -1180,7 +1180,20 @@ pub fn present(
 ) {
     window.pre_present_notify();
     gpu.queue.present(frame.texture);
-    if frame.stale {
+    // Some drivers report every frame suboptimal, and configuring the same
+    // surface again does not stop them: at most once a second, then.
+    thread_local! {
+        static LAST_RECONFIGURE: Cell<Option<Instant>> = const { Cell::new(None) };
+    }
+    if frame.stale
+        && LAST_RECONFIGURE.with(|last| {
+            let due = last.get().is_none_or(|at| at.elapsed() >= Duration::from_secs(1));
+            if due {
+                last.set(Some(Instant::now()));
+            }
+            due
+        })
+    {
         surface.configure(&gpu.device, config);
     }
 }
@@ -1211,6 +1224,12 @@ thread_local! {
 /// Keeps `window`'s size, place and maximised state for the next screen's
 /// window ([`open_window`]); called as each screen closes its window.
 pub fn remember_placement(window: &Window) {
+    // Minimised, Windows reports 0 × 0 at (-32000, -32000): the next window
+    // would open there, unseen. Keep the last placement instead.
+    let size = window.inner_size();
+    if window.is_minimized() == Some(true) || size.width == 0 || size.height == 0 {
+        return;
+    }
     PLACEMENT.with(|p| {
         p.set(Some(Placement {
             size: window.inner_size(),
@@ -1268,6 +1287,10 @@ pub fn open_window(event_loop: &ActiveEventLoop) -> Result<OpenWindow, String> {
 }
 
 /// Opens the window and runs until it closes.
+///
+/// # Errors
+/// What ended the match early (the event loop, the surface, the server),
+/// for the menu to show.
 #[allow(clippy::too_many_arguments)]
 pub fn run(
     map: LoadedMap,
@@ -1278,7 +1301,7 @@ pub fn run(
     audio: Option<GameAudio>,
     reel: Option<CinematicDemoPlayer>,
     bench: Option<Bench>,
-) -> i32 {
+) -> Result<i32, String> {
     // A key still down when the last window closed never saw its release.
     with_input(InputSystem::release_held_input);
     let mut app = App {
@@ -1324,10 +1347,7 @@ pub fn run(
         remember_placement(&s.window);
     }
     app.surface = None;
-    if let Err(e) = ran {
-        eprintln!("{e}");
-        return 1;
-    }
+    ran.map_err(|why| format!("The match stopped: {why}"))?;
     let elapsed = app.started.elapsed().as_secs_f64();
     println!(
         "{} frames in {elapsed:.1} s ({:.1} fps)",
@@ -1344,11 +1364,10 @@ pub fn run(
             }
         }
     }
-    if let Some(why) = app.error {
-        eprintln!("{why}");
-        return 1;
+    match app.error {
+        Some(why) => Err(format!("The match stopped: {why}")),
+        None => Ok(0),
     }
-    0
 }
 
 /// The drawn players' ids by name, as the viewer cycles them

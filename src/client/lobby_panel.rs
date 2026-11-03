@@ -324,7 +324,9 @@ impl LobbyPanel {
             }
             _ => (None, false),
         };
-        let key = RUN_KEY.lock().ok().and_then(|k| k.clone()).or(key);
+        // The file wins: a key put there by hand replaces this run's. The
+        // run's key stands in only when the file could not give one.
+        let key = key.or_else(|| RUN_KEY.lock().ok().and_then(|k| k.clone()));
         Self {
             client: LobbyClient::connect(url),
             key,
@@ -377,7 +379,10 @@ impl LobbyPanel {
     /// uploaded, waits up to a second and a half for the lobby to confirm
     /// them, then disconnects.
     pub fn leave(&mut self) {
-        if let Some(sync) = &mut self.settings_sync {
+        // Offline, nothing will answer a save: do not wait for one.
+        if self.connected
+            && let Some(sync) = &mut self.settings_sync
+        {
             with_cvars(|c| sync.flush(&mut self.client, c));
             let deadline = Instant::now() + Duration::from_millis(1500);
             while sync.awaiting_save()
@@ -786,7 +791,14 @@ impl LobbyPanel {
             if let Some(why) = &self.match_error {
                 let mut dismiss = false;
                 ui.horizontal(|ui| {
-                    ui.colored_label(hsl(0.0, 80.0, 60.0), format!("The match could not start: {why}"));
+                    ui.colored_label(
+                        hsl(0.0, 80.0, 60.0),
+                        if why.starts_with("The match") {
+                            why.clone()
+                        } else {
+                            format!("The match could not start: {why}")
+                        },
+                    );
                     dismiss = ui.small_button("Dismiss").clicked();
                 });
                 if dismiss {

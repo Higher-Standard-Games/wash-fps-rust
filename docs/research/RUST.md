@@ -2643,6 +2643,60 @@ fit and did not count the parity harness.
 
 Newest first. Each entry names the commits and what proves them.
 
+### Fourth review round: the round 3 fixes, fuzzing, soak (November 3, 2026)
+
+Three parts (shagger `3ceede6`, wash-fps-rust after `db33566`):
+
+- **Review of round 3's fixes.** Nothing crashed; fixed: a window closed
+  while minimised no longer makes the next one open at 0 × 0 off screen
+  (Windows); cvars are saved on a writer thread
+  (`atomic_file::write_atomic_later`, flushed before exit) instead of
+  fsyncing every frame a slider moves; a rename another program blocks is
+  retried; a missing sound card is looked for with a backoff from 2 s to
+  30 s (the soak run below saw 22 looks in 9 minutes, not 270); a stop
+  cancels a play or stream still waiting for a device and streams and
+  stops are never dropped from that queue; a `Suboptimal` surface is
+  reconfigured at most once a second; the error dialog passes its text in
+  the environment (PowerShell ends a string at curly quotes); a key put in
+  the key file by hand wins over the run's; the round freeze strips use
+  and weapon switching from the dead too; an error during a match, not
+  only at its start, is shown on the menu; region pings stop once a
+  region is chosen; leaving the menu offline does not wait for a settings
+  save; the release job downloads only `washoi-*` artifacts and keeps the
+  dSYM bundle's name; wgpu errors are logged 20 times, then every
+  thousandth.
+- **Fuzzing.** No nightly, so a stable mutation fuzzer: shagger's
+  `tests/fuzz_parsers.rs` (BSP and the collision, geometry and PVS built
+  from it; pk3; MD3; glTF with Draco; JPEG, TGA, PNG and KTX; WAV and
+  Ogg; shader scripts; JSON, playlists and lobby messages; every protocol
+  decoder) seeded from the synced packages, and wash-fps-rust's
+  `tests/fuzz_demos.rs` (load and play a `.shagdemo` through
+  `DemoPlayback`). Both are `#[ignore]`d; run with `FUZZ_DATA` or
+  `FUZZ_DEMOS` in release with `CARGO_PROFILE_RELEASE_OVERFLOW_CHECKS=true`
+  under `ulimit -v` so an allocation that would exhaust memory fails
+  loudly. About 1.5 million engine inputs and 4 000 demos found eight
+problems, each now
+  refused or bounded with a regression test: BSP counts walked two
+  billion records (`record_range`, `clamp_ranges`) and a node pointing
+  back up the tree looped forever; a KTX header naming 65535 × 65535 over
+  a few bytes allocated 17 GB and its compressed size check overflowed;
+  a cut-off WAV `fmt ` chunk read past the end and a 1 Hz rate resampled
+  into hours; an MD3 vertex count asked for 14 GB and a surface ending
+  where it starts repeated two billion times; a glTF accessor naming a
+  missing buffer view panicked. The last full pass, 588 000 inputs, and
+  the demo passes found nothing. Loading of valid files is unchanged (the
+  goldens pass); none of these checks is in SHAG, which reads
+  `undefined` and goes on.
+- **Soak.** The release build played a 30-minute highlight reel under
+  Xvfb on llvmpipe for 25 minutes: resident memory settled at 2.08 GB
+  within a minute (llvmpipe keeps textures in process memory) and stayed
+  within 1 MB of it, with 23 threads and 10 open files throughout, at
+  4.7 fps (6 992 frames). A live bot match could not be soaked here: this
+  container reaches the lobby on 443 but not the game server's port 7777,
+  so `washoi lobby … bot --window` stops at the WebSocket timeout. A
+  long match on a real machine is still to do, and so are menu-to-match
+  cycles, which need a player at the menu.
+
 ### Third review round: lifecycle, parity, platform, rendering, audio (November 3, 2026)
 
 Five reviewers took one area each and found about 55 problems. Fixed

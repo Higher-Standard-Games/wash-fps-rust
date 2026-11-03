@@ -503,6 +503,8 @@ fn main() {
         }
         _ => usage(),
     };
+    // Settings are written off the game thread; the last ones land first.
+    shagger::core::atomic_file::flush_pending(std::time::Duration::from_secs(2));
     std::process::exit(code);
 }
 
@@ -543,7 +545,8 @@ fn regions_mode(o: &Options) -> i32 {
     let cancel = std::sync::atomic::AtomicBool::new(false);
     for r in washoi::regions::load(dir.as_deref(), &cancel) {
         let ping = r.lobby_url.as_deref().map_or("not live".to_owned(), |url| {
-            washoi::regions::ping(url).map_or("no reply".to_owned(), |ms| format!("{ms} ms"))
+            washoi::regions::ping(url, &std::sync::atomic::AtomicBool::new(false))
+                .map_or("no reply".to_owned(), |ms| format!("{ms} ms"))
         });
         println!("{} {} {} {ping}", r.id, r.name, r.host);
     }
@@ -699,14 +702,13 @@ fn show_error_dialog(why: &str) {
     #[cfg(windows)]
     let _ = {
         use std::os::windows::process::CommandExt;
-        // A PowerShell single-quoted string takes everything but `'`, doubled.
-        let script = format!(
-            "Add-Type -AssemblyName PresentationFramework; [System.Windows.MessageBox]::Show('{}', 'Washoi') | Out-Null",
-            text.replace('\'', "''")
-        );
+        // The text goes in the environment, never in the script: PowerShell
+        // ends a quoted string at curly quotes too.
+        let script = "Add-Type -AssemblyName PresentationFramework; [System.Windows.MessageBox]::Show($env:WASHOI_ERROR, 'Washoi') | Out-Null";
         const CREATE_NO_WINDOW: u32 = 0x0800_0000;
         std::process::Command::new("powershell")
-            .args(["-NoProfile", "-Command", &script])
+            .args(["-NoProfile", "-Command", script])
+            .env("WASHOI_ERROR", &text)
             .creation_flags(CREATE_NO_WINDOW)
             .status()
     };

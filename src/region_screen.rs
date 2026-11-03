@@ -92,7 +92,7 @@ struct Picker {
 }
 
 /// Measures each live region of `list` not measured yet, a thread each.
-fn ping_all(list: &[Region], pings: &Arc<Mutex<HashMap<String, Ping>>>) {
+fn ping_all(list: &[Region], pings: &Arc<Mutex<HashMap<String, Ping>>>, cancel: &Arc<AtomicBool>) {
     for url in list.iter().filter_map(|r| r.lobby_url.clone()) {
         {
             let mut known = pings.lock().expect("pings");
@@ -101,9 +101,9 @@ fn ping_all(list: &[Region], pings: &Arc<Mutex<HashMap<String, Ping>>>) {
             }
             known.insert(url.clone(), Ping::Measuring);
         }
-        let pings = pings.clone();
+        let (pings, cancel) = (pings.clone(), cancel.clone());
         std::thread::spawn(move || {
-            let ping = regions::ping(&url).map_or(Ping::NoReply, Ping::Ms);
+            let ping = regions::ping(&url, &cancel).map_or(Ping::NoReply, Ping::Ms);
             pings.lock().expect("pings").insert(url, ping);
         });
     }
@@ -123,7 +123,7 @@ impl Picker {
             config_dir,
         };
         if !offline {
-            ping_all(&first, &picker.pings);
+            ping_all(&first, &picker.pings, &picker.cancel);
             let (list, pings, cancel, dir) = (
                 picker.regions.clone(),
                 picker.pings.clone(),
@@ -132,7 +132,9 @@ impl Picker {
             );
             std::thread::spawn(move || {
                 let read = regions::load(dir.as_deref(), &cancel);
-                ping_all(&read, &pings);
+                if !cancel.load(std::sync::atomic::Ordering::Relaxed) {
+                    ping_all(&read, &pings, &cancel);
+                }
                 *list.lock().expect("regions") = read;
             });
         }

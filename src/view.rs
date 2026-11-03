@@ -2566,9 +2566,7 @@ pub fn start(o: &ViewOptions) -> Result<i32, String> {
             .bench
             .as_ref()
             .map(|(frames, warmup, out)| crate::bench::Bench::new(*frames, *warmup, out.clone()));
-        return Ok(crate::window::run(
-            map, camera, o.seconds, feed, o.follow, audio, reel, bench,
-        ));
+        return crate::window::run(map, camera, o.seconds, feed, o.follow, audio, reel, bench);
     };
     let gpu = match Gpu::headless() {
         Ok(g) => g,

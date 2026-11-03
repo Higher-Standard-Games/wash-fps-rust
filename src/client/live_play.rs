@@ -537,7 +537,8 @@ impl LivePlay {
                 weapon_slot: input.weapon_slot,
                 ..PlayInput::default()
             };
-        } else if frozen {
+        }
+        if frozen {
             // The round freeze strips use and weapon switching too.
             input = PlayInput {
                 yaw: input.yaw,
