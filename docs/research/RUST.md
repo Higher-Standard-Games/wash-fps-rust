@@ -2672,6 +2672,12 @@ kept as a fallback: the game needs a server anyway, and the console stays
 for anything offline. So 0.1.1's item 10 covers the in-game HUD only, and
 the webview gets its own spec after the release.
 
+The spec is [WEBVIEW_LOBBY.md](WEBVIEW_LOBBY.md) (November 3, 2026): the page
+keeps the lobby connection, account and settings sync; a JSON bridge hands
+matches, demos, links, files and the window to the native client; native
+files are the store for settings and the key, mirrored into the page's local
+storage.
+
 ## 24. Progress log
 
 Newest first. Each entry names the commits and what proves them.
