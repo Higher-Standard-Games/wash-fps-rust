@@ -1,0 +1,118 @@
+name: Release
+
+# A tag v* builds the game for Linux, macOS (Apple silicon and Intel) and
+# Windows, packages each with tools/package.sh and attaches them to a draft
+# GitHub release. Run by hand, it builds and keeps the packages as workflow
+# artifacts only.
+#
+# Signing happens only when its secrets exist:
+#   macOS    MACOS_CERTIFICATE (base64 .p12), MACOS_CERTIFICATE_PASSWORD,
+#            MACOS_SIGN_IDENTITY ("Developer ID Application: ..."), and for
+#            notarizing APPLE_ID, APPLE_TEAM_ID, APPLE_APP_PASSWORD
+#   Windows  WINDOWS_CERTIFICATE (base64 .pfx), WINDOWS_CERTIFICATE_PASSWORD
+# Without them the macOS app is ad-hoc signed and the Windows exe unsigned.
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+  # shagger is private: Cargo fetches it with git and the token below.
+  CARGO_NET_GIT_FETCH_WITH_CLI: "true"
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # The oldest supported Ubuntu, so the binary runs on older glibc.
+          - runner: ubuntu-22.04
+          - runner: macos-14
+          - runner: macos-13
+          - runner: windows-latest
+    runs-on: ${{ matrix.runner }}
+    # Secrets cannot be tested in a step's `if`; as the job's environment they can.
+    env:
+      MACOS_CERTIFICATE: ${{ secrets.MACOS_CERTIFICATE }}
+      MACOS_CERTIFICATE_PASSWORD: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
+      MACOS_SIGN_IDENTITY: ${{ secrets.MACOS_SIGN_IDENTITY }}
+      APPLE_ID: ${{ secrets.APPLE_ID }}
+      APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+      APPLE_APP_PASSWORD: ${{ secrets.APPLE_APP_PASSWORD }}
+      WINDOWS_CERTIFICATE: ${{ secrets.WINDOWS_CERTIFICATE }}
+      WINDOWS_CERTIFICATE_PASSWORD: ${{ secrets.WINDOWS_CERTIFICATE_PASSWORD }}
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+      - name: Allow reading shagger
+        run: git config --global url."https://x-access-token:${{ secrets.SHAGGER_READ_TOKEN }}@github.com/Higher-Standard-Games/shagger".insteadOf "https://github.com/Higher-Standard-Games/shagger"
+      - uses: dtolnay/rust-toolchain@stable
+      # cpal's ALSA backend (RUST.md 22.7) links libasound.
+      - if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y libasound2-dev
+      - uses: Swatinem/rust-cache@v2
+      - name: Build
+        run: cargo build --release --locked
+        env:
+          WASHOI_BUILD: ${{ github.ref_name }} ${{ github.sha }}
+      - name: Import the macOS signing certificate
+        if: runner.os == 'macOS' && env.MACOS_CERTIFICATE != ''
+        run: |
+          keychain="$RUNNER_TEMP/signing.keychain-db"
+          security create-keychain -p "" "$keychain"
+          security set-keychain-settings "$keychain"
+          security unlock-keychain -p "" "$keychain"
+          echo "$MACOS_CERTIFICATE" | base64 --decode > "$RUNNER_TEMP/cert.p12"
+          security import "$RUNNER_TEMP/cert.p12" -k "$keychain" -P "$MACOS_CERTIFICATE_PASSWORD" -T /usr/bin/codesign
+          security set-key-partition-list -S apple-tool:,apple: -s -k "" "$keychain"
+          security list-keychains -d user -s "$keychain" login.keychain
+      - name: Sign the Windows exe
+        if: runner.os == 'Windows' && env.WINDOWS_CERTIFICATE != ''
+        shell: pwsh
+        run: |
+          [IO.File]::WriteAllBytes("$env:RUNNER_TEMP\cert.pfx", [Convert]::FromBase64String($env:WINDOWS_CERTIFICATE))
+          $signtool = Get-ChildItem "C:\Program Files (x86)\Windows Kits\10\bin\*\x64\signtool.exe" | Select-Object -Last 1
+          & $signtool.FullName sign /f "$env:RUNNER_TEMP\cert.pfx" /p "$env:WINDOWS_CERTIFICATE_PASSWORD" /fd sha256 /tr http://timestamp.digicert.com /td sha256 target\release\washoi.exe
+      - name: Package
+        run: |
+          # A tag v1.2.3 names the packages 1.2.3; otherwise Cargo.toml's version.
+          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then export VERSION="${GITHUB_REF_NAME#v}"; fi
+          tools/package.sh
+        env:
+          PYTHON: ${{ runner.os == 'Windows' && 'python' || 'python3' }}
+      - name: Notarize the macOS app
+        if: runner.os == 'macOS' && env.APPLE_ID != ''
+        run: |
+          for zip in dist/*.zip; do
+            xcrun notarytool submit "$zip" --apple-id "$APPLE_ID" --team-id "$APPLE_TEAM_ID" --password "$APPLE_APP_PASSWORD" --wait
+            dir=$(mktemp -d)
+            ditto -x -k "$zip" "$dir"
+            xcrun stapler staple "$dir/Washoi.app"
+            rm "$zip"
+            (cd "$dir" && ditto -c -k --keepParent Washoi.app "$GITHUB_WORKSPACE/$zip")
+          done
+      - uses: actions/upload-artifact@v4
+        with:
+          name: washoi-${{ matrix.runner }}
+          path: dist/*
+
+  release:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+      - uses: softprops/action-gh-release@v2
+        with:
+          draft: true
+          files: dist/*

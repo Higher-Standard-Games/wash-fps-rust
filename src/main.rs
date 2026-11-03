@@ -1,9 +1,12 @@
-//! The native client binary. For now the headless client of milestone 2
-//! (RUST.md 15): it logs in to the lobby, finds or queues for a match, joins
-//! the game server, acknowledges snapshots, keeps the clock in sync and
-//! prints the scoreboard.
+//! The native client binary. Run without arguments, it is the game: it
+//! brings the game data up to date (`data_sync_screen`), then opens the
+//! menu on the region's lobby. The modes below are the tools the port was
+//! built with.
 //!
 //! ```text
+//! washoi [--region eu|us] [--data DIR] [--offline]
+//! washoi sync [--region eu|us] [--data DIR]
+//! washoi --version
 //! washoi view <map> [--data DIR] [--spawn N] [--screenshot FILE.png] [--size WxH] [--time T] [--at X,Y,Z,YAW] [--pitch DEG] [--player X,Y,Z,YAW[,CLIP[,FRAME[,quad][,WEAPON]]]]... [--projectile ID,X,Y,Z,YAW[,PITCH]]... [--explosion ID,X,Y,Z,AGE]... [--tracer X,Y,Z,X2,Y2,Z2,R,G,B,AGE]... [--muzzle X,Y,Z,R,G,B,STYLE,SCALE,DURATION,AGE]... [--impact X,Y,Z,NX,NY,NZ,IX,IY,IZ,R,G,B,HEAVY,AGE]... [--rail X,Y,Z,X2,Y2,Z2,R,G,B,KIND,NX,NY,NZ,AGE]... [--lightning MODE,X,Y,Z,X2,Y2,Z2,R,G,B,KIND,AGE]... [--hit X,Y,Z,DAMAGE,AGE[,head]]... [--teleport X,Y,Z,X2,Y2,Z2,YAW,AGE]... [--gib X,Y,Z,AGE]... [--ring X,Y,Z,KIND,RADIUS,ALPHA]... [--ragdoll X,Y,Z,YAW,DX,DY,DZ,AGE]... [--weapon ID [--aim] [--quad]] [--no-cull] [--no-lights] [--seconds N]
 //! washoi demo <file.shagdemo> [--data DIR] [--screenshot FILE.png] [--size WxH] [--time T] [--at X,Y,Z,YAW] [--pitch DEG] [--follow N] [--reel MINUTES] [--audio-out FILE.wav] [--scoreboard] [--seconds N]
 //! washoi watch <ws://game-server> [--name NAME] [--ticket TICKET] [--data DIR] [--screenshot FILE.png] [--time T] [--at X,Y,Z,YAW] [--follow N] [--seconds N]
@@ -69,6 +72,7 @@
 //! id such as `plasmagun`), at the hip or, with `--aim`, down its sights; `--quad` puts the quad
 //! outline on it.
 
+mod data_sync_screen;
 mod demo_overlay;
 mod menu;
 mod reel_overlay;
@@ -96,7 +100,10 @@ use washoi::shared::net::snapshot_events::{SnapshotEvent, WashoiEvents};
 fn usage() -> ! {
     eprintln!(
         "washoi {}\n\
-         usage: washoi view <map> [--data DIR] [--spawn N] [--screenshot FILE.png] [--size WxH] [--time T] [--at X,Y,Z,YAW] [--pitch DEG] [--player X,Y,Z,YAW[,CLIP[,FRAME[,quad][,WEAPON]]]]... [--projectile ID,X,Y,Z,YAW[,PITCH]]... [--explosion ID,X,Y,Z,AGE]... [--weapon ID [--aim] [--quad]] [--no-cull] [--no-lights] [--seconds N]\n\
+         usage: washoi [--region eu|us] [--data DIR] [--offline]\n\
+         \x20      washoi sync [--region eu|us] [--data DIR]\n\
+         \x20      washoi --version\n\
+         \x20      washoi view <map> [--data DIR] [--spawn N] [--screenshot FILE.png] [--size WxH] [--time T] [--at X,Y,Z,YAW] [--pitch DEG] [--player X,Y,Z,YAW[,CLIP[,FRAME[,quad][,WEAPON]]]]... [--projectile ID,X,Y,Z,YAW[,PITCH]]... [--explosion ID,X,Y,Z,AGE]... [--weapon ID [--aim] [--quad]] [--no-cull] [--no-lights] [--seconds N]\n\
          \x20      washoi demo <file.shagdemo> [--data DIR] [--screenshot FILE.png] [--size WxH] [--time T] [--at X,Y,Z,YAW] [--pitch DEG] [--follow N] [--reel MINUTES] [--audio-out FILE.wav] [--scoreboard] [--seconds N]\n\
          \x20      washoi watch <ws://game-server> [--name NAME] [--ticket TICKET] [--data DIR] [--screenshot FILE.png] [--time T] [--at X,Y,Z,YAW] [--follow N] [--seconds N]\n\
          \x20      washoi play <ws://game-server> [--name NAME] [--ticket TICKET] [--data DIR] [--screenshot FILE.png] [--time T] [--say TEXT] [--seconds N]\n\
@@ -148,6 +155,10 @@ struct Options {
     console: Option<String>,
     /// The cvar file instead of `~/.config/washoi/cvars.json` (`--cvars`).
     cvars: Option<PathBuf>,
+    /// The region whose lobby and data the game uses (`--region`).
+    region: Option<String>,
+    /// Start with the data on disk, without checking for new data.
+    offline: bool,
     players: Vec<view::PlayerView>,
     projectiles: Vec<view::ProjectileView>,
     explosions: Vec<view::ExplosionView>,
@@ -193,6 +204,8 @@ fn parse_options(args: impl Iterator<Item = String>) -> Options {
             "--console" => o.console = Some(value()),
             "--tab" => o.tab = Some(value()),
             "--cvars" => o.cvars = Some(PathBuf::from(value())),
+            "--region" => o.region = Some(value()),
+            "--offline" => o.offline = true,
             "--player" => {
                 let v = value();
                 let parts: Vec<&str> = v.split(',').map(str::trim).collect();
@@ -393,9 +406,27 @@ fn parse_options(args: impl Iterator<Item = String>) -> Options {
 }
 
 fn main() {
-    let mut args = std::env::args().skip(1);
-    let mode = args.next().unwrap_or_else(|| usage());
-    let url = args.next().unwrap_or_else(|| usage());
+    let mut args = std::env::args().skip(1).peekable();
+    // The game itself: no mode, or only its options.
+    let mode = match args.peek().map(String::as_str) {
+        None => "game".to_owned(),
+        Some(a) if a.starts_with("--") && a != "--version" => "game".to_owned(),
+        _ => args.next().expect("peeked"),
+    };
+    if mode == "--version" || mode == "version" {
+        println!("washoi {}", washoi::version_line());
+        return;
+    }
+    // A panic leaves a report beside the settings, for the player to send.
+    if let Some(dir) = config_dir() {
+        let version: &'static str = Box::leak(washoi::version_line().into_boxed_str());
+        shagger::core::crash_report::install("washoi", version, dir.join("crashes"));
+    }
+    let url = if matches!(mode.as_str(), "game" | "sync") {
+        String::new()
+    } else {
+        args.next().unwrap_or_else(|| usage())
+    };
     let o = parse_options(args);
     // The cvars, saved as the browser saves `engine_cvars`. Release builds
     // are the shipped game, which keeps `developer` at 0.
@@ -419,6 +450,19 @@ fn main() {
             &data_dir(&o),
         ),
         "lobby" => lobby(&url, &o),
+        "game" => game(o),
+        "sync" => {
+            let (_, data) = region(&o);
+            let dir = game_data_dir(&o);
+            println!("data: {data} into {}", dir.display());
+            match data_sync_screen::run_headless(&data, &dir) {
+                Ok(()) => 0,
+                Err(why) => {
+                    eprintln!("data: {why}");
+                    1
+                }
+            }
+        }
         "menu" => menu_mode(&url, &o),
         "view" | "demo" | "watch" | "play" => {
             let demo = (mode == "demo").then(|| PathBuf::from(&url));
@@ -440,6 +484,50 @@ fn main() {
 /// The window's options from the command line.
 /// Where the menu keeps the account key when `--key-file` does not say: the
 /// browser keeps it in local storage, which outlives a session the same way.
+/// The region's lobby and data URLs: `--region`, else `WASHOI_REGION`,
+/// else the first of [`washoi::REGIONS`].
+fn region(o: &Options) -> (String, String) {
+    let region = o
+        .region
+        .clone()
+        .or_else(|| std::env::var("WASHOI_REGION").ok())
+        .unwrap_or_else(|| washoi::REGIONS[0].to_owned());
+    if !washoi::REGIONS.contains(&region.as_str()) {
+        eprintln!("unknown region {region}: one of {}", washoi::REGIONS.join(", "));
+        std::process::exit(2);
+    }
+    washoi::region_urls(&region)
+}
+
+/// Where the game keeps its packages: `--data`, else the cache directory's
+/// `data`.
+fn game_data_dir(o: &Options) -> PathBuf {
+    o.data.clone().unwrap_or_else(|| {
+        washoi::cache_dir()
+            .unwrap_or_else(|| PathBuf::from("washoi-cache"))
+            .join("data")
+    })
+}
+
+/// The game as a player starts it: the data brought up to date, then the
+/// menu on the region's lobby, with the packages from that data.
+fn game(mut o: Options) -> i32 {
+    let (lobby, data) = region(&o);
+    let dir = game_data_dir(&o);
+    if !(o.offline && shagger::loader::pk3::package_store::is_synced(&dir)) {
+        match data_sync_screen::run(&data, &dir) {
+            Ok(data_sync_screen::SyncOutcome::Ready) => {}
+            Ok(data_sync_screen::SyncOutcome::Quit) => return 0,
+            Err(why) => {
+                eprintln!("{why}");
+                return 1;
+            }
+        }
+    }
+    o.data = Some(dir);
+    menu_mode(&lobby, &o)
+}
+
 fn default_key_file() -> Option<PathBuf> {
     let dir = config_dir()?;
     std::fs::create_dir_all(&dir).ok()?;

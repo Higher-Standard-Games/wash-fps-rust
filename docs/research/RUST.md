@@ -1783,7 +1783,12 @@ the digest after download, and keeps packages in CacheStorage
 timeouts: 15 s for headers, 60 s when idle, and 15 min in total. It is retried
 twice for 5xx, 408 and 429 responses, waiting 500 ms between tries.
 
-Natively the cache is simpler and stronger:
+Natively the cache is simpler and stronger. (As built in milestone 13, see
+section 23: packages are kept under their own names in `<cache dir>/data`,
+checked by size and SHA-256 and replaced when the index changes, and every
+package is fetched at startup rather than per map, with no budget; the
+directory then mounts as it stands. The plan below stays the target if
+lazy loading returns.)
 
 - store each package as `<cache dir>/packages/<sha256>.pk3`;
 - check the digest while the download streams (`sha2`);
@@ -2581,6 +2586,61 @@ fit and did not count the parity harness.
 ## 23. Progress log
 
 Newest first. Each entry names the commits and what proves them.
+
+### Milestone 13, first slice: a game a player can start (November 3, 2026)
+
+- **shagger `8778b2f`.** `loader/pk3/published_index.rs` gains
+  `parse_published_index`, `PK3PublishedIndex.ts`'s refusal rules in full:
+  the index text's hash against the manifest, package names, each entry's
+  size, file count and digest, the list checksum, the dictionaries' keys
+  and owners, and every map's BSP owned by its map package.
+  `loader/pk3/package_store.rs` is the native side of `PackageStore.ts`:
+  `sync_packages` fetches the manifest and the index it names, then each
+  package the directory lacks (`?sha256=` as the browser's cache key),
+  checks its size and SHA-256, writes it beside and renames it into place,
+  removes packages the index dropped, and writes `index.json` last, so a
+  directory with one is complete. A digest the last sync checked is not
+  hashed again. Change from section 20.2: names, not digests, on disk, and
+  every package at startup (see the note there).
+- **shagger `c27264e`.** `core/crash_report.rs`: a panic hook that writes
+  `crash-<time>.txt` (program, version, system, thread, message, place,
+  backtrace) and keeps the newest 20. Nothing is sent.
+- **wash-fps-rust.** `washoi` without a mode is now the game: it brings
+  `<cache>/data` up to the region's data (`data_sync_screen.rs`: the
+  package, megabytes of the whole and the speed, Try again on failure, and
+  Play with the data on disk when an earlier sync completed), fetches the
+  music's playlists, then opens the menu on the region's lobby.
+  `--region eu|us` (or `WASHOI_REGION`) picks the region, `--offline`
+  skips the check, `washoi sync` does the download without a window and
+  `--version` prints the version with the build (`WASHOI_BUILD`). The
+  config and cache folders follow each system: `~/.config/washoi` and
+  `~/.cache/washoi` on Linux, `~/Library/Application Support/Washoi` and
+  `~/Library/Caches/Washoi` on macOS, `%APPDATA%\Washoi` and
+  `%LOCALAPPDATA%\Washoi` on Windows. Crash reports go to the config
+  folder's `crashes`.
+- **Packaging.** `tools/package.sh` turns a release build into
+  `dist/washoi-<version>-<os>-<arch>`: a tarball on Linux, `Washoi.app`
+  (icon from `assets/icon`, Info.plist, ad-hoc signed unless
+  `MACOS_SIGN_IDENTITY` names a Developer ID) zipped on macOS, a zip on
+  Windows; each with a README, the game's and the fonts' licences and
+  `THIRD_PARTY_LICENSES.txt` (`tools/third_party_licenses.py`: every linked
+  crate with its licence texts, and shagger's Babylon.js NOTICE).
+  `.github/workflows/release.yml` builds and packages on Ubuntu 22.04,
+  macOS 14 (Apple silicon), macOS 13 (Intel) and Windows for a `v*` tag,
+  signs and notarizes when the certificate secrets exist, and attaches the
+  packages to a draft release.
+- **Proof.** Unit tests of the index's refusals, of a package's size and
+  digest check, of index names that cannot leave the directory, of crash
+  reports and their pruning. Live on `https://eu.washoi.net/data`: a sync
+  into a directory holding the old 21 packages found 29 published, fetched
+  13 (the four new maps and the updated packages), removed one the index
+  dropped, and a second run fetched nothing; the window's screenshot
+  mid-download (`rust-port/data-download-screen.png`). The Linux package
+  built here; the macOS and Windows jobs have not run yet (they need the
+  `SHAGGER_READ_TOKEN` secret, like CI).
+- **Not yet.** An update check (where builds are published is the
+  user's call), Windows' exe icon and a console-free Windows build, and
+  per-map lazy downloads.
 
 ### Milestone 12, second slice: the demo player's own controls (November 3, 2026)
 
