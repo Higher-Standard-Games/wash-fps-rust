@@ -37,6 +37,7 @@ pub mod player_model_visual_settings;
 pub mod prediction;
 pub mod profile_view;
 pub mod quad_damage_visual;
+pub mod ragdoll_system;
 pub mod reel_cards;
 pub mod remote_player_logic;
 pub mod remote_player_renderer;

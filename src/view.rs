@@ -3,17 +3,20 @@
 //! writes a PNG; otherwise it opens a window with a free camera. Players
 //! given with `--player` stand on the map as the Vanguard model.
 
+use shagger::animation::player_model_manager::PlayerModelInstance;
 use shagger::lighting::map_emissive_surfaces::{SurfaceEmission, extract_emissive_surfaces};
+use shagger::physics::physics_system::world_triangles;
 use shagger::physics::sweep_backend_adapter::to_shared_contents;
 use shagger::rendering::water::water_surface_lighting::{water_map_lights, water_surface_lights};
 use shagger::shared::js::js_hypot;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use washoi::client::cartoon_hit_effect::{CartoonHitEffect, CartoonHitRenderer};
 use washoi::client::damage_numbers::{DamageNumberRenderer, DamageNumbers};
 use washoi::client::fps_liquid_audio::play_liquid_crossing;
 use washoi::client::gib_system::{GibRenderer, GibSystem};
-use washoi::client::remote_player_renderer::update_powerup_glow;
+use washoi::client::ragdoll_system::RagdollSystem;
+use washoi::client::remote_player_renderer::{body_matrix, update_powerup_glow};
 use washoi::client::teleport_effect::{TeamColor, TeleportEffect, TeleportRenderer, legacy_team_color, play_tele_in};
 use washoi::liquid::client::liquid_interaction_system::{LiquidInteractionSystem, WaterRipples};
 use washoi::liquid::client::splash_droplet_renderer::SplashDropletRenderer;
@@ -159,6 +162,7 @@ pub struct ViewOptions {
     pub hits: Vec<HitView>,
     pub teleports: Vec<TeleportView>,
     pub gibs: Vec<GibView>,
+    pub ragdolls: Vec<RagdollView>,
     /// The first-person weapon to hold (`--weapon`), and whether it is
     /// aimed down its sights (`--aim`).
     pub weapon: Option<String>,
@@ -470,6 +474,17 @@ pub struct TeleportView {
     pub age: f64,
 }
 
+/// A body fallen as a ragdoll, held at an age (`--ragdoll`).
+#[derive(Debug, Clone, PartialEq)]
+pub struct RagdollView {
+    /// The body, standing idle where it died.
+    pub player: PlayerView,
+    /// The killing push, in Quake axes.
+    pub dir: [f64; 3],
+    /// Seconds since it happened.
+    pub age: f64,
+}
+
 /// A body broken into shards, held at an age (`--gib`).
 #[derive(Debug, Clone, PartialEq)]
 pub struct GibView {
@@ -640,6 +655,8 @@ pub struct LoadedMap {
     pub teleports: Vec<TeleportView>,
     /// Gibs to hold on the map.
     pub gibs: Vec<GibView>,
+    /// Ragdolls to hold on the map.
+    pub ragdolls: Vec<RagdollView>,
     /// The first-person weapon, if any.
     pub weapon: Option<String>,
     /// Load the player model for players that move (a demo or a match).
@@ -704,6 +721,7 @@ pub fn load_map(data: &Path, map: &str) -> Result<LoadedMap, String> {
         hits: Vec::new(),
         teleports: Vec::new(),
         gibs: Vec::new(),
+        ragdolls: Vec::new(),
         effects: Vec::new(),
         weapon: None,
         remote_players: false,
@@ -789,6 +807,16 @@ pub struct MapRenderer {
     gib_renderer: GibRenderer,
     /// Each live player's tint, for the colour their shards take.
     live_tints: HashMap<String, Vec3>,
+    /// Non-gib deaths fall as ragdolls (`RagdollSystem`); none without the
+    /// player model.
+    pub ragdolls: Option<RagdollSystem>,
+    /// Players whose body a ragdoll took, hidden until they leave the list.
+    ragdolled: HashSet<String>,
+    /// Poses of players who left the list this frame, for a death that
+    /// arrives with their leaving.
+    departed: HashMap<String, PlayerModelInstance>,
+    /// Each live player's body matrix, kept a frame past their leaving.
+    live_worlds: HashMap<String, Mat4>,
     /// Numbers floating over the players the one on screen hurts.
     pub damage_numbers: DamageNumbers,
     damage_number_renderer: DamageNumberRenderer,
@@ -878,12 +906,28 @@ impl MapRenderer {
         let Some(renderer) = &mut self.remote_players else {
             return;
         };
-        renderer.retain(|id| players.iter().any(|(p, _, _)| p == id));
-        self.live_tints.clear();
+        // A ragdoll's player stays hidden until they leave the list.
+        self.ragdolled.retain(|id| players.iter().any(|(p, _, _)| p == id));
+        let ragdolled = &self.ragdolled;
+        self.departed = renderer
+            .retain(|id| players.iter().any(|(p, _, _)| p == id) && !ragdolled.contains(id))
+            .into_iter()
+            .collect();
+        let departed = &self.departed;
+        self.live_worlds
+            .retain(|id, _| departed.contains_key(id) || players.iter().any(|(p, _, _)| p == id));
+        self.live_tints
+            .retain(|id, _| departed.contains_key(id) || players.iter().any(|(p, _, _)| p == id));
         for (id, interp, style) in players {
+            if self.ragdolled.contains(id) {
+                continue;
+            }
             if let Some(tint) = style.tint_color {
                 self.live_tints.insert(id.clone(), tint);
+            } else {
+                self.live_tints.remove(id);
             }
+            self.live_worlds.insert(id.clone(), body_matrix(interp));
             renderer.update(id, interp, dt, 1.0, None);
             let first = self.live_draws.len();
             renderer.draws(id, interp, style, &mut self.joints, &mut self.live_draws);
@@ -1166,6 +1210,13 @@ impl MapRenderer {
                     .map(|t| t as &mut dyn FnMut(DVec3, DVec3) -> Option<(DVec3, DVec3)>),
             );
         }
+        // RagdollSystem.update: a ragdoll that has faded bursts here.
+        if let (Some(ragdolls), Some(renderer)) = (&mut self.ragdolls, &self.remote_players) {
+            ragdolls.update(&renderer.model, dt);
+            for (at, color) in ragdolls.take_gibs() {
+                self.gibs.spawn(at, DVec3::ZERO, color);
+            }
+        }
         for event in events {
             if let SnapshotEvent::Death {
                 entity_id,
@@ -1174,17 +1225,41 @@ impl MapRenderer {
                 final_damage,
                 at,
                 vel,
+                kb_dir,
                 ..
             } = event
             {
                 let kind = if damage_type.is_empty() { weapon_id } else { damage_type };
                 let gib = kind == "rail" || kind == "bomb" || (kind == "explosion" && *final_damage >= 50);
+                let color = self.live_tints.get(entity_id).copied();
                 if gib {
-                    self.gibs.spawn(
-                        DVec3::new(at.x, at.y, at.z),
-                        DVec3::new(vel.x, vel.y, vel.z),
-                        self.live_tints.get(entity_id).copied(),
-                    );
+                    self.gibs
+                        .spawn(DVec3::new(at.x, at.y, at.z), DVec3::new(vel.x, vel.y, vel.z), color);
+                    continue;
+                }
+                // `detachModel`: the body leaves the renderer for a ragdoll.
+                let Some(renderer) = &mut self.remote_players else {
+                    continue;
+                };
+                let Some(instance) = renderer.take(entity_id).or_else(|| self.departed.remove(entity_id)) else {
+                    continue;
+                };
+                self.ragdolled.insert(entity_id.clone());
+                let world = self.live_worlds.get(entity_id).copied();
+                match (&mut self.ragdolls, world) {
+                    (Some(ragdolls), Some(world)) => {
+                        ragdolls.spawn(
+                            &renderer.model,
+                            instance,
+                            world,
+                            DVec3::new(kb_dir.x, kb_dir.y, kb_dir.z),
+                            color,
+                        );
+                    }
+                    // No ragdolls: the body breaks up instead.
+                    _ => self
+                        .gibs
+                        .spawn(DVec3::new(at.x, at.y, at.z), DVec3::new(vel.x, vel.y, vel.z), color),
                 }
             }
         }
@@ -1315,6 +1390,12 @@ impl MapRenderer {
         self.frame_draws.clone_from(&self.model_draws);
         self.frame_draws.extend_from_slice(&self.live_draws);
         self.gib_renderer.draws(&self.gibs, &mut self.frame_draws);
+        // The ragdolls' palettes go after the frame's, and leave with it.
+        let joints_base = self.joints.len();
+        if let (Some(ragdolls), Some(renderer)) = (&self.ragdolls, &self.remote_players) {
+            let (lit, fade) = renderer.handles();
+            ragdolls.draws(&renderer.model, lit, fade, &mut self.joints, &mut self.frame_draws);
+        }
         self.items.draws(
             self.item_time,
             camera_rotation(camera.view().as_dmat4()),
@@ -1339,6 +1420,7 @@ impl MapRenderer {
             &self.frame_draws,
             &self.joints,
         );
+        self.joints.truncate(joints_base);
         self.explosions
             .prepare(gpu, camera.view_projection(aspect), camera.view(), self.effect_time);
         let frame = EffectFrame {
@@ -1647,7 +1729,7 @@ pub fn build_renderer(gpu: &Gpu, map: &mut LoadedMap, output_format: wgpu::Textu
     }
     let mut joints = Vec::new();
     let mut remote_players = None;
-    if !map.players.is_empty() || map.remote_players || !map.teleports.is_empty() {
+    if !map.players.is_empty() || map.remote_players || !map.teleports.is_empty() || !map.ragdolls.is_empty() {
         let pk3 = &mut map.pk3;
         match RemotePlayerRenderer::load(gpu, &mut models, |path| pk3.get_file(path)) {
             Ok(mut players) => {
@@ -1667,6 +1749,18 @@ pub fn build_renderer(gpu: &Gpu, map: &mut LoadedMap, output_format: wgpu::Textu
         }
     }
     let gib_renderer = GibRenderer::new(gpu, &mut models);
+    // The ragdolls' world: the drawn map, liquid surfaces left out
+    // (`createBspCollision`).
+    let ragdolls = remote_players.as_ref().map(|_| {
+        let gravity =
+            shagger::core::cvar::with_cvars(|c| shagger::movement::movement_vars::movement_var(c, "sv_gravity"));
+        let mut ragdolls = RagdollSystem::new(gravity as f32);
+        let hidden = water.as_ref().map_or(&[][..], |w| w.hidden_batches());
+        let (positions, triangles) = world_triangles(&geometry, hidden);
+        ragdolls.physics.create_bsp_collision(&positions, &triangles);
+        println!("ragdolls: {} collision triangles", triangles.len());
+        ragdolls
+    });
     let mut teleport_renderer = TeleportRenderer::new(
         gpu,
         format,
@@ -1946,6 +2040,10 @@ pub fn build_renderer(gpu: &Gpu, map: &mut LoadedMap, output_format: wgpu::Textu
         gibs: GibSystem::default(),
         gib_renderer,
         live_tints: HashMap::new(),
+        ragdolls,
+        ragdolled: HashSet::new(),
+        departed: HashMap::new(),
+        live_worlds: HashMap::new(),
         damage_numbers,
         damage_number_renderer: DamageNumberRenderer::new(gpu, format, &damage_font),
         cartoon_hits,
@@ -1969,6 +2067,34 @@ pub fn build_renderer(gpu: &Gpu, map: &mut LoadedMap, output_format: wgpu::Textu
     if let Some(age) = map.gibs.iter().map(|g| g.age).reduce(f64::min) {
         for _ in 0..(age * 60.0).round() as usize {
             renderer.play_gibs(&[], 1.0 / 60.0);
+        }
+    }
+    // Held ragdolls (`--ragdoll`): an idle body launched, then fallen on to
+    // its age; one that has faded by then has burst into gibs.
+    if let (Some(ragdolls), Some(players)) = (&mut renderer.ragdolls, &mut renderer.remote_players) {
+        let style = get_player_model_visual_style(PlayerTeamSlot::Ffa, MODEL_SCALE);
+        for (i, held) in map.ragdolls.iter().enumerate() {
+            let id = format!("ragdoll{i}");
+            let interp = held.player.interpolated();
+            players.update(&id, &interp, 0.0, 1.0, Some(&held.player.clip));
+            players.go_to_frame(&id, held.player.frame);
+            if let Some(instance) = players.take(&id) {
+                ragdolls.spawn(
+                    &players.model,
+                    instance,
+                    body_matrix(&interp),
+                    babylon(held.dir),
+                    style.tint_color,
+                );
+            }
+        }
+        if let Some(age) = map.ragdolls.iter().map(|r| r.age).reduce(f64::min) {
+            for _ in 0..(age * 60.0).round() as usize {
+                ragdolls.update(&players.model, 1.0 / 60.0);
+                for (at, color) in ragdolls.take_gibs() {
+                    renderer.gibs.spawn(at, DVec3::ZERO, color);
+                }
+            }
         }
     }
     renderer
@@ -2047,6 +2173,7 @@ pub fn run(o: &ViewOptions) -> i32 {
     map.hits.clone_from(&o.hits);
     map.teleports.clone_from(&o.teleports);
     map.gibs.clone_from(&o.gibs);
+    map.ragdolls.clone_from(&o.ragdolls);
     map.weapon.clone_from(&o.weapon);
     map.remote_players = feed.is_some();
     // The highlight reel: analyzed and cut before the first frame, its

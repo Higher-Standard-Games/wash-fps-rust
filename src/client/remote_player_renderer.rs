@@ -140,6 +140,8 @@ pub fn animation_speed_ratio(anim: &str, interp: &InterpolatedEntity, time_scale
 pub struct RemotePlayerRenderer {
     pub model: PlayerModel,
     handle: ModelHandle,
+    /// The model uploaded to blend, for a ragdoll's fade.
+    fade_handle: ModelHandle,
     instances: HashMap<String, PlayerModelInstance>,
 }
 
@@ -153,9 +155,11 @@ impl RemotePlayerRenderer {
     ) -> Result<Self, GlbError> {
         let model = PlayerModel::load(read, VANGUARD_ROOT, VANGUARD_MODEL, VANGUARD_ANIMATIONS)?;
         let handle = models.upload(gpu, &model.model, |_| ModelMaterialMode::Lit);
+        let fade_handle = models.upload(gpu, &model.model, |_| ModelMaterialMode::Glass(1.0));
         Ok(Self {
             model,
             handle,
+            fade_handle,
             instances: HashMap::new(),
         })
     }
@@ -181,9 +185,24 @@ impl RemotePlayerRenderer {
         }
     }
 
-    /// Keeps only the players `keep` accepts.
-    pub fn retain(&mut self, mut keep: impl FnMut(&str) -> bool) {
-        self.instances.retain(|id, _| keep(id));
+    /// Keeps only the players `keep` accepts, handing back the poses of
+    /// the rest (a death's ragdoll takes one over).
+    pub fn retain(&mut self, mut keep: impl FnMut(&str) -> bool) -> Vec<(String, PlayerModelInstance)> {
+        let gone: Vec<String> = self.instances.keys().filter(|id| !keep(id)).cloned().collect();
+        gone.into_iter()
+            .filter_map(|id| self.instances.remove(&id).map(|i| (id, i)))
+            .collect()
+    }
+
+    /// `detachModel`: a player's pose leaves the renderer (to a ragdoll).
+    pub fn take(&mut self, id: &str) -> Option<PlayerModelInstance> {
+        self.instances.remove(id)
+    }
+
+    /// The lit model and the blending one.
+    #[must_use]
+    pub fn handles(&self) -> (ModelHandle, ModelHandle) {
+        (self.handle, self.fade_handle)
     }
 
     /// Forgets a player who left.

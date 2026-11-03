@@ -2582,6 +2582,39 @@ fit and did not count the parity harness.
 
 Newest first. Each entry names the commits and what proves them.
 
+### Milestone 11, twelfth slice: ragdolls (November 3, 2026)
+
+- **shagger 82af167.** `physics/physics_system.rs` ports SHAG's
+  `PhysicsSystem.ts` with rapier3d 0.36 standing in for Havok (8.2), on the
+  client only: gravity at `sv_gravity`, the drawn map (liquid surfaces left
+  out) as one static trimesh, and fixed 1/60 s substeps, four at most per
+  frame, where Havok steps with the frame. Rapier's glam is 0.33, so
+  values cross through arrays. `babylon/physics/v2/ragdoll.rs` ports
+  Babylon's `Ragdoll` (Apache-2.0, in NOTICE): a box per configured bone at
+  the bone, jointed to the nearest configured ancestor with the pivot at
+  the bone (ball and socket or hinge, the AngX limit), and the sync that
+  turns each bone as its box has turned and puts the root bone where its
+  box is. Two choices differ from Babylon: a ragdoll's boxes collide with
+  the map only (rapier pushes overlapping boxes apart explosively), and
+  `qmesh` is the root's world rotation (the yaw the body died facing). The
+  lit model shader takes the per-draw alpha override for the fade.
+- **wash-fps-rust.** `client/ragdoll_system.rs` ports `RagdollSystem.ts`:
+  the fifteen Mixamo boxes, the launch at 670 along the death's `kb_dir`
+  (straight up without one) at 0.8 gravity, four ragdolls at most, the rest
+  check (hips within 12 units for 0.4 s after 0.5 s), the fade over a
+  second (the player model uploaded a second time to blend) and the burst
+  into gibs in the body's colour. `MapRenderer::play_gibs` hands a non-gib
+  death's pose and body matrix to it (`detachModel`) and keeps that player
+  hidden until they leave the players list; a pose that left the list in
+  the same frame is caught as it goes. `washoi view --ragdoll` holds one.
+- **Not yet.** The speed trail behind the hips (`TrailMesh`), the death
+  camera on a ragdoll or a gib burst, and the local player's own corpse.
+- **Proof.** Unit tests: a box landing on a trimesh floor, the substep
+  clamp, the boxes on the bones, a missing bone or two roots making no
+  ragdoll, the bones following falling boxes with the joint holding, the
+  launch and the config. A screenshot of a body fallen into the acid on
+  washoi_amphi1 (`rust-port/ragdoll-amphi1.png`).
+
 ### Milestone 11, eleventh slice: gibs (November 3, 2026)
 
 - **wash-fps-rust.** `client/gib_system.rs` ports `GibSystem.ts`: on a
@@ -2596,8 +2629,8 @@ Newest first. Each entry names the commits and what proves them.
   shade as the StandardMaterial's diffuse and emissive.
   `MapRenderer::play_gibs` runs per frame in the window and headless
   views; `washoi view --gib` holds one.
-- **Not yet.** The death camera on the shards' centroid, and ragdolls for
-  the other deaths (`RagdollSystem.ts`, planned on rapier3d).
+- **Not yet.** The death camera on the shards' centroid. Ragdolls for the
+  other deaths came in the twelfth slice.
 - **Proof.** Unit tests: the burst's makeup, the floor bounce and fade,
   the hero shards bouncing off a traced ceiling, the palette and the cap.
   A screenshot of two bursts on washoi_amphi1.
