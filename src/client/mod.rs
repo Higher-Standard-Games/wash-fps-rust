@@ -7,6 +7,7 @@ pub mod cinematic_demo_player;
 pub mod credits;
 pub mod crosshair;
 pub mod damage_numbers;
+pub mod death_camera;
 pub mod demo_download;
 pub mod demo_playback;
 pub mod demos_view;

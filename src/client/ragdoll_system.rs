@@ -7,9 +7,8 @@
 //! its port in `shagger::babylon::physics::v2::ragdoll`. The ragdoll owns
 //! the dead player's pose (`PlayerModelInstance`) and the body matrix it
 //! died with; the bones move under it. `BatchedPoseSync` (a speed-up of the
-//! same sync) has no counterpart. Not yet: the speed trail (`TrailMesh`)
-//! and the death camera's follow handle, so the local player's own death
-//! makes no ragdoll.
+//! same sync) has no counterpart; the follow handle is the ragdoll's serial
+//! ([`RagdollSystem::position_of`]). Not yet: the speed trail (`TrailMesh`).
 
 use shagger::animation::player_model_manager::{PlayerModel, PlayerModelInstance};
 use shagger::babylon::physics::v2::ragdoll::{PhysicsConstraintType, Ragdoll, RagdollBoneProperties};
@@ -207,6 +206,8 @@ pub fn launch_velocity(dir: DVec3) -> DVec3 {
 
 /// `ActiveRagdoll`.
 pub struct ActiveRagdoll {
+    /// Its number, for the follow handle.
+    pub serial: u64,
     pub instance: PlayerModelInstance,
     /// The body matrix it died with (anchor, yaw, scale).
     pub world: Mat4,
@@ -235,6 +236,7 @@ pub struct RagdollSystem {
     /// Bursts waiting for the gib system (`onGibExplode`): where, and the
     /// colour.
     gibs: Vec<(DVec3, Option<Vec3>)>,
+    next_serial: u64,
 }
 
 impl RagdollSystem {
@@ -245,6 +247,7 @@ impl RagdollSystem {
             physics: PhysicsSystem::new(sv_gravity),
             ragdolls: Vec::new(),
             gibs: Vec::new(),
+            next_serial: 0,
         }
     }
 
@@ -254,7 +257,8 @@ impl RagdollSystem {
     }
 
     /// `spawn`: hands `instance`, posed under `world`, to physics and
-    /// launches it along `dir`. False when the skeleton lacks a bone.
+    /// launches it along `dir`. Returns its serial for the follow handle
+    /// ([`Self::position_of`]); none when the skeleton lacks a bone.
     pub fn spawn(
         &mut self,
         model: &PlayerModel,
@@ -262,7 +266,7 @@ impl RagdollSystem {
         world: Mat4,
         dir: DVec3,
         color: Option<Vec3>,
-    ) -> bool {
+    ) -> Option<u64> {
         while self.ragdolls.len() >= MAX_RAGDOLLS {
             let mut oldest = self.ragdolls.remove(0);
             oldest.ragdoll.dispose(&mut self.physics);
@@ -273,7 +277,7 @@ impl RagdollSystem {
         let skeleton = &model.model.skeleton;
         let Some(mut ragdoll) = Ragdoll::new(&mut self.physics, skeleton, &instance.locals, world, &config) else {
             eprintln!("[RagdollSystem] Missing bones; no ragdoll");
-            return false;
+            return None;
         };
         ragdoll.ragdoll(&mut self.physics);
         let v = launch_velocity(dir);
@@ -284,7 +288,9 @@ impl RagdollSystem {
                 body.set_gravity_scale(RAGDOLL_GRAVITY_FACTOR, true);
             }
         }
+        self.next_serial += 1;
         self.ragdolls.push(ActiveRagdoll {
+            serial: self.next_serial,
             instance,
             world,
             ragdoll,
@@ -294,7 +300,14 @@ impl RagdollSystem {
             rest_seconds: 0.0,
             fade_start: None,
         });
-        true
+        Some(self.next_serial)
+    }
+
+    /// The handle's `getPosition`: a ragdoll's hips, none once it is gone.
+    #[must_use]
+    pub fn position_of(&self, serial: u64) -> Option<DVec3> {
+        let r = self.ragdolls.iter().find(|r| r.serial == serial)?;
+        r.ragdoll.root_position(&self.physics).map(|p| p.as_dvec3())
     }
 
     /// The hips' world position.

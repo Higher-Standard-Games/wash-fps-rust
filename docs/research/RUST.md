@@ -2582,6 +2582,26 @@ fit and did not count the parity harness.
 
 Newest first. Each entry names the commits and what proves them.
 
+### Milestone 11, thirteenth slice: the death camera (November 3, 2026)
+
+- **wash-fps-rust.** `client/death_camera.rs` ports `DeathCamera.ts`: after
+  our own death the view eases (3.2 and 5 per second) to 150 behind and
+  110 above what it follows, looking 25 above it, never below the death
+  height, ignoring a target that falls 72 under or wanders 900 from where
+  we died, and pulled in front of a wall (18 units, never nearer than 36).
+  The wall test traces the map's brushes with the shot mask where the
+  TypeScript picks the map's meshes. What it follows is the handle the
+  TypeScript passes: `GibSystem::spawn` now returns a burst number whose
+  live shards' centre `burst_position` gives, and `RagdollSystem::spawn` a
+  serial whose hips `position_of` gives. `MapRenderer::play_gibs` makes the
+  local player's corpse (`createDetachedModelAt`: an idle body where they
+  died, facing their view) and the window starts the camera on it,
+  stopping it when we are back.
+- **Not yet.** The round-end focus and teammate spectating on the same
+  camera (`SpectateView`), and the death tilt fallback.
+- **Proof.** Unit tests: the start pose, the easing and an escaped target,
+  the wall clamp, the look angles, and a burst's centre.
+
 ### Milestone 11, twelfth slice: ragdolls (November 3, 2026)
 
 - **shagger 82af167.** `physics/physics_system.rs` ports SHAG's
@@ -2607,8 +2627,8 @@ Newest first. Each entry names the commits and what proves them.
   death's pose and body matrix to it (`detachModel`) and keeps that player
   hidden until they leave the players list; a pose that left the list in
   the same frame is caught as it goes. `washoi view --ragdoll` holds one.
-- **Not yet.** The speed trail behind the hips (`TrailMesh`), the death
-  camera on a ragdoll or a gib burst, and the local player's own corpse.
+- **Not yet.** The speed trail behind the hips (`TrailMesh`). The death
+  camera and the local player's own corpse came in the thirteenth slice.
 - **Proof.** Unit tests: a box landing on a trimesh floor, the substep
   clamp, the boxes on the bones, a missing bone or two roots making no
   ragdoll, the bones following falling boxes with the joint holding, the

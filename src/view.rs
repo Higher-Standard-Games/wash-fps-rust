@@ -474,6 +474,13 @@ pub struct TeleportView {
     pub age: f64,
 }
 
+/// What the death camera follows: a ragdoll or a gib burst, by its handle.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DeathFollow {
+    Ragdoll(u64),
+    Gibs(u64),
+}
+
 /// A body fallen as a ragdoll, held at an age (`--ragdoll`).
 #[derive(Debug, Clone, PartialEq)]
 pub struct RagdollView {
@@ -817,6 +824,12 @@ pub struct MapRenderer {
     departed: HashMap<String, PlayerModelInstance>,
     /// Each live player's body matrix, kept a frame past their leaving.
     live_worlds: HashMap<String, Mat4>,
+    /// The local player (whose own body is not drawn) and their view yaw,
+    /// for their corpse (`startLocalRagdollDeathCamera`).
+    local_player: Option<(String, f64)>,
+    /// What the death camera follows, and where and facing what the local
+    /// player died; taken by the window to start it.
+    local_death: Option<(DeathFollow, DVec3, f64)>,
     /// Numbers floating over the players the one on screen hurts.
     pub damage_numbers: DamageNumbers,
     damage_number_renderer: DamageNumberRenderer,
@@ -1232,9 +1245,44 @@ impl MapRenderer {
                 let kind = if damage_type.is_empty() { weapon_id } else { damage_type };
                 let gib = kind == "rail" || kind == "bomb" || (kind == "explosion" && *final_damage >= 50);
                 let color = self.live_tints.get(entity_id).copied();
+                let local = self
+                    .local_player
+                    .as_ref()
+                    .filter(|(id, _)| id == entity_id)
+                    .map(|(_, yaw)| *yaw);
+                let death_pos = DVec3::new(at.x, at.y, at.z);
                 if gib {
-                    self.gibs
-                        .spawn(DVec3::new(at.x, at.y, at.z), DVec3::new(vel.x, vel.y, vel.z), color);
+                    let burst = self.gibs.spawn(death_pos, DVec3::new(vel.x, vel.y, vel.z), color);
+                    if let (Some(yaw), Some(burst)) = (local, burst) {
+                        self.local_death = Some((DeathFollow::Gibs(burst), death_pos, yaw));
+                    }
+                    continue;
+                }
+                // The local player's corpse: a fresh body where they died,
+                // facing as they looked (`createDetachedModelAt`).
+                if let (Some(yaw), Some(renderer), Some(ragdolls)) =
+                    (local, &mut self.remote_players, &mut self.ragdolls)
+                {
+                    let interp = InterpolatedEntity {
+                        x: at.x,
+                        y: at.y,
+                        z: at.z,
+                        yaw,
+                        ..InterpolatedEntity::default()
+                    };
+                    let id = format!("{entity_id}#corpse");
+                    renderer.update(&id, &interp, 0.0, 1.0, Some("idle"));
+                    if let Some(instance) = renderer.take(&id)
+                        && let Some(serial) = ragdolls.spawn(
+                            &renderer.model,
+                            instance,
+                            body_matrix(&interp),
+                            DVec3::new(kb_dir.x, kb_dir.y, kb_dir.z),
+                            color,
+                        )
+                    {
+                        self.local_death = Some((DeathFollow::Ragdoll(serial), death_pos, yaw));
+                    }
                     continue;
                 }
                 // `detachModel`: the body leaves the renderer for a ragdoll.
@@ -1257,12 +1305,51 @@ impl MapRenderer {
                         );
                     }
                     // No ragdolls: the body breaks up instead.
-                    _ => self
-                        .gibs
-                        .spawn(DVec3::new(at.x, at.y, at.z), DVec3::new(vel.x, vel.y, vel.z), color),
+                    _ => {
+                        self.gibs.spawn(death_pos, DVec3::new(vel.x, vel.y, vel.z), color);
+                    }
                 }
             }
         }
+    }
+
+    /// Names the local player and their view yaw before [`Self::play_gibs`],
+    /// so their death leaves a corpse for the death camera.
+    pub fn set_local_player(&mut self, id: Option<&str>, yaw: f64) {
+        self.local_player = id.map(|id| (id.to_owned(), yaw));
+    }
+
+    /// The local player's death this frame: what to follow, where they died
+    /// and their yaw (the death camera's `start`).
+    pub fn take_local_death(&mut self) -> Option<(DeathFollow, DVec3, f64)> {
+        self.local_death.take()
+    }
+
+    /// The follow handle's `getPosition`.
+    #[must_use]
+    pub fn follow_position(&self, follow: DeathFollow) -> Option<DVec3> {
+        match follow {
+            DeathFollow::Ragdoll(serial) => self.ragdolls.as_ref()?.position_of(serial),
+            DeathFollow::Gibs(burst) => self.gibs.burst_position(burst),
+        }
+    }
+
+    /// A ray through the map's brushes (shot mask): where it first hits.
+    pub fn trace_map(&mut self, from: DVec3, to: DVec3) -> Option<DVec3> {
+        use shagger::physics::collision_backend::TraceOptions;
+        use shagger::physics::content_flags::masks;
+        let world = self.shot_world.as_mut()?;
+        let v = |p: DVec3| shagger::babylon::maths::math_vector::Vector3::new(p.x, p.y, p.z);
+        let hit = world.trace(
+            v(from),
+            v(to),
+            TraceOptions {
+                radius: Some(0.0),
+                height: Some(0.0),
+                content_mask: Some(masks::SHOT),
+            },
+        );
+        (!hit.start_solid && hit.fraction < 1.0).then(|| DVec3::new(hit.end_pos.x, hit.end_pos.y, hit.end_pos.z))
     }
 
     pub fn play_effects(&mut self, events: &[SnapshotEvent], weapons: &HashMap<String, String>, dt: f64) {
@@ -2044,6 +2131,8 @@ pub fn build_renderer(gpu: &Gpu, map: &mut LoadedMap, output_format: wgpu::Textu
         ragdolled: HashSet::new(),
         departed: HashMap::new(),
         live_worlds: HashMap::new(),
+        local_player: None,
+        local_death: None,
         damage_numbers,
         damage_number_renderer: DamageNumberRenderer::new(gpu, format, &damage_font),
         cartoon_hits,

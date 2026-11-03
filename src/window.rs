@@ -41,13 +41,14 @@ use winit::window::{CursorGrabMode, Window, WindowId};
 
 use crate::reel_overlay::ReelOverlay;
 use crate::view::{
-    CLEAR, DemoViewSounds, Feed, LoadedMap, MapRenderer, SceneReelWorld, apply_reel_camera, build_renderer,
-    chase_camera, play_view_sounds, styled_players, update_watch_hud, view_entity,
+    CLEAR, DeathFollow, DemoViewSounds, Feed, LoadedMap, MapRenderer, SceneReelWorld, apply_reel_camera,
+    build_renderer, chase_camera, play_view_sounds, styled_players, update_watch_hud, view_entity,
 };
 use shagger::animation::player_model_manager::PlayerModelVisualStyle;
 use shagger::network::client::snapshot_buffer::InterpolatedEntity;
 use shagger::ui::egui_layer::EguiLayer;
 use washoi::client::cinematic_demo_player::CinematicDemoPlayer;
+use washoi::client::death_camera::{DeathCamera, look_angles};
 use washoi::client::game_events::GameAudio;
 use washoi::client::lobby_panel::install_style;
 use washoi::client::teleport_effect::TeamColor;
@@ -97,6 +98,9 @@ struct App {
     feed: Option<Feed>,
     /// The player the camera chases (F cycles), by place in id order.
     follow: Option<usize>,
+    /// The view after our own death, and what it follows (`DeathCamera`).
+    death_camera: DeathCamera,
+    death_follow: Option<DeathFollow>,
     /// The match's sound, when there is a sound card.
     audio: Option<GameAudio>,
     /// The drop-down console (the backquote key) and its commands.
@@ -382,7 +386,34 @@ impl App {
             }
             s.renderer.set_live_projectiles(&view.projectiles, f64::from(dt));
             s.renderer.play_effects(&view.effects, &view.weapons, f64::from(dt));
+            let local = match feed {
+                Feed::Play(..) => feed.local_entity(),
+                _ => None,
+            };
+            s.renderer.set_local_player(local, f64::from(self.camera.yaw));
             s.renderer.play_gibs(&view.effects, f64::from(dt));
+            // Our own death: the camera follows the corpse or the burst
+            // until we are back (`applyDeathCamera`).
+            if let Some((follow, at, yaw)) = s.renderer.take_local_death() {
+                self.death_camera.start(at, yaw);
+                self.death_follow = Some(follow);
+            }
+            if let Feed::Play(p, _) = &*feed
+                && p.alive
+            {
+                self.death_camera.stop();
+            }
+            if self.death_camera.is_active() {
+                let target = self.death_follow.and_then(|f| s.renderer.follow_position(f));
+                let renderer = &mut s.renderer;
+                let mut trace = |from, to| renderer.trace_map(from, to);
+                if let Some((at, look)) = self.death_camera.update(f64::from(dt), target, Some(&mut trace)) {
+                    let (yaw, pitch) = look_angles(at, look);
+                    self.camera.position = at.as_vec3();
+                    self.camera.yaw = yaw as f32;
+                    self.camera.pitch = pitch as f32;
+                }
+            }
             s.renderer.play_hit_feedback(
                 &view.effects,
                 view_entity(feed.local_entity(), &players, self.follow),
@@ -765,6 +796,8 @@ pub fn run(
         },
         feed,
         follow,
+        death_camera: DeathCamera::default(),
+        death_follow: None,
         audio,
         leave: false,
         reel,

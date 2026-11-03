@@ -102,6 +102,8 @@ pub struct Gib {
     pub floor_y: f64,
     pub traced: bool,
     pub is_drop: bool,
+    /// The burst it flew from (the handle's `generation`).
+    pub burst: u64,
 }
 
 impl Gib {
@@ -136,6 +138,8 @@ pub struct GibSystem {
     gibs: Vec<Gib>,
     /// `Math.random`'s stand-in (xorshift64*).
     seed: u64,
+    /// The current burst's number.
+    burst: u64,
 }
 
 impl Default for GibSystem {
@@ -143,6 +147,7 @@ impl Default for GibSystem {
         Self {
             gibs: Vec::new(),
             seed: 0x51_7cc1_b727_220a,
+            burst: 0,
         }
     }
 }
@@ -157,11 +162,13 @@ impl GibSystem {
 
     /// `spawn`: a body at `at` moving at `vel` breaks up, in the colour it
     /// was drawn with (`color`), or the default palette when unknown.
-    /// Nothing past `MAX_ACTIVE_GIBS` live shards.
-    pub fn spawn(&mut self, at: DVec3, vel: DVec3, color: Option<Vec3>) {
+    /// Nothing past `MAX_ACTIVE_GIBS` live shards. Returns the burst, whose
+    /// centre [`Self::burst_position`] follows (the handle).
+    pub fn spawn(&mut self, at: DVec3, vel: DVec3, color: Option<Vec3>) -> Option<u64> {
         if self.gibs.len() >= MAX_ACTIVE_GIBS {
-            return;
+            return None;
         }
+        self.burst += 1;
         let shades = color.map_or(GIB_COLORS, gib_palette);
         for i in 0..GIB_COUNT {
             let pos = DVec3::new(
@@ -195,6 +202,19 @@ impl GibSystem {
             let gib = self.init_common(pos, vel, scale, at.y, false, true, &shades);
             self.gibs.push(gib);
         }
+        Some(self.burst)
+    }
+
+    /// The handle's `getPosition`: the centre of a burst's live shards,
+    /// none once they are all gone.
+    #[must_use]
+    pub fn burst_position(&self, burst: u64) -> Option<DVec3> {
+        let (sum, count) = self
+            .gibs
+            .iter()
+            .filter(|g| g.burst == burst)
+            .fold((DVec3::ZERO, 0u32), |(sum, n), g| (sum + g.pos, n + 1));
+        (count > 0).then(|| sum / f64::from(count))
     }
 
     /// `initGibCommon`: spin, tumble, shade and size.
@@ -240,6 +260,7 @@ impl GibSystem {
             floor_y,
             traced,
             is_drop,
+            burst: self.burst,
         }
     }
 
@@ -403,7 +424,12 @@ mod tests {
     #[test]
     fn a_body_breaks_into_twenty_eight_shards() {
         let mut gibs = GibSystem::default();
-        gibs.spawn(DVec3::new(0.0, 100.0, 0.0), DVec3::new(50.0, 0.0, 0.0), None);
+        let burst = gibs
+            .spawn(DVec3::new(0.0, 100.0, 0.0), DVec3::new(50.0, 0.0, 0.0), None)
+            .unwrap();
+        let centre = gibs.burst_position(burst).unwrap();
+        assert!((centre.y - 100.0).abs() < 40.0, "{centre}");
+        assert_eq!(gibs.burst_position(burst + 1), None);
         assert_eq!(gibs.gibs().len(), GIB_COUNT + DROP_GIB_COUNT);
         let flying = &gibs.gibs()[..GIB_COUNT];
         assert_eq!(flying.iter().filter(|g| g.traced).count(), TRACED_GIB_COUNT);
