@@ -30,6 +30,7 @@ pub mod live_watch;
 pub mod lobby_panel;
 pub mod lobby_welcome_dialog;
 pub mod lobby_welcome_guide;
+pub mod local_powerup_state;
 pub mod match_state_manager;
 pub mod player_model_visual_settings;
 pub mod prediction;

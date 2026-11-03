@@ -2582,6 +2582,21 @@ fit and did not count the parity harness.
 
 Newest first. Each entry names the commits and what proves them.
 
+### Milestone 11, tenth slice: the powerup timer (November 3, 2026)
+
+- **wash-fps-rust.** `client/local_powerup_state.rs` ports
+  `LocalPowerupState.ts` as a struct on the HUD's clock (deadlines per
+  kind from `powerup_state`, expiring on their own, kept only while each
+  snapshot repeats them, cleared on the subject's death). The subject's
+  `combat_state`, sent in every snapshot, marks a snapshot arriving, since
+  the Rust HUD sees a frame's events rather than one snapshot's.
+  `hud/widgets/powerup_timer.rs` ports `PowerupTimer.ts` with its Washiki
+  styles: a gold QUAD slab with whole seconds above the vitals, hot red and
+  pulsing 1 to 1.06 in the last five seconds, hidden while dead.
+- **Proof.** Unit tests: deadlines, zero seconds, a snapshot without the
+  powerup, whole seconds and the urgent look. `tests/hud_render.rs` draws a
+  carrier's HUD at 12 and 4 seconds and after the powerup ends.
+
 ### Milestone 11, ninth slice: the quad carrier's glow (November 3, 2026)
 
 - **shagger b1ccbca.** A lit (glTF) model adds its draw's emissive, as PBR
@@ -2594,8 +2609,7 @@ Newest first. Each entry names the commits and what proves them.
   to 52 on the outline scale; others keep their style. `washoi view
   --player ...,quad` holds a carrier.
 - **Not yet.** The attached and first-person weapons' quad outlines (the
-  Rust renderer draws no weapon in a remote player's hand yet), and
-  `LocalPowerupState` with the HUD's powerup timer.
+  Rust renderer draws no weapon in a remote player's hand yet).
 - **Proof.** Unit tests: the pulse and the mask bit, a carrier's emissive
   and outline half way through the pulse. A screenshot of a carrier beside
   a plain player on washoi_amphi1.

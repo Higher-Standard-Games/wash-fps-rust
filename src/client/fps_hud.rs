@@ -26,6 +26,7 @@ use crate::client::hud::widgets::frag_message::FragMessage;
 use crate::client::hud::widgets::gametype_badge::GametypeBadge;
 use crate::client::hud::widgets::phase_message::PhaseMessage;
 use crate::client::hud::widgets::pickup_toast::PickupToast;
+use crate::client::hud::widgets::powerup_timer::PowerupTimer;
 use crate::client::hud::widgets::scoreboard::Scoreboard;
 use crate::client::hud::widgets::timer::Timer;
 use crate::client::hud::widgets::vitals_block::VitalsBlock;
@@ -53,6 +54,7 @@ pub struct FpsHud {
     weapon_slots: WeaponSlots,
     ammo_warning: AmmoWarning,
     pickup: PickupToast,
+    powerup_timer: PowerupTimer,
     death: DeathScreen,
     damage: DamageOverlay,
     pub chat: Chat,
@@ -107,6 +109,7 @@ impl FpsHud {
             weapon_slots: WeaponSlots::default(),
             ammo_warning: AmmoWarning::default(),
             pickup: PickupToast::default(),
+            powerup_timer: PowerupTimer::default(),
             death: DeathScreen::default(),
             damage: DamageOverlay::default(),
             chat: Chat::default(),
@@ -129,6 +132,10 @@ impl FpsHud {
         }
         state.update_from_game_state(frame.roster, frame.match_state);
         let view = frame.view_entity.unwrap_or_default();
+        // `keepOnlyLocalPowerups` runs per snapshot; the subject's
+        // `combat_state`, sent in every one, says a snapshot arrived.
+        let mut snapshot_arrived = false;
+        let mut running_powerups = std::collections::BTreeSet::new();
         for event in frame.events {
             match event {
                 // The HUD describes whoever the camera is behind.
@@ -138,6 +145,7 @@ impl FpsHud {
                     armor,
                     dead,
                 } if entity_id == view => {
+                    snapshot_arrived = true;
                     state.process_combat_state(*health, *armor, *dead);
                     if frame.playing {
                         state.local_dead = *dead;
@@ -182,6 +190,16 @@ impl FpsHud {
                 SnapshotEvent::PickupNotify { entity_id, label } if entity_id == view => {
                     self.pickup.show_pickup(label);
                 }
+                SnapshotEvent::PowerupState {
+                    entity_id,
+                    kind,
+                    seconds,
+                } if entity_id == view => {
+                    state.powerups.set(kind, f64::from(*seconds), state.now);
+                    if *seconds > 0 {
+                        running_powerups.insert(kind.clone());
+                    }
+                }
                 _ => {}
             }
             if let SnapshotEvent::Death {
@@ -191,6 +209,10 @@ impl FpsHud {
                 ..
             } = event
             {
+                // Powerups do not survive death.
+                if entity_id == view {
+                    state.powerups.clear();
+                }
                 let victim_name = HudState::resolve_player_name(frame.roster, entity_id);
                 let killer_name = if killer_id.is_empty() {
                     String::new()
@@ -209,6 +231,9 @@ impl FpsHud {
                     },
                 );
             }
+        }
+        if snapshot_arrived {
+            state.powerups.keep_only(&running_powerups);
         }
         state.expire_transients(frame.dt);
         self.chat.tick(frame.dt);
@@ -272,6 +297,10 @@ impl FpsHud {
             let bottom = vh - 16.0 * s;
             let [_, vitals_h] = self.vitals.size(&self.hud, &fonts);
             self.vitals.draw(&mut self.hud, &fonts, 28.0 * s, bottom - vitals_h);
+            // `.fps-powerup-timer`, stacked above the vitals.
+            let [_, timer_h] = self.powerup_timer.size(&self.hud, &fonts);
+            self.powerup_timer
+                .draw(&mut self.hud, &fonts, 28.0 * s, bottom - vitals_h - timer_h);
             let [ammo_w, ammo_h] = self.ammo.size(&self.hud, &fonts);
             let ammo_x = vw - 28.0 * s - ammo_w;
             self.ammo.draw(&mut self.hud, &fonts, ammo_x, bottom - ammo_h);
@@ -317,8 +346,9 @@ impl FpsHud {
         }
     }
 
-    fn widgets_mut(&mut self) -> [&mut dyn FpsHudWidget; 13] {
+    fn widgets_mut(&mut self) -> [&mut dyn FpsHudWidget; 14] {
         [
+            &mut self.powerup_timer,
             &mut self.weapon_slots,
             &mut self.ammo_warning,
             &mut self.pickup,

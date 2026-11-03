@@ -10,6 +10,7 @@ pub mod frag_message;
 pub mod gametype_badge;
 pub mod phase_message;
 pub mod pickup_toast;
+pub mod powerup_timer;
 pub mod scoreboard;
 pub mod timer;
 pub mod vitals_block;

@@ -139,3 +139,95 @@ fn a_fragged_player_sees_the_death_screen() {
     });
     assert!(red.count() > 200);
 }
+
+/// Quad Damage's countdown stacks above the vitals: a gold slab, hot red in
+/// its last five seconds. Writes the gold frame to `HUD_QUAD_PNG` when set.
+#[test]
+fn a_quad_carrier_sees_the_countdown() {
+    let Ok(gpu) = Gpu::headless() else {
+        eprintln!("skipped: no GPU adapter");
+        return;
+    };
+    let (width, height) = (1280u32, 720u32);
+    let mut hud = FpsHud::new(&gpu, OFFSCREEN_FORMAT).unwrap();
+    let roster = vec![(
+        "player_1".to_owned(),
+        PlayerState {
+            entity_id: "player_1".into(),
+            name: "Washiki!".into(),
+            ..PlayerState::default()
+        },
+    )];
+    let match_state = MatchStateManager::new();
+    let positions = vec![("player_1".to_owned(), [0.0, 0.0, 0.0])];
+    let snapshot = |seconds: u16| {
+        vec![
+            SnapshotEvent::CombatState {
+                entity_id: "player_1".into(),
+                health: 100,
+                armor: 0,
+                dead: false,
+            },
+            SnapshotEvent::PowerupState {
+                entity_id: "player_1".into(),
+                kind: "quad".into(),
+                seconds,
+            },
+        ]
+    };
+    let post = ImageProcessingPostProcess::new(&gpu, OFFSCREEN_FORMAT);
+    let mut render = |events: &[SnapshotEvent]| {
+        let frame = WatchFrame {
+            roster: &roster,
+            match_state: &match_state,
+            events,
+            view_entity: Some("player_1"),
+            playback: false,
+            playing: true,
+            speed: 0.0,
+            positions: &positions,
+            yaw: 0.0,
+            dt: 1.0 / 60.0,
+        };
+        hud.update_watching(&frame, width as f32, height as f32);
+        hud.prepare(&gpu);
+        render_hdr_with_ui_to_rgba(
+            &gpu,
+            width,
+            height,
+            wgpu::Color {
+                r: 0.3,
+                g: 0.3,
+                b: 0.3,
+                a: 1.0,
+            },
+            &post,
+            &ImageProcessingConfiguration::default(),
+            |_| {},
+            |_| {},
+            |pass| hud.draw(pass),
+        )
+    };
+    // Pixels in the left quarter between the middle and the vitals.
+    let count = |pixels: &[u8], hit: &dyn Fn([u8; 3]) -> bool| {
+        (height / 2..height * 7 / 10)
+            .flat_map(|y| (0..width / 4).map(move |x| (x, y)))
+            .filter(|&(x, y)| {
+                let i = ((y * width + x) * 4) as usize;
+                hit([pixels[i], pixels[i + 1], pixels[i + 2]])
+            })
+            .count()
+    };
+    let gold = |p: [u8; 3]| p[0] > 200 && p[1] > 150 && p[2] < 90;
+    let hot = |p: [u8; 3]| p[0] > 180 && p[1] < 90 && p[2] < 90;
+    let pixels = render(&snapshot(12));
+    if let Some(path) = std::env::var_os("HUD_QUAD_PNG") {
+        image::save_buffer(path, &pixels, width, height, image::ExtendedColorType::Rgba8).unwrap();
+    }
+    assert!(count(&pixels, &gold) > 1500, "gold {}", count(&pixels, &gold));
+    let pixels = render(&snapshot(4));
+    assert!(count(&pixels, &hot) > 1500, "red {}", count(&pixels, &hot));
+    // A snapshot without it ends it.
+    let pixels = render(&snapshot(4)[..1]);
+    assert!(count(&pixels, &hot) < 100);
+}

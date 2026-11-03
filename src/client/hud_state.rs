@@ -2,6 +2,7 @@
 //! the match's names and scores, and whose view it is. The transient
 //! parts (damage numbers, kill feed, pickups) come with their widgets.
 
+use crate::client::local_powerup_state::LocalPowerupState;
 use std::collections::BTreeMap;
 
 use shagger::shared::json::Value;
@@ -91,6 +92,8 @@ pub struct HudState {
     death_seq: u64,
     /// The HUD's clock in seconds (`performance.now()`).
     pub now: f64,
+    /// The subject's powerup timers (`LocalPowerupState`).
+    pub powerups: LocalPowerupState,
 }
 
 impl Default for HudState {
@@ -115,6 +118,7 @@ impl Default for HudState {
             kill_feed: Vec::new(),
             death_seq: 0,
             now: 0.0,
+            powerups: LocalPowerupState::default(),
         }
     }
 }
