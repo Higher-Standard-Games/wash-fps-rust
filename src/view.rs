@@ -15,7 +15,7 @@ use washoi::client::cartoon_hit_effect::{CartoonHitEffect, CartoonHitRenderer};
 use washoi::client::damage_numbers::{DamageNumberRenderer, DamageNumbers};
 use washoi::client::fps_liquid_audio::play_liquid_crossing;
 use washoi::client::gib_system::{GibRenderer, GibSystem};
-use washoi::client::ragdoll_system::RagdollSystem;
+use washoi::client::ragdoll_system::{RagdollSystem, RagdollTrails};
 use washoi::client::remote_player_renderer::{body_matrix, update_powerup_glow};
 use washoi::client::teleport_effect::{TeamColor, TeleportEffect, TeleportRenderer, legacy_team_color, play_tele_in};
 use washoi::liquid::client::liquid_interaction_system::{LiquidInteractionSystem, WaterRipples};
@@ -817,6 +817,7 @@ pub struct MapRenderer {
     /// Non-gib deaths fall as ragdolls (`RagdollSystem`); none without the
     /// player model.
     pub ragdolls: Option<RagdollSystem>,
+    ragdoll_trails: RagdollTrails,
     /// Players whose body a ragdoll took, hidden until they leave the list.
     ragdolled: HashSet<String>,
     /// Poses of players who left the list this frame, for a death that
@@ -1482,6 +1483,8 @@ impl MapRenderer {
         if let (Some(ragdolls), Some(renderer)) = (&self.ragdolls, &self.remote_players) {
             let (lit, fade) = renderer.handles();
             ragdolls.draws(&renderer.model, lit, fade, &mut self.joints, &mut self.frame_draws);
+            self.ragdoll_trails
+                .draws(gpu, &mut self.models, ragdolls, &mut self.frame_draws);
         }
         self.items.draws(
             self.item_time,
@@ -2128,6 +2131,7 @@ pub fn build_renderer(gpu: &Gpu, map: &mut LoadedMap, output_format: wgpu::Textu
         gib_renderer,
         live_tints: HashMap::new(),
         ragdolls,
+        ragdoll_trails: RagdollTrails::default(),
         ragdolled: HashSet::new(),
         departed: HashMap::new(),
         live_worlds: HashMap::new(),

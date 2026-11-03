@@ -8,13 +8,19 @@
 //! the dead player's pose (`PlayerModelInstance`) and the body matrix it
 //! died with; the bones move under it. `BatchedPoseSync` (a speed-up of the
 //! same sync) has no counterpart; the follow handle is the ragdoll's serial
-//! ([`RagdollSystem::position_of`]). Not yet: the speed trail (`TrailMesh`).
+//! ([`RagdollSystem::position_of`]). The speed trail is Babylon's
+//! `TrailMesh` (shagger's port) behind the hips box, one uploaded mesh per
+//! ragdoll slot, its vertices streamed each frame.
 
 use shagger::animation::player_model_manager::{PlayerModel, PlayerModelInstance};
+use shagger::babylon::materials::standard_material::StandardMaterialParams;
+use shagger::babylon::meshes::trail_mesh::TrailMesh;
 use shagger::babylon::physics::v2::ragdoll::{PhysicsConstraintType, Ragdoll, RagdollBoneProperties};
-use shagger::physics::physics_system::{PhysicsSystem, to_rapier};
-use shagger::rendering::glam::{DVec3, Mat4, Vec3};
-use shagger::rendering::model_renderer::{ModelDraw, ModelHandle};
+use shagger::physics::physics_system::{PhysicsSystem, from_rapier, quat_from_rapier, to_rapier};
+use shagger::rendering::glam::{DMat4, DVec3, Mat4, Vec3};
+use shagger::rendering::gpu::Gpu;
+use shagger::rendering::model_renderer::{ModelDraw, ModelHandle, ModelRenderer};
+use shagger::weapon::projectile_manager::{update_standard_mesh, upload_standard_mesh};
 
 /// Longest a ragdoll simulates before gib-exploding, resting or not
 /// (`RAGDOLL_LIFETIME`, seconds).
@@ -32,6 +38,12 @@ pub const MAX_RAGDOLLS: usize = 4;
 pub const LAUNCH_SPEED: f64 = 670.0;
 /// `RAGDOLL_GRAVITY_FACTOR`: slightly floatier arcs.
 pub const RAGDOLL_GRAVITY_FACTOR: f32 = 0.8;
+/// `TRAIL_LIFETIME`: seconds before the speed trail is gone.
+pub const TRAIL_LIFETIME: f64 = 1.0;
+/// `TRAIL_DIAMETER`: the ribbon's width.
+pub const TRAIL_DIAMETER: f64 = 8.0;
+/// `TRAIL_LENGTH`: its segments.
+pub const TRAIL_LENGTH: usize = 30;
 /// `MODEL_SCALE`: the boxes are sized in world units.
 pub const MODEL_SCALE: f32 = 36.0;
 
@@ -218,9 +230,17 @@ pub struct ActiveRagdoll {
     rest_anchor: Option<DVec3>,
     rest_seconds: f64,
     pub fade_start: Option<f64>,
+    /// The speed trail behind the hips, for its first second.
+    pub trail: Option<TrailMesh>,
 }
 
 impl ActiveRagdoll {
+    /// The trail's alpha: 0.6 fading to nothing over its life.
+    #[must_use]
+    pub fn trail_alpha(&self) -> f64 {
+        0.6 * (1.0 - self.age / TRAIL_LIFETIME)
+    }
+
     /// How visible it is: 1 until the fade, then down to 0.
     #[must_use]
     pub fn fade(&self) -> f64 {
@@ -288,6 +308,7 @@ impl RagdollSystem {
                 body.set_gravity_scale(RAGDOLL_GRAVITY_FACTOR, true);
             }
         }
+        let trail = hips_pose(&self.physics, &ragdoll).map(|pose| TrailMesh::new(pose, TRAIL_DIAMETER, TRAIL_LENGTH));
         self.next_serial += 1;
         self.ragdolls.push(ActiveRagdoll {
             serial: self.next_serial,
@@ -299,6 +320,7 @@ impl RagdollSystem {
             rest_anchor: None,
             rest_seconds: 0.0,
             fade_start: None,
+            trail,
         });
         Some(self.next_serial)
     }
@@ -334,6 +356,12 @@ impl RagdollSystem {
                 .ragdoll
                 .sync(physics, skeleton, &mut active.instance.locals, active.world);
             active.age += dt;
+            // The trail follows the hips each frame, then goes.
+            if active.age >= TRAIL_LIFETIME {
+                active.trail = None;
+            } else if let (Some(trail), Some(pose)) = (&mut active.trail, hips_pose(physics, &active.ragdoll)) {
+                trail.update(pose);
+            }
             let hips = active.ragdoll.root_position(physics).map(|p| p.as_dvec3());
             if active.fade_start.is_none() {
                 if came_to_rest(active, hips, dt) {
@@ -394,6 +422,65 @@ impl RagdollSystem {
                     ..ModelDraw::new(if fading { fade_handle } else { handle }, index, active.world)
                 });
             }
+        }
+    }
+}
+
+/// The hips box's world matrix (the trail's generator).
+fn hips_pose(physics: &PhysicsSystem, ragdoll: &Ragdoll) -> Option<DMat4> {
+    let body = physics.world.bodies.get(ragdoll.get_aggregate(0)?)?;
+    Some(DMat4::from_rotation_translation(
+        quat_from_rapier(*body.rotation()).as_dquat(),
+        from_rapier(body.translation()).as_dvec3(),
+    ))
+}
+
+/// The ragdolls' speed trails: a mesh per slot, uploaded on first use.
+#[derive(Default)]
+pub struct RagdollTrails {
+    slots: Vec<ModelHandle>,
+}
+
+impl RagdollTrails {
+    /// Streams each live trail into a slot and draws it in its body's
+    /// colour, clamped (team colours run over 1), white without one.
+    pub fn draws(
+        &mut self,
+        gpu: &Gpu,
+        models: &mut ModelRenderer,
+        ragdolls: &RagdollSystem,
+        draws: &mut Vec<ModelDraw>,
+    ) {
+        let mut slot = 0;
+        for active in ragdolls.ragdolls() {
+            let Some(trail) = &active.trail else { continue };
+            if slot == self.slots.len() {
+                // `ragdoll_trail_mat`: unlit, both sides, alpha 0.6.
+                let material = StandardMaterialParams {
+                    emissive_color: Vec3::ONE,
+                    diffuse_color: Vec3::ONE,
+                    disable_lighting: true,
+                    back_face_culling: false,
+                    alpha: 0.6,
+                    ..StandardMaterialParams::default()
+                };
+                self.slots.push(upload_standard_mesh(
+                    gpu,
+                    models,
+                    &[("ragdoll_trail", &trail.data)],
+                    material,
+                ));
+            } else {
+                update_standard_mesh(gpu, models, self.slots[slot], 0, &trail.data);
+            }
+            let color = active.color.map_or(Vec3::ONE, |c| c.min(Vec3::ONE));
+            draws.push(ModelDraw {
+                tint: Some(color),
+                emissive: Some(color),
+                alpha: Some(active.trail_alpha() as f32),
+                ..ModelDraw::new(self.slots[slot], 0, Mat4::IDENTITY)
+            });
+            slot += 1;
         }
     }
 }

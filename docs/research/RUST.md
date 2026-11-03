@@ -2582,6 +2582,24 @@ fit and did not count the parity harness.
 
 Newest first. Each entry names the commits and what proves them.
 
+### Milestone 11, fourteenth slice: the ragdoll speed trail (November 3, 2026)
+
+- **shagger 2b92c7e.** `babylon/meshes/trail_mesh.rs` ports Babylon's
+  `TrailMesh` (Apache-2.0, in NOTICE): thirty rings of four sides started
+  at the generator, each frame shifted one along and pulled in along their
+  normals, the newest put around the generator in its frame. The
+  projectile trails' upload becomes `upload_standard_mesh`, with
+  `update_standard_mesh` to stream vertices.
+- **wash-fps-rust.** A ragdoll trails a tube 8 across behind its hips box
+  for its first second, in the body's colour clamped to 1 (white without
+  one), unlit and two-sided at 0.6 alpha fading to nothing. Each ragdoll
+  slot uploads one mesh and streams it after (`RagdollTrails`).
+- **Proof.** Unit tests: the starting rings and the shift with its taper.
+  A screenshot of two ragdolls in flight on washoi_amphi1
+  (`rust-port/ragdoll-trails-amphi1.png`); the rings still at the spawn
+  point show as a diamond at the tail until thirty frames have passed, as
+  in Babylon.
+
 ### Milestone 11, thirteenth slice: the death camera (November 3, 2026)
 
 - **wash-fps-rust.** `client/death_camera.rs` ports `DeathCamera.ts`: after
@@ -2627,8 +2645,8 @@ Newest first. Each entry names the commits and what proves them.
   death's pose and body matrix to it (`detachModel`) and keeps that player
   hidden until they leave the players list; a pose that left the list in
   the same frame is caught as it goes. `washoi view --ragdoll` holds one.
-- **Not yet.** The speed trail behind the hips (`TrailMesh`). The death
-  camera and the local player's own corpse came in the thirteenth slice.
+- **Not yet.** Nothing: the death camera and the local player's own corpse
+  came in the thirteenth slice, the speed trail in the fourteenth.
 - **Proof.** Unit tests: a box landing on a trimesh floor, the substep
   clamp, the boxes on the bones, a missing bone or two roots making no
   ragdoll, the bones following falling boxes with the joint holding, the
