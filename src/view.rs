@@ -78,6 +78,7 @@ use shagger::weapon::projectile_manager::{
 };
 use shagger::weapon::rail::rail_profiles::{RailEffectSample, RailImpactKind};
 use shagger::weapon::tracer::streak_tracer_renderer::StreakTracerShot;
+use shagger::weapon::weapon_slash::SlashTrailRenderer;
 use shagger::weapon::weapon_switch_anim::{SwitchAnimOffsets, WeaponSwitchAnim};
 use shagger::weapon::weapon_view_manager::ViewModelInput;
 use washoi::client::cinematic_demo_player::{
@@ -866,6 +867,8 @@ pub struct MapRenderer {
     /// player model.
     pub ragdolls: Option<RagdollSystem>,
     ragdoll_trails: RagdollTrails,
+    /// The blade's swing ribbons (`WeaponSlash.updateTrail`).
+    slash_trails: SlashTrailRenderer,
     /// Guns in players' hands (`updateWeaponModel`), and who holds which.
     hand_weapons: HandWeapons,
     live_weapons: HashMap<String, String>,
@@ -1677,6 +1680,19 @@ impl MapRenderer {
             trail.update(gpu, &mut self.models, Some(camera.position.as_dvec3()), *color);
             trail.draws(&mut self.frame_draws);
         }
+        if let Some(view_model) = &mut self.view_model {
+            let now = view_model.view.clock * 1000.0;
+            let slash = &mut view_model.view.slash;
+            slash.update_trail(
+                now,
+                camera.position.as_dvec3(),
+                camera.forward().as_dvec3(),
+                camera.up().as_dvec3(),
+                camera.right().as_dvec3(),
+            );
+            self.slash_trails
+                .draws(gpu, &mut self.models, slash, now, &mut self.frame_draws);
+        }
         for (def, trail) in self.live_trails.values_mut() {
             let color = def.light_color.map(|c| Vec3::new(c.r as f32, c.g as f32, c.b as f32));
             trail.update(gpu, &mut self.models, Some(camera.position.as_dvec3()), color);
@@ -2397,6 +2413,7 @@ pub fn build_renderer(gpu: &Gpu, map: &mut LoadedMap, output_format: wgpu::Textu
         live_tints: HashMap::new(),
         ragdolls,
         ragdoll_trails: RagdollTrails::default(),
+        slash_trails: SlashTrailRenderer::default(),
         hand_weapons,
         live_weapons: HashMap::new(),
         ragdolled: HashSet::new(),
