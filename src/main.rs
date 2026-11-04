@@ -79,6 +79,7 @@
 mod bench;
 mod data_sync_screen;
 mod demo_overlay;
+mod lobby_webview;
 mod menu;
 mod reel_overlay;
 mod region_screen;
@@ -566,6 +567,12 @@ fn game_data_dir(o: &Options) -> PathBuf {
 /// The game as a player starts it: the data brought up to date, then the
 /// menu on the region's lobby, with the packages from that data.
 fn game(mut o: Options) -> i32 {
+    // One window for the session, the lobby page a child of it
+    // (WEBVIEW_LOBBY.md 3); GTK first on Linux.
+    window::keep_window_between_screens();
+    if let Err(why) = shagger::webview::init_platform() {
+        return fatal(&format!("the lobby needs a web view: {why}"));
+    }
     // The region picker first, unless the command line names one.
     let (lobby, data) = if named_region(&o).is_some() {
         region(&o)
@@ -595,7 +602,37 @@ fn game(mut o: Options) -> i32 {
         }
     }
     o.data = Some(dir);
-    menu_mode(&lobby, &o)
+    lobby_mode(&lobby, &o)
+}
+
+/// The region's lobby page until the player quits, each match it starts
+/// played in the same window (WEBVIEW_LOBBY.md 6).
+fn lobby_mode(lobby: &str, o: &Options) -> i32 {
+    let Some(page) = lobby_webview::page_url(lobby) else {
+        return fatal(&format!("no lobby page for {lobby}"));
+    };
+    if !o.offline {
+        washoi::update_check::start();
+    }
+    let mut after = None;
+    loop {
+        match lobby_webview::run(&page, after.take()) {
+            Ok(lobby_webview::LobbyOutcome::Quit) => return 0,
+            Ok(lobby_webview::LobbyOutcome::Match(c)) => {
+                let how = if c.play { "play" } else { "watch" };
+                println!("lobby: {how} at {}", c.server_url);
+                let watch = Some((c.server_url.clone(), c.name.clone(), c.admission_ticket.clone()));
+                let mut v = view_options(o, c.server_url.clone(), None, watch, c.play);
+                v.team.clone_from(&c.team);
+                let error = view::start(&v).err();
+                if let Some(why) = &error {
+                    eprintln!("{why}");
+                }
+                after = Some(lobby_webview::AfterMatch { error });
+            }
+            Err(e) => return fatal(&format!("lobby: {e}")),
+        }
+    }
 }
 
 fn default_key_file() -> Option<PathBuf> {

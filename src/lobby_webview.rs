@@ -1,0 +1,548 @@
+//! The lobby as the browser shows it: the region's `/client` page in the
+//! system webview, a child of the game window (docs/research/WEBVIEW_LOBBY.md).
+//!
+//! The page keeps the lobby connection, the account and the settings sync.
+//! When it would start a match it asks over the bridge (`match:play`,
+//! `match:watch`); this screen answers, hides the page and hands the choice
+//! to the match, which runs in the same window. The page stays loaded,
+//! hidden, until the match ends and this screen shows it again with
+//! `match:ended`.
+//!
+//! When the page does not come up (no network, an old deploy without the
+//! bridge, no webview on this machine) the screen says why and offers Retry
+//! and Quit. There is no native lobby behind it.
+
+use std::cell::{Cell, RefCell};
+use std::sync::Arc;
+use std::time::{Duration, Instant};
+
+use serde_json::{Value, json};
+use shagger::rendering::gpu::Gpu;
+use shagger::rendering::wgpu;
+use shagger::ui::egui_layer::{EguiLayer, egui};
+use shagger::webview::{HostEvent, WebviewConfig, WebviewHost, open_external, origin_of};
+use washoi::client::lobby_panel::LobbyChoice;
+use winit::application::ApplicationHandler;
+use winit::event::WindowEvent;
+use winit::event_loop::ActiveEventLoop;
+use winit::window::{Window, WindowId};
+
+use crate::window::{OpenWindow, next_frame, open_window, present, run_on_event_loop, toggle_fullscreen};
+
+/// The bridge version this client speaks (WEBVIEW_LOBBY.md 5).
+pub const BRIDGE_VERSION: u32 = 1;
+
+/// What the client offers the page, for `hello`.
+const CAPABILITIES: [&str; 4] = ["match", "external", "fullscreen", "quit"];
+
+/// How long the page has to say hello before the screen gives up on it.
+const HELLO_TIMEOUT: Duration = Duration::from_secs(30);
+
+/// The page's global.
+const GLOBAL: &str = "__washoiNative";
+
+/// Behind the page: Washoi's night blue.
+const BACKGROUND: wgpu::Color = wgpu::Color {
+    r: 0.035,
+    g: 0.03,
+    b: 0.07,
+    a: 1.0,
+};
+
+thread_local! {
+    /// The page, alive from the first lobby to the end of the process.
+    static HOST: RefCell<Option<WebviewHost>> = const { RefCell::new(None) };
+    /// The page said hello at least once.
+    static GREETED: Cell<bool> = const { Cell::new(false) };
+}
+
+/// How the last match ended, for the page.
+#[derive(Debug, Clone, Default)]
+pub struct AfterMatch {
+    /// Why it did not start or broke off; `None` when the player went back.
+    pub error: Option<String>,
+}
+
+/// What the lobby decided.
+#[derive(Debug)]
+pub enum LobbyOutcome {
+    Quit,
+    Match(LobbyChoice),
+}
+
+/// The `/client` page for a region's lobby WebSocket address:
+/// `wss://eu.washoi.net/lobby` is `https://eu.washoi.net/client`.
+/// `WASHOI_LOBBY_PAGE` overrides it (a local SHAG dev server).
+#[must_use]
+pub fn page_url(lobby_url: &str) -> Option<String> {
+    if let Ok(page) = std::env::var("WASHOI_LOBBY_PAGE")
+        && !page.is_empty()
+    {
+        return Some(page);
+    }
+    let (scheme, rest) = lobby_url.split_once("://")?;
+    let scheme = match scheme {
+        "wss" => "https",
+        "ws" => "http",
+        _ => return None,
+    };
+    let host = rest.split('/').next().filter(|h| !h.is_empty())?;
+    Some(format!("{scheme}://{host}/client"))
+}
+
+/// The answer to a page's request, carrying its `id`.
+fn reply(request: &Value, kind: &str, mut fields: Value) -> Value {
+    if let Some(obj) = fields.as_object_mut() {
+        obj.insert("v".into(), BRIDGE_VERSION.into());
+        obj.insert("type".into(), kind.into());
+        if let Some(id) = request.get("id") {
+            obj.insert("id".into(), id.clone());
+        }
+    }
+    fields
+}
+
+fn text(message: &Value, field: &str) -> Option<String> {
+    message.get(field).and_then(Value::as_str).map(str::to_owned)
+}
+
+/// A `match:play` or `match:watch` request as the match's choice, or why not.
+pub fn match_choice(message: &Value) -> Result<LobbyChoice, String> {
+    let play = text(message, "type").as_deref() == Some("match:play");
+    let server_url = text(message, "serverUrl").ok_or("no serverUrl")?;
+    if !server_url.starts_with("ws://") && !server_url.starts_with("wss://") {
+        return Err(format!("not a game server: {server_url}"));
+    }
+    let admission_ticket = text(message, "admissionTicket");
+    if play && admission_ticket.is_none() {
+        return Err("playing needs an admissionTicket".into());
+    }
+    Ok(LobbyChoice {
+        server_url,
+        map: text(message, "map").unwrap_or_default(),
+        admission_ticket,
+        name: text(message, "name").unwrap_or_else(|| "Player".into()),
+        play,
+        demo: None,
+        reel: None,
+        team: text(message, "team"),
+    })
+}
+
+/// What one message from the page asks of the screen.
+#[derive(Debug)]
+enum Action {
+    Reply(Value),
+    Quit,
+    Fullscreen,
+    External(String),
+    Match(Box<LobbyChoice>, Value),
+    Nothing,
+}
+
+fn act(message: &Value) -> Action {
+    let kind = text(message, "type").unwrap_or_default();
+    match kind.as_str() {
+        "hello" => Action::Reply(reply(
+            message,
+            "hello",
+            json!({
+                "clientVersion": washoi::VERSION,
+                "bridgeVersion": BRIDGE_VERSION,
+                "capabilities": CAPABILITIES,
+            }),
+        )),
+        "open:external" => text(message, "url").map_or(Action::Nothing, Action::External),
+        "app:quit" => Action::Quit,
+        "window:fullscreen" => Action::Fullscreen,
+        "match:play" | "match:watch" => match match_choice(message) {
+            Ok(choice) => Action::Match(Box::new(choice), reply(message, "ok", json!({}))),
+            Err(why) => Action::Reply(reply(message, "error", json!({"code": "bad_request", "message": why}))),
+        },
+        _ if message.get("id").is_some() => Action::Reply(reply(
+            message,
+            "error",
+            json!({"code": "unknown_type", "message": format!("this client does not know {kind}")}),
+        )),
+        _ => Action::Nothing,
+    }
+}
+
+struct Open {
+    window: Arc<Window>,
+    gpu: Gpu,
+    surface: wgpu::Surface<'static>,
+    config: wgpu::SurfaceConfiguration,
+    layer: EguiLayer,
+}
+
+struct LobbyApp {
+    url: String,
+    after: Option<AfterMatch>,
+    open: Option<Open>,
+    outcome: Option<LobbyOutcome>,
+    /// Why the page is not up, shown instead of it.
+    problem: Option<String>,
+    waiting_since: Instant,
+    error: Option<String>,
+}
+
+impl LobbyApp {
+    fn config(&self) -> WebviewConfig {
+        let origin = origin_of(&self.url).unwrap_or_default();
+        WebviewConfig {
+            url: self.url.clone(),
+            allowed_origins: vec![origin],
+            global: GLOBAL.into(),
+            info: json!({
+                "shell": "washoi-native",
+                "bridgeVersion": BRIDGE_VERSION,
+                "clientVersion": washoi::VERSION,
+                "platform": std::env::consts::OS,
+                "capabilities": CAPABILITIES,
+                "storage": {},
+            }),
+            extra_script: String::new(),
+            data_dir: washoi::cache_dir().map(|d| d.join("webview")),
+            devtools: cfg!(debug_assertions),
+        }
+    }
+
+    fn with_host<R>(f: impl FnOnce(&mut WebviewHost) -> R) -> Option<R> {
+        HOST.with(|h| h.borrow_mut().as_mut().map(f))
+    }
+
+    fn handle(&mut self, event_loop: &ActiveEventLoop) {
+        let events = Self::with_host(|h| h.drain()).unwrap_or_default();
+        for event in events {
+            match event {
+                HostEvent::Message(message) => {
+                    if text(&message, "type").as_deref() == Some("hello") {
+                        GREETED.with(|g| g.set(true));
+                        self.problem = None;
+                    }
+                    match act(&message) {
+                        Action::Reply(answer) => {
+                            Self::with_host(|h| h.send(&answer));
+                        }
+                        Action::Quit => {
+                            self.outcome = Some(LobbyOutcome::Quit);
+                            event_loop.exit();
+                        }
+                        Action::Fullscreen => toggle_fullscreen(),
+                        Action::External(url) => {
+                            if !open_external(&url) {
+                                eprintln!("lobby: not opening {url}");
+                            }
+                        }
+                        Action::Match(choice, answer) => {
+                            Self::with_host(|h| {
+                                h.send(&answer);
+                                h.send(&json!({"v": BRIDGE_VERSION, "type": "match:started"}));
+                                h.hide();
+                            });
+                            self.outcome = Some(LobbyOutcome::Match(*choice));
+                            event_loop.exit();
+                            return;
+                        }
+                        Action::Nothing => {}
+                    }
+                }
+                HostEvent::Loaded(url) => println!("lobby: page loaded {url}"),
+                HostEvent::External(url) => println!("lobby: opened {url} in the browser"),
+                HostEvent::Malformed(text) => eprintln!("lobby: page sent {text}"),
+            }
+        }
+        if !GREETED.with(Cell::get) && self.problem.is_none() && self.waiting_since.elapsed() > HELLO_TIMEOUT {
+            self.problem = Some(format!("The lobby at {} did not start.", self.url));
+            Self::with_host(WebviewHost::hide);
+        }
+    }
+
+    fn retry(&mut self) {
+        self.problem = None;
+        self.waiting_since = Instant::now();
+        GREETED.with(|g| g.set(false));
+        Self::with_host(|h| {
+            h.load(&self.url);
+            h.show();
+        });
+    }
+
+    fn redraw(&mut self, event_loop: &ActiveEventLoop) {
+        self.handle(event_loop);
+        if self.outcome.is_some() {
+            return;
+        }
+        let Some(m) = &mut self.open else { return };
+        let frame = match next_frame(&m.gpu, &m.window, &mut m.surface, &m.config) {
+            Ok(Some(frame)) => frame,
+            Ok(None) => return,
+            Err(why) => {
+                self.error = Some(why);
+                event_loop.exit();
+                return;
+            }
+        };
+        let view = frame
+            .texture
+            .texture
+            .create_view(&wgpu::TextureViewDescriptor::default());
+        let mut retry = false;
+        let mut quit = false;
+        let problem = self.problem.clone();
+        let ui = m.layer.run(&m.window, |ui| {
+            if let Some(problem) = &problem {
+                problem_screen(ui, problem, &mut retry, &mut quit);
+            }
+        });
+        let mut encoder = m
+            .gpu
+            .device
+            .create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some("lobby") });
+        clear(&mut encoder, &view);
+        m.layer
+            .paint(&m.gpu, &mut encoder, &view, [m.config.width, m.config.height], ui);
+        m.gpu.queue.submit([encoder.finish()]);
+        present(&m.gpu, &m.window, &mut m.surface, &m.config, frame);
+        if retry {
+            self.retry();
+        }
+        if quit {
+            self.outcome = Some(LobbyOutcome::Quit);
+            event_loop.exit();
+        }
+    }
+}
+
+/// Why the lobby is not showing, and the way on.
+fn problem_screen(ui: &mut egui::Ui, problem: &str, retry: &mut bool, quit: &mut bool) {
+    let cream = egui::Color32::from_rgb(0xf6, 0xec, 0xd2);
+    let gold = egui::Color32::from_rgb(0xff, 0xc2, 0x1a);
+    egui::CentralPanel::default().frame(egui::Frame::new()).show(ui, |ui| {
+        ui.vertical_centered(|ui| {
+            ui.add_space(ui.available_height() * 0.3);
+            ui.label(egui::RichText::new("NO LOBBY").size(40.0).strong().color(gold));
+            ui.add_space(12.0);
+            ui.label(egui::RichText::new(problem).size(18.0).color(cream));
+            ui.label(
+                egui::RichText::new("Check the connection, then try again.")
+                    .size(15.0)
+                    .color(cream.gamma_multiply(0.7)),
+            );
+            ui.add_space(24.0);
+            ui.horizontal(|ui| {
+                ui.add_space((ui.available_width() - 220.0).max(0.0) / 2.0);
+                if ui.add_sized([100.0, 36.0], egui::Button::new("RETRY")).clicked() {
+                    *retry = true;
+                }
+                if ui.add_sized([100.0, 36.0], egui::Button::new("QUIT")).clicked() {
+                    *quit = true;
+                }
+            });
+        });
+    });
+}
+
+fn clear(encoder: &mut wgpu::CommandEncoder, view: &wgpu::TextureView) {
+    encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+        label: Some("lobby clear"),
+        color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+            view,
+            depth_slice: None,
+            resolve_target: None,
+            ops: wgpu::Operations {
+                load: wgpu::LoadOp::Clear(BACKGROUND),
+                store: wgpu::StoreOp::Store,
+            },
+        })],
+        depth_stencil_attachment: None,
+        timestamp_writes: None,
+        occlusion_query_set: None,
+        multiview_mask: None,
+    });
+}
+
+impl ApplicationHandler for LobbyApp {
+    fn resumed(&mut self, event_loop: &ActiveEventLoop) {
+        if self.open.is_some() {
+            return;
+        }
+        let OpenWindow {
+            window,
+            gpu,
+            surface,
+            config,
+        } = match open_window(event_loop) {
+            Ok(open) => open,
+            Err(why) => {
+                self.error = Some(why);
+                event_loop.exit();
+                return;
+            }
+        };
+        window.set_title("Washoi");
+        window.set_cursor_visible(true);
+        let _ = window.set_cursor_grab(winit::window::CursorGrabMode::None);
+        let size = window.inner_size();
+        let made = HOST.with(|h| {
+            let mut slot = h.borrow_mut();
+            match slot.as_mut() {
+                Some(host) => {
+                    // What the hidden page said during the match is stale
+                    // (it reloads on `match:ended`); the client offers no
+                    // seat change yet (WEBVIEW_LOBBY.md 6).
+                    drop(host.drain());
+                    host.resize(size);
+                    host.show();
+                    Ok(())
+                }
+                None => WebviewHost::new(&*window, size, &self.config()).map(|host| *slot = Some(host)),
+            }
+        });
+        if let Err(why) = made {
+            self.problem = Some(format!("This computer has no web view for the lobby: {why}"));
+        }
+        if let Some(after) = self.after.take() {
+            let mut ended = json!({"v": BRIDGE_VERSION, "type": "match:ended", "reason": "returned"});
+            if let Some(why) = after.error {
+                ended["reason"] = "disconnected".into();
+                ended["message"] = why.into();
+            }
+            Self::with_host(|h| h.send(&ended));
+        }
+        let layer = EguiLayer::new(&gpu, &window, config.format);
+        self.open = Some(Open {
+            window,
+            gpu,
+            surface,
+            config,
+            layer,
+        });
+    }
+
+    fn window_event(&mut self, event_loop: &ActiveEventLoop, _id: WindowId, event: WindowEvent) {
+        if let Some(m) = &mut self.open
+            && m.layer.on_window_event(&m.window, &event)
+        {
+            return;
+        }
+        match event {
+            WindowEvent::CloseRequested => {
+                self.outcome = Some(LobbyOutcome::Quit);
+                event_loop.exit();
+            }
+            WindowEvent::Resized(size) => {
+                if let Some(m) = &mut self.open {
+                    m.config.width = size.width.max(1);
+                    m.config.height = size.height.max(1);
+                    m.surface.configure(&m.gpu.device, &m.config);
+                }
+                Self::with_host(|h| h.resize(size));
+            }
+            WindowEvent::RedrawRequested => self.redraw(event_loop),
+            _ => {}
+        }
+    }
+
+    fn about_to_wait(&mut self, _event_loop: &ActiveEventLoop) {
+        if let Some(m) = &self.open {
+            m.window.request_redraw();
+        }
+    }
+}
+
+/// The lobby page until it starts a match or the player quits. `after`
+/// tells the page how the last match ended.
+///
+/// # Errors
+/// The event loop or the window failed.
+pub fn run(url: &str, after: Option<AfterMatch>) -> Result<LobbyOutcome, String> {
+    let mut app = LobbyApp {
+        url: url.to_owned(),
+        after,
+        open: None,
+        outcome: None,
+        problem: None,
+        waiting_since: Instant::now(),
+        error: None,
+    };
+    let ran = run_on_event_loop(&mut app);
+    app.open = None;
+    ran?;
+    if let Some(e) = app.error {
+        return Err(e);
+    }
+    Ok(app.outcome.unwrap_or(LobbyOutcome::Quit))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_page_is_the_lobby_host_s_client_path() {
+        assert_eq!(
+            page_url("wss://eu.washoi.net/lobby").as_deref(),
+            Some("https://eu.washoi.net/client")
+        );
+        assert_eq!(
+            page_url("ws://localhost:9000").as_deref(),
+            Some("http://localhost:9000/client")
+        );
+        assert_eq!(page_url("https://eu.washoi.net/"), None);
+    }
+
+    #[test]
+    fn hello_is_answered_with_the_request_id() {
+        let Action::Reply(answer) = act(&json!({"v": 1, "type": "hello", "id": "r1", "webVersion": "x"})) else {
+            panic!("hello not answered");
+        };
+        assert_eq!(answer["id"], "r1");
+        assert_eq!(answer["type"], "hello");
+        assert_eq!(answer["bridgeVersion"], 1);
+        assert!(
+            answer["capabilities"]
+                .as_array()
+                .is_some_and(|c| c.contains(&json!("match")))
+        );
+    }
+
+    #[test]
+    fn a_match_request_becomes_the_choice() {
+        let play = json!({"v": 1, "type": "match:play", "id": "r2", "serverUrl": "wss://eu.washoi.net:7777",
+            "admissionTicket": "t", "name": "Wraith", "team": "alpha"});
+        let Action::Match(choice, ok) = act(&play) else {
+            panic!("no match")
+        };
+        assert!(choice.play);
+        assert_eq!(choice.name, "Wraith");
+        assert_eq!(choice.team.as_deref(), Some("alpha"));
+        assert_eq!(ok["type"], "ok");
+        assert_eq!(ok["id"], "r2");
+        let watch = json!({"v": 1, "type": "match:watch", "id": "r3", "serverUrl": "ws://localhost:7777"});
+        let Action::Match(choice, _) = act(&watch) else {
+            panic!("no watch")
+        };
+        assert!(!choice.play);
+        assert_eq!(choice.admission_ticket, None);
+    }
+
+    #[test]
+    fn bad_requests_are_refused_not_followed() {
+        let Action::Reply(no) = act(&json!({"v": 1, "type": "match:play", "id": "r4", "serverUrl": "file:///x"}))
+        else {
+            panic!("accepted");
+        };
+        assert_eq!(no["type"], "error");
+        let Action::Reply(no) = act(&json!({"v": 1, "type": "match:play", "id": "r5", "serverUrl": "ws://h:1"})) else {
+            panic!("played without a ticket");
+        };
+        assert_eq!(no["code"], "bad_request");
+        let Action::Reply(unknown) = act(&json!({"v": 1, "type": "storage:set", "id": "r6"})) else {
+            panic!("unknown accepted");
+        };
+        assert_eq!(unknown["code"], "unknown_type");
+        assert!(matches!(act(&json!({"v": 1, "type": "noise"})), Action::Nothing));
+    }
+}

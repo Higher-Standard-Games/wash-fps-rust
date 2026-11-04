@@ -1271,7 +1271,15 @@ pub fn run_on_event_loop(app: &mut impl ApplicationHandler) -> Result<(), String
     EVENT_LOOP.with(|cell| {
         let mut slot = cell.borrow_mut();
         if slot.is_none() {
-            *slot = Some(EventLoop::new().map_err(|e| format!("no window system: {e}"))?);
+            let mut builder = EventLoop::builder();
+            // The lobby's child webview needs X11 (WEBVIEW_LOBBY.md 3): on a
+            // Wayland desktop the game runs on XWayland.
+            #[cfg(all(unix, not(target_os = "macos")))]
+            if KEEP_WINDOW.with(Cell::get) {
+                use winit::platform::x11::EventLoopBuilderExtX11;
+                builder.with_x11();
+            }
+            *slot = Some(builder.build().map_err(|e| format!("no window system: {e}"))?);
         }
         let event_loop = slot.as_mut().expect("made above");
         event_loop.set_control_flow(ControlFlow::Poll);
@@ -1288,7 +1296,7 @@ thread_local! {
 }
 
 /// Borderless fullscreen on the window's own monitor, or back.
-fn toggle_fullscreen() {
+pub fn toggle_fullscreen() {
     let Some(window) = CURRENT_WINDOW.with(|w| w.borrow().upgrade()) else {
         return;
     };
@@ -1337,6 +1345,8 @@ impl<A: ApplicationHandler> ApplicationHandler for Exiting<'_, A> {
         self.0.device_event(event_loop, device_id, event);
     }
     fn about_to_wait(&mut self, event_loop: &ActiveEventLoop) {
+        // The lobby page keeps running under every screen (GTK on Linux).
+        shagger::webview::pump();
         self.0.about_to_wait(event_loop);
     }
     fn suspended(&mut self, event_loop: &ActiveEventLoop) {
@@ -1472,7 +1482,45 @@ pub fn remember_placement(window: &Window) {
     });
 }
 
+thread_local! {
+    /// The window every screen shares once [`keep_window_between_screens`]
+    /// is on: the lobby's webview lives in it through the match.
+    static KEPT_WINDOW: std::cell::RefCell<Option<Arc<Window>>> = const { std::cell::RefCell::new(None) };
+    static KEEP_WINDOW: Cell<bool> = const { Cell::new(false) };
+}
+
+/// From now on every screen opens on one window, made once
+/// (WEBVIEW_LOBBY.md 3): the lobby page, a child of it, survives the match.
+pub fn keep_window_between_screens() {
+    KEEP_WINDOW.with(|k| k.set(true));
+}
+
+/// The shared window, once a screen has made it.
+#[must_use]
+pub fn kept_window() -> Option<Arc<Window>> {
+    KEPT_WINDOW.with(|w| w.borrow().clone())
+}
+
 pub fn open_window(event_loop: &ActiveEventLoop) -> Result<OpenWindow, String> {
+    let kept = if KEEP_WINDOW.with(Cell::get) {
+        kept_window()
+    } else {
+        None
+    };
+    let window = match kept {
+        Some(window) => window,
+        None => {
+            let window = create_window(event_loop)?;
+            if KEEP_WINDOW.with(Cell::get) {
+                KEPT_WINDOW.with(|w| *w.borrow_mut() = Some(window.clone()));
+            }
+            window
+        }
+    };
+    surface_on(event_loop, window)
+}
+
+fn create_window(event_loop: &ActiveEventLoop) -> Result<Arc<Window>, String> {
     // 1280 × 720 in points, so a HiDPI screen does not halve it; then where
     // the last screen's window was, so going from the menu to a match keeps
     // the player's size, place and maximised state.
@@ -1498,6 +1546,11 @@ pub fn open_window(event_loop: &ActiveEventLoop) -> Result<OpenWindow, String> {
     }
     let window = Arc::new(event_loop.create_window(attributes).map_err(|e| e.to_string())?);
     CURRENT_WINDOW.with(|w| *w.borrow_mut() = Arc::downgrade(&window));
+    Ok(window)
+}
+
+/// A wgpu surface on `window`, configured.
+fn surface_on(event_loop: &ActiveEventLoop, window: Arc<Window>) -> Result<OpenWindow, String> {
     let instance = wgpu::Instance::new(wgpu::InstanceDescriptor::new_with_display_handle_from_env(Box::new(
         event_loop.owned_display_handle(),
     )));

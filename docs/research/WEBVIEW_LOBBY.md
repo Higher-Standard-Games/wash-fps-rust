@@ -643,8 +643,16 @@ native one, for anything offline, demos from disk included
 | Data folder | `%LOCALAPPDATA%\Washoi\webview` | the app's WebKit store | `~/.cache/washoi/webview` |
 
 Licences are MIT/Apache-2.0 for `wry`, and MIT for `webview2-com` and the gtk
-crates. `cargo deny` needs no new exception, and the W0 step confirms it.
-wry 0.57.1 needs Rust 1.85, below the client's minimum.
+crates. wry also brings five Servo crates under MPL-2.0 (`cssparser`,
+`cssparser-macros`, `dtoa-short`, `selectors`, and `option-ext` through
+`dirs`): file-level copyleft, used unmodified, so `deny.toml` allows MPL-2.0
+for those crates only. gtk-rs 0.18 uses the unmaintained `proc-macro-error`
+(RUSTSEC-2024-0370) at build time; it is ignored with a reason until wry
+moves past GTK 3. wry 0.57.1 needs Rust 1.85, below the client's minimum.
+
+Building on Linux needs `libwebkit2gtk-4.1-dev` (CI and the release job
+install it); running needs `libwebkit2gtk-4.1-0`, which the client checks
+at start (`the lobby needs a web view: …`).
 
 Memory: a webview costs roughly 80–150 MB while the lobby shows. Hidden
 during a match it stays resident. If W0 measures it as a problem, the client
@@ -779,6 +787,35 @@ Not covered yet:
   a Wayland desktop goes on the tester's checklist too.
 - **GitHub's Linux runner** has no Vulkan or GL adapter for wgpu. Linux is
   proven by the run here.
+
+### 18.2 W1 and W2 progress (November 4, 2026)
+
+Landed: shagger `webview` (behind the `webview` feature), the kept window
+and the lobby screen in wash-fps-rust (`lobby_webview.rs`), and in wash-fps
+`client/boot.ts`, `client/native/` (`NativeBridge`, `LinkPolicy`,
+`ShellControls`, `NativeNetworkConnector`, the lobby-only `main.ts`).
+
+Run end to end on Linux under Xvfb against the local stack (lobby server,
+bot server, the probe server's `/client`): the page loads inside the game
+window, `hello` is answered (the version line reads `client 0.1.1 · …`),
+the QUIT key shows, a room with three bots starts its match, the page hides
+and the match plays natively, the end screen's Back to the lobby shows the
+page again, and the reloaded page skips the start click.
+
+Found and fixed on the way:
+
+- winit's Xlib error handler is process wide and failed the lobby screen's
+  event loop on WebKitGTK's harmless `GLXBadWindow` when the page was
+  hidden. shagger registers a winit error hook that leaves errors on other
+  X connections to GTK.
+- The reloaded page asked for the start click again; `match:ended` now
+  leaves `washoi.native.after_match` in sessionStorage, and the page
+  dismisses the start screen and shows a failed match's message.
+
+Not yet: the client has no spectator-to-player seat change, so it does not
+offer `seat` and the page leaves seat changes to the overlay (a new
+connection). The welcome guide opens again on each return, as it does in
+the browser after a single-match return.
 
 ## 19. Decisions (confirmed November 3, 2026)
 
