@@ -2744,8 +2744,10 @@ fixed (shagger 162fd28 and this repository's commit after it):
   screen ray and converges onto its true flight over 0.22 s.
 - **Not a gap**: the browser draws no muzzle flash on other players' guns
   (only `presentFire` for the player watched through their eyes).
-- **Not yet**: wall marks (`spawnWallMark`), the rendered-mesh pick for a
-  shot starting inside a brush.
+- **Wall marks** (`spawnWallMark`, shagger beb80b2): a three-sided disc
+  facing back along the shot where a tracer (0.3) or pellet (2.0) hits,
+  fading over 3 s, at most 50, off with `r_marks`.
+- **Not yet**: the rendered-mesh pick for a shot starting inside a brush.
 
 Proof: `washoi view <map> --weapon ID --fire AGE` (new) fires the held gun
 once and prints the live effects; screenshots on washoi_amphi1 show the
