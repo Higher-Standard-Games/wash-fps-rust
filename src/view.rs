@@ -391,7 +391,10 @@ fn fire_view_shot(renderer: &mut MapRenderer, camera: &Camera, weapon: &str, age
         renderer.play_effects(&[], &weapons, age / steps.max(1) as f64, camera);
     }
     let (streaks, sparks, lights) = renderer.hitscan.debug_counts();
-    println!("fire: {weapon} {age} s ago: {streaks} streaks, {sparks} spark bursts, {lights} flash lights");
+    let marks = renderer.hitscan.wall_marks.count();
+    println!(
+        "fire: {weapon} {age} s ago: {streaks} streaks, {sparks} spark bursts, {lights} flash lights, {marks} wall marks"
+    );
 }
 
 /// `MUZZLE_CONVERGE_SEC`: how long our projectile takes to converge from
@@ -2272,6 +2275,7 @@ impl MapRenderer {
             time: self.effect_time,
             fog: uniforms,
         };
+        self.hitscan.wall_marks.prepare(gpu, &frame);
         self.hitscan.streaks.prepare(gpu, &frame);
         // The muzzle flashes ride the live barrel (`setMuzzleAnchorResolver`),
         // the blade's tip flashes its tip.
@@ -2416,6 +2420,8 @@ impl MapRenderer {
             water.draw(pass, self.world.vertex_buffer(), self.world.index_buffer(), visible);
         }
         self.world.draw_visible_blended(pass, visible);
+        // Wall marks lie on the walls, under the shots' effects.
+        self.hitscan.wall_marks.draw(pass);
         // The effects' alpha indices (40 to 46) put them before the models'.
         self.hitscan.voltaic.draw_beams(pass);
         self.hitscan.rails.draw_beams(pass);
@@ -2528,9 +2534,11 @@ fn claim_liquid_surfaces(
 /// scene draws into an HDR target; image processing writes `output_format`.
 pub fn build_renderer(gpu: &Gpu, map: &mut LoadedMap, output_format: wgpu::TextureFormat) -> MapRenderer {
     let format = HDR_FORMAT;
-    let geometry = build_world_geometry(&map.bsp, |name, options| {
+    let mut geometry = build_world_geometry(&map.bsp, |name, options| {
         map.shaders.resolve_material_passes(&map.pk3, name, options)
     });
+    // `loadTextures`' glow overlay ShaderMaterial (light fixtures).
+    geometry.find_glow_overlays(|name| map.shaders.get_shader(name));
     // Authored cubemaps (`surroundmap`/`cubemap`), as `loadTextures` loads
     // them; one that fails draws as a plain material.
     let mut environments = HashMap::new();
