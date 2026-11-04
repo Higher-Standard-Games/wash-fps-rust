@@ -445,9 +445,14 @@ impl App {
             } else {
                 (0, false, false)
             };
+            // `FPSController.syncKeysFromInput`: the ready key, pressed this frame.
+            let ready = self.captured && with_input(|i| i.was_pressed(fps::READY));
             if let Some(Feed::Play(play, held)) = &mut self.feed {
                 *held = input;
                 play.select_weapon(pick.0, pick.1, pick.2);
+                if ready {
+                    play.send_ready();
+                }
             }
             self.velocity = Vec3::ZERO;
             return;

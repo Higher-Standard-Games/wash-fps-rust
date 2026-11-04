@@ -406,6 +406,15 @@ impl LivePlay {
         });
     }
 
+    /// `Game.sendReady`: ready for the match to start (warmup).
+    pub fn send_ready(&mut self) {
+        if !self.connected {
+            return;
+        }
+        self.session.send(SessionRequest::Ready);
+        self.feed.match_state.set_ready(true);
+    }
+
     /// `LocalLiquid.emitLocalCrossing`'s jump pad: where to play the
     /// launch, on the rising edge of the predicted launch, so it lands on
     /// the frame the kick is felt rather than a round trip later.
