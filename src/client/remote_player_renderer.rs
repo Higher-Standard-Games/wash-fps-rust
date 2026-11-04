@@ -380,6 +380,22 @@ impl HandWeapons {
         self.weapons.is_empty()
     }
 
+    /// `getWeaponMuzzleWorldPositionToRef`'s first two choices for `weapon`
+    /// held in a hand at `hand` (world): the gun's `tag_flash` (kept under
+    /// the leader, as `assembleGun` keeps it), and the leader's origin. The
+    /// blade has no muzzle tag.
+    #[must_use]
+    pub fn muzzle(&self, weapon: &str, hand: Mat4) -> Option<(Option<Vec3>, Vec3)> {
+        let def = weapon_model(weapon)?;
+        let w = self.weapons.iter().find(|w| w.def.id == def.id)?;
+        let leader = hand * hand_weapon_local(def);
+        let tag = (def.id != "blade")
+            .then(|| w.model.attachment_points.get("tag_flash"))
+            .flatten()
+            .map(|tag| leader.transform_point3(tag.position));
+        Some((tag, leader.w_axis.truncate()))
+    }
+
     /// The draws of `weapon` held in a hand at `hand` (world), with the
     /// quad's outline (`applyAttachedWeaponQuadOutline`) when `quad_pulse`
     /// is given: 0.7 to 1.25 world units, over each mesh's own scale.

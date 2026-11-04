@@ -2712,6 +2712,48 @@ whole areas rather than single items. 0.2.0 closes them in two steps.
 
 Newest first. Each entry names the commits and what proves them.
 
+### Weapon barrels and effects review against the browser (November 4, 2026)
+
+Read side by side: SHAG `WeaponBarrels`, `WeaponViewManager` (`presentFire`,
+`spawnShotEffects`, `updateMuzzleFlash`, `updateBeam`), `HitscanEffects`,
+`ProjectileManager` and wash-fps `GameEvents`, `FPSPlayer.updateFiring` and
+`RemotePlayerRenderer`. The barrels (46d1de9) already matched. Found and
+fixed (shagger 162fd28 and this repository's commit after it):
+
+- **Shots leave the gun.** Our machinegun streak and riot gun pellets start
+  24 units out along the screen ray through the muzzle
+  (`spawnShotEffects`), our rail 32 (`RAIL_START_DISTANCE`); they started
+  at the eye. Other players' streaks and pellets start at their gun's
+  `tag_flash`, else 10 units ahead of the gun, else in front of the body
+  (`getWeaponMuzzleWorldPosition`), and their Voltaic beams follow that
+  muzzle every frame (the remote start resolver).
+- **Our Voltaic beam** is the hero beam: drawn from the muzzle each frame
+  while fire is held (alive, a loaded clip, not reloading or switching,
+  not after the match), to the server's contact while it is fresh and
+  within 8 degrees of the aim, else to a trace from the eye. It was drawn
+  as a remote beam from the eye, whose near end smeared across the screen.
+- **Chain lightning** (`weapon_chain`) draws its arcs.
+- **The muzzle flash's light on the gun** (`muzzleFlashLight`): the
+  weapon's flash colour, intensity over 15 and range, fading at 150 a
+  second (half for the blade), at the muzzle socket, lighting only the
+  view model; off with the dynamic lights.
+- **The blade tip's flash**: a swing (not a throw) flashes at the blade's
+  farthest point too, at 0.4 scale, jittered up to 4 pixels, riding the tip.
+- **Our projectiles start at the barrel**: a new projectile within 120
+  units flying along the view is drawn from 34 units out along the muzzle's
+  screen ray and converges onto its true flight over 0.22 s.
+- **Not a gap**: the browser draws no muzzle flash on other players' guns
+  (only `presentFire` for the player watched through their eyes).
+- **Not yet**: wall marks (`spawnWallMark`), the rendered-mesh pick for a
+  shot starting inside a brush.
+
+Proof: `washoi view <map> --weapon ID --fire AGE` (new) fires the held gun
+once and prints the live effects; screenshots on washoi_amphi1 show the
+streak, rail and beam leaving the muzzle, the gun lit by its flash, and the
+blade's two flashes. Unit tests on the flash light's fade, the jittered
+socket ray, the beam truth's angle, the remote muzzle choice and the flash
+table.
+
 ### Weapon animation review against the browser (November 4, 2026)
 
 0.2.0's weapon animation review, first person. Compared line by line with

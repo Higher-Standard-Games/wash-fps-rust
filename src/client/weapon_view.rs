@@ -10,6 +10,7 @@ use shagger::loader::model::gltf_model::GltfModel;
 use shagger::loader::model::tags_loader::{find_tag, parse_tags};
 use shagger::loader::pk3::pk3_loader::Pk3Loader;
 use shagger::rendering::camera::Camera;
+use shagger::rendering::dynamic_lights::DynamicLight;
 use shagger::rendering::glam::{DVec3, Mat4, Vec3};
 use shagger::rendering::gpu::Gpu;
 use shagger::rendering::model_renderer::{ModelDraw, ModelHandle, ModelMaterialMode, ModelRenderer, Outline};
@@ -20,8 +21,8 @@ use shagger::weapon::ammo_counter_display::{AmmoCounterDisplay, AmmoCounterTunin
 use shagger::weapon::muzzle::muzzle_flash_renderer::{MuzzleFlashSpawn, MuzzleFlashStyle};
 use shagger::weapon::weapon_barrels::{BarrelSpin, babylon_euler, barrel_material_mode};
 use shagger::weapon::weapon_view_manager::{
-    ShotStyle, ViewModelDef, WEAPON_CAMERA_MAX_Z, WEAPON_CAMERA_MIN_Z, WEAPON_OUTLINE_WIDTH, WeaponView, blade_light,
-    view_material_mode, weapon_light, weapon_outline,
+    FlashLight, ShotStyle, ViewModelDef, WEAPON_CAMERA_MAX_Z, WEAPON_CAMERA_MIN_Z, WEAPON_OUTLINE_WIDTH, WeaponView,
+    blade_light, view_material_mode, weapon_light, weapon_outline,
 };
 
 use crate::client::quad_damage_visual::{
@@ -48,7 +49,7 @@ pub fn view_model_def(weapon: &WeaponModel) -> ViewModelDef {
 
 /// `presentFire`'s reading of a weapon's definition (wash-fps
 /// `shared/entities/definitions/weapons/*.ts`: `fireRate`, `recoilScale`,
-/// `adsRecoilScale`, `meleeRadius`).
+/// `adsRecoilScale`, `meleeRadius`, `muzzleFlash`).
 #[must_use]
 pub fn shot_style(weapon: &str) -> ShotStyle {
     let (fire_rate, recoil_scale, ads_recoil_scale, melee) = match weapon {
@@ -69,42 +70,79 @@ pub fn shot_style(weapon: &str) -> ShotStyle {
         ads_recoil_scale,
         refire_seconds: Some(ticks / TICK_RATE),
         melee,
+        flash: muzzle_flash_def(weapon).map(|f| FlashLight {
+            color: f.color,
+            intensity: Some(f.intensity),
+            range: Some(f.range),
+        }),
     }
 }
 
 /// A weapon definition's `muzzleFlash` (wash-fps
-/// `shared/entities/definitions/weapons/*.ts`), spawned at `position`.
-/// `None` for the Voltaic: a beam weapon, whose renderer draws its own
-/// muzzle corona (`presentFire`).
+/// `shared/entities/definitions/weapons/*.ts`).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct MuzzleFlashDef {
+    pub color: Vec3,
+    pub intensity: f64,
+    pub range: f64,
+    pub duration: f64,
+    pub style: MuzzleFlashStyle,
+    pub scale: Option<f64>,
+}
+
+/// `WEAPONS[weapon].muzzleFlash`.
 #[must_use]
-pub fn muzzle_flash(weapon: &str, position: DVec3) -> Option<MuzzleFlashSpawn> {
+pub fn muzzle_flash_def(weapon: &str) -> Option<MuzzleFlashDef> {
     use MuzzleFlashStyle::{Arcs, Burst, Plume};
-    let (color, duration, style, scale) = match weapon {
-        "blade" => ([0.05, 1.0, 0.9], 0.16, Burst, None),
-        "electrobolt" => ([0.3, 0.5, 1.0], 0.12, Arcs, Some(2.3)),
-        "glauncher" => ([0.6, 1.0, 0.3], 0.15, Plume, Some(2.2)),
-        "machinegun" => ([1.0, 0.9, 0.3], 0.075, Burst, None),
-        "plasmagun" => ([0.3, 1.0, 0.3], 0.09, Burst, Some(1.4)),
-        "riotgun" => ([1.0, 0.7, 0.2], 0.14, Plume, Some(1.4)),
-        "rlauncher" => ([1.0, 0.5, 0.1], 0.16, Plume, Some(2.4)),
+    let (color, intensity, range, duration, style, scale) = match weapon {
+        "blade" => ([0.05, 1.0, 0.9], 25.0, 40.0, 0.16, Burst, None),
+        "electrobolt" => ([0.3, 0.5, 1.0], 35.0, 60.0, 0.12, Arcs, Some(2.3)),
+        "glauncher" => ([0.6, 1.0, 0.3], 22.0, 40.0, 0.15, Plume, Some(2.2)),
+        "machinegun" => ([1.0, 0.9, 0.3], 18.0, 30.0, 0.075, Burst, None),
+        "plasmagun" => ([0.3, 1.0, 0.3], 20.0, 40.0, 0.09, Burst, Some(1.4)),
+        "riotgun" => ([1.0, 0.7, 0.2], 25.0, 45.0, 0.14, Plume, Some(1.4)),
+        "rlauncher" => ([1.0, 0.5, 0.1], 30.0, 50.0, 0.16, Plume, Some(2.4)),
+        "voltaic" | "lasergun" => ([1.0, 0.7, 0.1], 12.0, 25.0, 0.03, Burst, None),
         _ => return None,
     };
-    let intensity = match weapon {
-        "blade" | "riotgun" => 25.0,
-        "electrobolt" => 35.0,
-        "glauncher" => 22.0,
-        "machinegun" => 18.0,
-        "plasmagun" => 20.0,
-        _ => 30.0,
-    };
-    Some(MuzzleFlashSpawn {
-        position,
+    Some(MuzzleFlashDef {
         color: Vec3::from_array(color),
+        intensity,
+        range,
+        duration,
         style,
         scale,
-        intensity: Some(intensity),
-        duration: Some(duration),
     })
+}
+
+/// `presentFire`'s procedural flash for `weapon`, spawned at `position`.
+/// `None` for the Voltaic: a beam weapon, whose renderer draws its own
+/// muzzle corona.
+#[must_use]
+pub fn muzzle_flash(weapon: &str, position: DVec3) -> Option<MuzzleFlashSpawn> {
+    if matches!(weapon, "voltaic" | "lasergun") {
+        return None;
+    }
+    let def = muzzle_flash_def(weapon)?;
+    Some(MuzzleFlashSpawn {
+        position,
+        color: def.color,
+        style: def.style,
+        scale: def.scale,
+        intensity: Some(def.intensity),
+        duration: Some(def.duration),
+        anchor: None,
+    })
+}
+
+/// The blade tip's flash: a smaller copy of the blade's own, riding
+/// `anchor` (`presentFire`, a swing rather than a throw).
+#[must_use]
+pub fn blade_tip_flash(position: DVec3, anchor: u32) -> Option<MuzzleFlashSpawn> {
+    let mut flash = muzzle_flash("blade", position)?;
+    flash.scale = Some(flash.scale.unwrap_or(1.0) * 0.4);
+    flash.anchor = Some(anchor);
+    Some(flash)
 }
 
 /// `DEFAULT_PHYSICS_TICK_RATE`.
@@ -144,6 +182,25 @@ pub struct WeaponViewModel {
     /// The barrel sub-models (`WeaponBarrels.load`), their motion in
     /// [`WeaponView::barrels`].
     barrels: Vec<ViewBarrel>,
+    /// `tag_blade_tip`: the blade's farthest point along +X, in the glTF
+    /// scene's space.
+    blade_tip: Option<Vec3>,
+    /// `r_dynamiclight`: the muzzle flash lights the gun.
+    pub dynamic_lights: bool,
+}
+
+/// `loadGlbSource`'s `tag_blade_tip`: the vertex farthest along +X of the
+/// normalized model, in glTF scene space.
+fn blade_tip(model: &GltfModel) -> Option<Vec3> {
+    model
+        .primitives
+        .iter()
+        .flat_map(|p| {
+            p.positions
+                .iter()
+                .map(|v| p.node_matrix.transform_point3(Vec3::from_array(*v)))
+        })
+        .reduce(|tip, point| if point.x > tip.x { point } else { tip })
 }
 
 /// A barrel sub-model on the view model: where `WeaponBarrels.load` put
@@ -277,6 +334,8 @@ impl WeaponViewModel {
             renderer,
             view,
             barrels,
+            blade_tip: if name == "blade" { blade_tip(&model) } else { None },
+            dynamic_lights: true,
             muzzle,
             handle,
             model,
@@ -349,6 +408,21 @@ impl WeaponViewModel {
             lights.push(blade_light(rotation, Vec3::new(r as f32, g as f32, b as f32)));
         }
         self.renderer.set_lights(lights);
+        // `muzzleFlashLight`: weapon layer only, at the live muzzle socket.
+        let flash = self
+            .muzzle
+            .zip(self.view.muzzle_flash_light())
+            .filter(|_| self.dynamic_lights)
+            .map(|(socket, light)| {
+                let intensity = light.intensity as f32;
+                DynamicLight {
+                    position: (root * socket.extend(1.0)).truncate(),
+                    diffuse: light.diffuse * intensity,
+                    specular: light.specular * intensity,
+                    range: light.range as f32,
+                }
+            });
+        self.renderer.set_dynamic_lights(flash.as_slice());
         let weapon_camera = Camera {
             fov_y: self.view.fov_radians(),
             near: WEAPON_CAMERA_MIN_Z,
@@ -366,6 +440,22 @@ impl WeaponViewModel {
     pub fn muzzle_world_position(&self, camera: &Camera, distance: f64) -> DVec3 {
         self.view
             .muzzle_world_position(camera.view().inverse(), camera.fov_y, self.muzzle, distance)
+    }
+
+    /// `getBladeTipWorldPosition(jitterX, jitterY)` under `camera`: 5
+    /// units out along the screen ray through the blade's tip, moved
+    /// `jitter` pixels on a screen `viewport_height` pixels tall. `None`
+    /// for anything but the blade.
+    #[must_use]
+    pub fn blade_tip_world_position(&self, camera: &Camera, jitter: (f64, f64), viewport_height: f64) -> Option<DVec3> {
+        self.view.socket_world_position(
+            camera.view().inverse(),
+            camera.fov_y,
+            self.blade_tip?,
+            5.0,
+            jitter,
+            viewport_height,
+        )
     }
 
     /// Records the weapon into a pass whose depth was cleared.
@@ -392,6 +482,20 @@ mod shot_tests {
             (MuzzleFlashStyle::Plume, Some(2.4), Some(30.0))
         );
         assert!(muzzle_flash("voltaic", at).is_none());
+    }
+
+    #[test]
+    fn the_voltaic_lights_the_gun_without_a_flash_and_the_blade_tip_is_smaller() {
+        let at = DVec3::ZERO;
+        let voltaic = shot_style("voltaic").flash.unwrap();
+        assert_eq!(voltaic.intensity, Some(12.0));
+        assert_eq!(voltaic.range, Some(25.0));
+        let rl = shot_style("rlauncher").flash.unwrap();
+        assert_eq!((rl.intensity, rl.range), (Some(30.0), Some(50.0)));
+        let tip = blade_tip_flash(at, 3).unwrap();
+        assert_eq!(tip.anchor, Some(3));
+        assert!((tip.scale.unwrap() - 0.4).abs() < 1e-12);
+        assert_eq!(muzzle_flash("blade", at).unwrap().anchor, None);
     }
 
     #[test]

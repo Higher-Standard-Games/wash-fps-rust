@@ -1,11 +1,10 @@
 //! wash-fps `client/GameEvents.ts`: what the snapshot events show and
-//! sound like. So far the effect colours, the shots of other players
-//! (`handleRemoteWeaponFire`, `handleVoltaicBeam`, `handleElectroRail`)
-//! and the combat and reload sounds (`FPSAudio.ts`'s preload with them).
+//! sound like. So far the effect colours, the shots (`handleRemoteWeaponFire`,
+//! `handleVoltaicBeam`, `handleElectroRail`, and our own through SHAG
+//! `WeaponViewManager.spawnShotEffects`), the chain-lightning arcs, and the
+//! combat and reload sounds (`FPSAudio.ts`'s preload with them).
 //!
-//! Not yet: a remote shooter's muzzle (their weapon is not drawn yet, so
-//! streaks start at the eye), the blade's slash animation, and the local
-//! player's own shots.
+//! Not yet: another player's blade slash animation.
 
 use shagger::rendering::glam::{DVec3, Vec3};
 use shagger::weapon::hitscan_effects::{
@@ -75,13 +74,49 @@ pub struct EffectTargets<'a> {
     pub lights: &'a mut PointLightPool,
 }
 
-/// The hitscan side of one snapshot's events, from the remote players'
-/// point of view: `weapon_fire`, `voltaic_beam` and `electro_rail`.
-/// `weapons` names each player's weapon, for the beams' colours.
-pub fn play_remote_shots(
+/// Where shots are drawn from: our own gun on screen, or another
+/// player's in their hand.
+pub trait ShotMuzzles {
+    /// Our own entity, whose shots leave the gun on screen.
+    fn local(&self) -> Option<&str>;
+    /// `getMuzzleWorldPosition(distance)`: `distance` units out along the
+    /// screen ray through our gun's muzzle; `None` without a gun in hand.
+    fn view_muzzle(&self, distance: f64) -> Option<DVec3>;
+    /// `getWeaponMuzzleWorldPosition`: the muzzle of another player's gun,
+    /// shooting along `direction`.
+    fn remote_muzzle(&self, entity_id: &str, direction: DVec3) -> Option<DVec3>;
+}
+
+/// No guns drawn: every shot leaves the eye.
+impl ShotMuzzles for () {
+    fn local(&self) -> Option<&str> {
+        None
+    }
+    fn view_muzzle(&self, _: f64) -> Option<DVec3> {
+        None
+    }
+    fn remote_muzzle(&self, _: &str, _: DVec3) -> Option<DVec3> {
+        None
+    }
+}
+
+/// `spawnShotEffects`'s start: a point on the screen ray through the
+/// muzzle socket, far enough out to clear the near plane.
+const LOCAL_SHOT_START_DISTANCE: f64 = 24.0;
+/// `RAIL_START_DISTANCE`: how far along the screen ray through the muzzle
+/// our rail starts.
+const RAIL_START_DISTANCE: f64 = 32.0;
+
+/// The hitscan side of one snapshot's events: `weapon_fire`,
+/// `voltaic_beam`, `electro_rail` and `weapon_chain`. Our own shots go
+/// through `spawnShotEffects` and leave the gun on screen; other
+/// players' through `handleRemoteWeaponFire` and leave theirs. `weapons`
+/// names each player's weapon, for the beams' colours.
+pub fn play_shots(
     events: &[SnapshotEvent],
     fx: &mut EffectTargets<'_>,
     weapons: &dyn Fn(&str) -> Option<String>,
+    muzzles: &dyn ShotMuzzles,
 ) {
     for event in events {
         match event {
@@ -92,13 +127,27 @@ pub fn play_remote_shots(
                 dir,
                 pellet,
             } => {
+                if muzzles.local() == Some(entity_id.as_str()) {
+                    spawn_shot_effects(fx, weapon_id, vec(origin), vec(dir), *pellet, muzzles);
+                    continue;
+                }
                 // Live snapshots carry the beam's exact contact as voltaic_beam;
                 // the fallback trace is only for packets and demos without one.
                 let beam_truth = canonical_weapon_id(weapon_id) == "voltaic"
                     && events.iter().any(|other| {
                         matches!(other, SnapshotEvent::Beam { electro_rail: false, entity_id: id, .. } if id == entity_id)
                     });
-                handle_remote_weapon_fire(fx, entity_id, weapon_id, vec(origin), vec(dir), *pellet, beam_truth);
+                let start = muzzles.remote_muzzle(entity_id, vec(dir));
+                handle_remote_weapon_fire(
+                    fx,
+                    entity_id,
+                    weapon_id,
+                    vec(origin),
+                    vec(dir),
+                    *pellet,
+                    beam_truth,
+                    start,
+                );
             }
             SnapshotEvent::Beam {
                 electro_rail,
@@ -109,13 +158,14 @@ pub fn play_remote_shots(
                 normal,
                 impact_kind: kind,
             } => {
+                let local_hero = muzzles.local() == Some(entity_id.as_str());
                 let weapon = weapons(entity_id);
                 let fallback = if *electro_rail { "electrobolt" } else { "voltaic" };
                 let color = weapon
                     .as_deref()
                     .and_then(weapon_effect_color)
                     .unwrap_or_else(|| weapon_effect_color(fallback).expect("a beam colour"));
-                let sample = RailEffectSample {
+                let mut sample = RailEffectSample {
                     start: vec(origin),
                     end: vec(end),
                     color,
@@ -124,12 +174,28 @@ pub fn play_remote_shots(
                     intensity: None,
                 };
                 if *electro_rail {
-                    // handleElectroRail
+                    // handleElectroRail: our rail leaves the gun on screen; the
+                    // damage endpoint stays the server's.
+                    if local_hero && let Some(muzzle) = muzzles.view_muzzle(RAIL_START_DISTANCE) {
+                        sample.start = muzzle;
+                    }
                     fx.hitscan.fire_rail(fx.now, &sample);
+                } else if local_hero {
+                    // handleVoltaicBeam: the contact for our own beam, which
+                    // is drawn from the muzzle every frame.
+                    fx.hitscan.update_local_lightning_truth(fx.now, &sample, vec(dir));
                 } else {
-                    // handleVoltaicBeam
                     fx.hitscan
                         .update_remote_lightning_beam(fx.now, entity_id, &sample, vec(dir));
+                }
+            }
+            SnapshotEvent::WeaponChain { points, .. } => {
+                // The chain-lightning arcs between the server's link points
+                // (primary, hop 1, hop 2), for everyone, the shooter too.
+                let color = weapon_effect_color("voltaic");
+                for pair in points.windows(2) {
+                    fx.hitscan
+                        .fire_lightning_arc(fx.now, vec(&pair[0]), vec(&pair[1]), color);
                 }
             }
             _ => {}
@@ -137,7 +203,67 @@ pub fn play_remote_shots(
     }
 }
 
-/// `handleRemoteWeaponFire`: another player's shot.
+/// SHAG `WeaponViewManager.spawnShotEffects`: our own hitscan shot, along
+/// the ray the server fired, drawn from the muzzle on screen. The rail and
+/// the beam come from their own events; projectiles from theirs.
+fn spawn_shot_effects(
+    fx: &mut EffectTargets<'_>,
+    weapon_id: &str,
+    origin: DVec3,
+    direction: DVec3,
+    pellet: Option<(i32, f64)>,
+    muzzles: &dyn ShotMuzzles,
+) {
+    let weapon_id = canonical_weapon_id(weapon_id);
+    let start = muzzles.view_muzzle(LOCAL_SHOT_START_DISTANCE);
+    // The muzzle flash's colour (`muzzleFlash.color`) and the weapon's range.
+    match weapon_id {
+        "machinegun" => {
+            fx.hitscan.fire_tracer(
+                fx.now,
+                fx.world,
+                fx.lights,
+                &TracerConfig {
+                    origin,
+                    direction,
+                    start,
+                    color: Some(Vec3::new(1.0, 0.9, 0.3)),
+                    max_range: Some(6000.0),
+                    intensity: Some(18.0),
+                },
+            );
+        }
+        "riotgun" => {
+            // `pelletCount`, and `spread` (it has no `adsSpread`).
+            let pellet_count = 18;
+            let spread_angle = 8.0;
+            fx.hitscan.fire_pellets(
+                fx.now,
+                fx.world,
+                fx.lights,
+                &PelletConfig {
+                    origin,
+                    direction,
+                    start,
+                    color: Some(Vec3::new(1.0, 0.7, 0.2)),
+                    max_range: Some(8192.0),
+                    pellet_count: Some(pellet_count),
+                    spread_angle: Some(spread_angle),
+                    directions: pellet
+                        .map(|(seed, spread)| server_pellet_directions(direction, seed, pellet_count, spread)),
+                    seed: None,
+                    duration: None,
+                    visible_tracers: None,
+                },
+            );
+        }
+        _ => {}
+    }
+}
+
+/// `handleRemoteWeaponFire`: another player's shot, drawn from `start`
+/// (their gun's muzzle) when it is known.
+#[allow(clippy::too_many_arguments)]
 pub fn handle_remote_weapon_fire(
     fx: &mut EffectTargets<'_>,
     entity_id: &str,
@@ -146,12 +272,14 @@ pub fn handle_remote_weapon_fire(
     dir: DVec3,
     pellet: Option<(i32, f64)>,
     beam_truth: bool,
+    start: Option<DVec3>,
 ) {
     let weapon_id = canonical_weapon_id(weapon_id);
     let color = weapon_effect_color(weapon_id).unwrap_or(Vec3::new(1.0, 1.0, 0.5));
     match weapon_id {
         "machinegun" => {
-            // The event's direction carries the shot's spread.
+            // The event's direction carries the shot's spread; the streak
+            // leaves their gun.
             fx.hitscan.fire_tracer(
                 fx.now,
                 fx.world,
@@ -159,7 +287,7 @@ pub fn handle_remote_weapon_fire(
                 &TracerConfig {
                     origin,
                     direction: dir,
-                    start: None,
+                    start,
                     color: Some(color),
                     // WEAPONS.machinegun.range and muzzleFlash.intensity
                     max_range: Some(6000.0),
@@ -179,7 +307,7 @@ pub fn handle_remote_weapon_fire(
                 &PelletConfig {
                     origin,
                     direction: dir,
-                    start: None,
+                    start,
                     color: Some(color),
                     max_range: Some(8192.0),
                     pellet_count: Some(pellet_count),

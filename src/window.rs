@@ -65,6 +65,7 @@ use washoi::client::demo_service::analysis_report;
 use washoi::client::first_person_view::{BodyFrame, FirstPersonView, ViewKeys, ViewOffset};
 use washoi::client::game_events::GameAudio;
 use washoi::client::hud::widgets::pause_menu::{PauseMenu, PauseMenuAction};
+use washoi::client::match_state_manager::MatchPhase;
 use washoi::client::teleport_effect::TeamColor;
 use washoi::client::washoi_style::install_style;
 use washoi::client::weapon_view::{clip_reload_time, quad_view_weapon_outline, shot_style};
@@ -135,6 +136,8 @@ struct App {
     first_person: FirstPersonView,
     /// The viewed player's weapon was reloading in the last weapon state.
     view_reloading: bool,
+    /// Our Voltaic's beam should show this frame (`FPSPlayer.beamActive`).
+    beam_wanted: bool,
     /// The eyes we look through are charging the blade (`_localCharging`):
     /// the shot that ends the charge is the throw, not a swing.
     view_charging: bool,
@@ -705,8 +708,15 @@ impl App {
             {
                 chase_camera(&mut self.camera, p);
             }
-            s.renderer.set_live_projectiles(&view.projectiles, effect_dt);
-            s.renderer.play_effects(&view.effects, &view.weapons, effect_dt);
+            let local = match feed {
+                Feed::Play(..) => feed.local_entity(),
+                _ => None,
+            };
+            s.renderer.set_local_player(local, f64::from(self.camera.yaw));
+            s.renderer
+                .set_live_projectiles(&view.projectiles, effect_dt, &self.camera);
+            s.renderer
+                .play_effects(&view.effects, &view.weapons, effect_dt, &self.camera);
             s.renderer.play_bomb_sites(feed.match_state(), effect_dt);
             // `triggerCameraShake`: explosions near our own body.
             let spawned = std::mem::take(&mut s.renderer.spawned_explosions);
@@ -720,11 +730,6 @@ impl App {
                 }
             }
             s.renderer.pickup_active.clone_from(&view.pickup_active);
-            let local = match feed {
-                Feed::Play(..) => feed.local_entity(),
-                _ => None,
-            };
-            s.renderer.set_local_player(local, f64::from(self.camera.yaw));
             s.renderer.play_gibs(&view.effects, effect_dt);
             // Our own death: the camera follows the corpse or the burst
             // until we are back (`applyDeathCamera`).
@@ -767,7 +772,7 @@ impl App {
                                         .kick_for_shot(canonical_weapon_id(weapon_id), view_model.view.ads_progress);
                                 }
                             }
-                            s.renderer.fire_view_muzzle_flash(&self.camera);
+                            s.renderer.fire_view_muzzle_flash(&self.camera, projectile_fire);
                         }
                         SnapshotEvent::WeaponCharge {
                             entity_id, charging, ..
@@ -876,6 +881,17 @@ impl App {
                 if let Some(view_model) = &mut s.renderer.view_model {
                     view_model.ammo = hud.state.current_clip();
                 }
+                // `FPSPlayer.updateFiring`: the Voltaic's beam shows while fire
+                // is held, alive, with a loaded clip, neither reloading nor
+                // switching, and not once the match is over.
+                self.beam_wanted = matches!(&*feed, Feed::Play(p, held)
+                    if p.alive
+                        && held.fire
+                        && p.weapon_in_hand().map(canonical_weapon_id) == Some("voltaic")
+                        && p.match_state().phase() != MatchPhase::PostGame)
+                    && hud.state.current_clip() > 0.0
+                    && !self.view_reloading
+                    && !s.renderer.switch_anim.is_switching();
                 // The post-game opens up: the mouse comes back for the way
                 // home, and the chat is ready (`FPSHud`).
                 let offered = hud.scoreboard.return_offered();
@@ -958,6 +974,9 @@ impl App {
         if let Some(b) = &mut self.bench {
             b.mark("acquire");
         }
+        // `setBeamActive` and `updateBeam`: our beam from this frame's muzzle.
+        s.renderer.set_beam_active(std::mem::take(&mut self.beam_wanted));
+        s.renderer.update_beam(&self.camera);
         s.renderer
             .prepare(&s.gpu, &self.camera, [s.config.width as f32, s.config.height as f32]);
         if offset.is_some() {
@@ -1845,6 +1864,7 @@ pub fn run(
         death_camera: DeathCamera::default(),
         first_person: FirstPersonView::default(),
         view_reloading: false,
+        beam_wanted: false,
         view_charging: false,
         view_offset: None,
         on_ladder: false,

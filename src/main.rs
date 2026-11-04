@@ -12,7 +12,7 @@
 //! washoi sync [--region eu|us] [--data DIR]
 //! washoi --version
 //! washoi loading <map> --screenshot FILE.png [--levelshot FILE.jpg] [--seconds N] [--size WxH]
-//! washoi view <map> [--data DIR] [--spawn N] [--screenshot FILE.png] [--size WxH] [--time T] [--at X,Y,Z,YAW] [--pitch DEG] [--player X,Y,Z,YAW[,CLIP[,FRAME[,quad][,WEAPON]]]]... [--projectile ID,X,Y,Z,YAW[,PITCH]]... [--explosion ID,X,Y,Z,AGE]... [--tracer X,Y,Z,X2,Y2,Z2,R,G,B,AGE]... [--muzzle X,Y,Z,R,G,B,STYLE,SCALE,DURATION,AGE]... [--impact X,Y,Z,NX,NY,NZ,IX,IY,IZ,R,G,B,HEAVY,AGE]... [--rail X,Y,Z,X2,Y2,Z2,R,G,B,KIND,NX,NY,NZ,AGE]... [--lightning MODE,X,Y,Z,X2,Y2,Z2,R,G,B,KIND,AGE]... [--hit X,Y,Z,DAMAGE,AGE[,head]]... [--teleport X,Y,Z,X2,Y2,Z2,YAW,AGE]... [--gib X,Y,Z,AGE]... [--ring X,Y,Z,KIND,RADIUS,ALPHA]... [--ragdoll X,Y,Z,YAW,DX,DY,DZ,AGE]... [--weapon ID [--aim] [--quad]] [--no-cull] [--no-lights] [--seconds N]
+//! washoi view <map> [--data DIR] [--spawn N] [--screenshot FILE.png] [--size WxH] [--time T] [--at X,Y,Z,YAW] [--pitch DEG] [--player X,Y,Z,YAW[,CLIP[,FRAME[,quad][,WEAPON]]]]... [--projectile ID,X,Y,Z,YAW[,PITCH]]... [--explosion ID,X,Y,Z,AGE]... [--tracer X,Y,Z,X2,Y2,Z2,R,G,B,AGE]... [--muzzle X,Y,Z,R,G,B,STYLE,SCALE,DURATION,AGE]... [--impact X,Y,Z,NX,NY,NZ,IX,IY,IZ,R,G,B,HEAVY,AGE]... [--rail X,Y,Z,X2,Y2,Z2,R,G,B,KIND,NX,NY,NZ,AGE]... [--lightning MODE,X,Y,Z,X2,Y2,Z2,R,G,B,KIND,AGE]... [--hit X,Y,Z,DAMAGE,AGE[,head]]... [--teleport X,Y,Z,X2,Y2,Z2,YAW,AGE]... [--gib X,Y,Z,AGE]... [--ring X,Y,Z,KIND,RADIUS,ALPHA]... [--ragdoll X,Y,Z,YAW,DX,DY,DZ,AGE]... [--weapon ID [--aim] [--quad] [--fire AGE]] [--no-cull] [--no-lights] [--seconds N]
 //! washoi demo <file.shagdemo> [--data DIR] [--screenshot FILE.png] [--size WxH] [--time T] [--at X,Y,Z,YAW] [--pitch DEG] [--follow N] [--reel MINUTES] [--audio-out FILE.wav] [--scoreboard] [--seconds N]
 //! washoi watch <ws://game-server> [--name NAME] [--ticket TICKET] [--data DIR] [--screenshot FILE.png] [--time T] [--at X,Y,Z,YAW] [--follow N] [--seconds N]
 //! washoi play <ws://game-server> [--name NAME] [--ticket TICKET] [--data DIR] [--screenshot FILE.png] [--time T] [--say TEXT] [--seconds N]
@@ -74,7 +74,8 @@
 //! idle at a Quake origin facing `YAW`, launched along `DX,DY,DZ` (Quake
 //! axes), `AGE` seconds on. `--weapon` holds a first-person weapon (a definition
 //! id such as `plasmagun`), at the hip or, with `--aim`, down its sights; `--quad` puts the quad
-//! outline on it.
+//! outline on it; `--fire AGE` has it fire once along the view, `AGE` seconds before the shot
+//! (its flash, the flash's light on the gun, the streak, rail or beam from the muzzle).
 
 mod bench;
 mod data_sync_screen;
@@ -113,7 +114,7 @@ fn usage() -> ! {
          \x20      washoi loading <map> --screenshot FILE.png [--levelshot FILE.jpg] [--seconds N] [--size WxH]\n\
          \x20      washoi bench <file.shagdemo> [--data DIR] [--frames N] [--warmup N] [--follow N] [--out FILE.json]\n\
          \x20      washoi --version\n\
-         \x20      washoi view <map> [--data DIR] [--spawn N] [--screenshot FILE.png] [--size WxH] [--time T] [--at X,Y,Z,YAW] [--pitch DEG] [--player X,Y,Z,YAW[,CLIP[,FRAME[,quad][,WEAPON]]]]... [--projectile ID,X,Y,Z,YAW[,PITCH]]... [--explosion ID,X,Y,Z,AGE]... [--weapon ID [--aim] [--quad]] [--no-cull] [--no-lights] [--seconds N]\n\
+         \x20      washoi view <map> [--data DIR] [--spawn N] [--screenshot FILE.png] [--size WxH] [--time T] [--at X,Y,Z,YAW] [--pitch DEG] [--player X,Y,Z,YAW[,CLIP[,FRAME[,quad][,WEAPON]]]]... [--projectile ID,X,Y,Z,YAW[,PITCH]]... [--explosion ID,X,Y,Z,AGE]... [--weapon ID [--aim] [--quad] [--fire AGE]] [--no-cull] [--no-lights] [--seconds N]\n\
          \x20      washoi demo <file.shagdemo> [--data DIR] [--screenshot FILE.png] [--size WxH] [--time T] [--at X,Y,Z,YAW] [--pitch DEG] [--follow N] [--reel MINUTES] [--audio-out FILE.wav] [--scoreboard] [--seconds N]\n\
          \x20      washoi watch <ws://game-server> [--name NAME] [--ticket TICKET] [--data DIR] [--screenshot FILE.png] [--time T] [--at X,Y,Z,YAW] [--follow N] [--seconds N]\n\
          \x20      washoi play <ws://game-server> [--name NAME] [--ticket TICKET] [--data DIR] [--screenshot FILE.png] [--time T] [--say TEXT] [--seconds N]\n\
@@ -147,6 +148,7 @@ struct Options {
     weapon: Option<String>,
     aim: bool,
     quad: bool,
+    fire: Option<f64>,
     follow: Option<usize>,
     reel: Option<f64>,
     audio_out: Option<PathBuf>,
@@ -201,6 +203,7 @@ fn parse_options(args: impl Iterator<Item = String>) -> Options {
             "--weapon" => o.weapon = Some(value()),
             "--aim" => o.aim = true,
             "--quad" => o.quad = true,
+            "--fire" => o.fire = Some(value().parse().unwrap_or_else(|_| usage())),
             "--follow" => o.follow = Some(value().parse().unwrap_or_else(|_| usage())),
             "--reel" => o.reel = Some(value().parse().unwrap_or_else(|_| usage())),
             "--audio-out" => o.audio_out = Some(PathBuf::from(value())),
@@ -816,6 +819,7 @@ fn view_options(
         weapon: o.weapon.clone(),
         aim: o.aim,
         quad: o.quad,
+        fire: o.fire,
         demo,
         watch,
         follow: o.follow,

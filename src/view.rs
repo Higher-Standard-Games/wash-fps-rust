@@ -74,7 +74,7 @@ use shagger::shared::spread_utils::mulberry32;
 use shagger::ui::egui_layer::egui;
 use shagger::weapon::explosion::explosion_batch_renderer::{ExplosionBatchRenderer, ExplosionLook};
 use shagger::weapon::explosion_effect::{ROCKET_EXPLOSION, explosion_flash, explosion_for};
-use shagger::weapon::hitscan_effects::{HitscanEffects, ShotWorld};
+use shagger::weapon::hitscan_effects::{BeamConfig, HitscanEffects, ShotWorld};
 use shagger::weapon::impact::impact_spark_renderer::ImpactSparkBurst;
 use shagger::weapon::muzzle::muzzle_flash_renderer::{MuzzleFlashSpawn, MuzzleFlashStyle};
 use shagger::weapon::point_light_pool::{PointLightPool, PooledLight};
@@ -91,11 +91,11 @@ use washoi::client::cinematic_demo_player::{
 };
 use washoi::client::demo_playback::{DemoPlayback, DemoView, LiveProjectile};
 use washoi::client::fps_hud::{FpsHud, WatchFrame};
-use washoi::client::game_events::{EffectTargets, GameAudio, play_remote_shots};
+use washoi::client::game_events::{EffectTargets, GameAudio, ShotMuzzles, play_shots};
 use washoi::client::live_play::{LivePlay, PlayInput};
 use washoi::client::live_watch::LiveWatch;
 use washoi::client::match_state_manager::MatchStateManager;
-use washoi::client::weapon_view::{WeaponViewModel, muzzle_flash, quad_view_weapon_outline};
+use washoi::client::weapon_view::{WeaponViewModel, blade_tip_flash, muzzle_flash, quad_view_weapon_outline};
 use washoi::shared::entities::definitions::projectiles::{PROJECTILES, projectile_def};
 use washoi::shared::net::snapshot_events::SnapshotEvent;
 
@@ -184,6 +184,8 @@ pub struct ViewOptions {
     pub aim: bool,
     /// The gun wears the quad outline (`--quad`).
     pub quad: bool,
+    /// The gun fired along the view this many seconds ago (`--fire`).
+    pub fire: Option<f64>,
     /// A demo to play on its map (`washoi demo`); `time` seeks it.
     pub demo: Option<PathBuf>,
     /// A live match to spectate (`washoi watch`): server, name, ticket.
@@ -334,6 +336,129 @@ pub fn chase_camera(camera: &mut Camera, player: &InterpolatedEntity) {
     camera.position = at - forward * 150.0 + Vec3::Y * 40.0;
     camera.yaw = yaw;
     camera.pitch = 0.15;
+}
+
+/// `washoi view --fire AGE`: our `weapon` fires once along `camera`'s view
+/// as a live shot is presented (the server's `weapon_fire`, and for the
+/// rail and the beam their contact 600 units out), then the view and the
+/// effects run on for `age` seconds.
+fn fire_view_shot(renderer: &mut MapRenderer, camera: &Camera, weapon: &str, age: f64, aiming: bool) {
+    use washoi::shared::net::snapshot_events::Point;
+    let local = "local";
+    renderer.set_local_player(Some(local), f64::from(camera.yaw));
+    let eye = camera.position.as_dvec3();
+    let forward = camera.forward().as_dvec3();
+    let point = |p: DVec3| Point { x: p.x, y: p.y, z: p.z };
+    let mut events = vec![SnapshotEvent::WeaponFire {
+        entity_id: local.to_owned(),
+        weapon_id: weapon.to_owned(),
+        origin: point(eye),
+        dir: point(forward),
+        pellet: Some((7, 8.0)),
+    }];
+    if matches!(weapon, "electrobolt" | "voltaic") {
+        events.push(SnapshotEvent::Beam {
+            electro_rail: weapon == "electrobolt",
+            entity_id: local.to_owned(),
+            origin: point(eye),
+            dir: point(forward),
+            end: point(eye + forward * 600.0),
+            normal: point(-forward),
+            impact_kind: 1,
+        });
+    }
+    if let Some(view_model) = &mut renderer.view_model {
+        view_model
+            .view
+            .present_fire(&washoi::client::weapon_view::shot_style(weapon), false);
+    }
+    renderer.fire_view_muzzle_flash(camera, false);
+    let weapons = HashMap::from([(local.to_owned(), weapon.to_owned())]);
+    renderer.play_effects(&events, &weapons, 0.0, camera);
+    let steps = (age * 60.0).round() as usize;
+    for _ in 0..=steps {
+        renderer.set_beam_active(weapon == "voltaic");
+        renderer.update_beam(camera);
+        if let Some(view_model) = &mut renderer.view_model {
+            view_model.view.update(&ViewModelInput {
+                delta_time: age / steps.max(1) as f64,
+                grounded: true,
+                aiming,
+                ..ViewModelInput::default()
+            });
+        }
+        renderer.play_effects(&[], &weapons, age / steps.max(1) as f64, camera);
+    }
+    let (streaks, sparks, lights) = renderer.hitscan.debug_counts();
+    println!("fire: {weapon} {age} s ago: {streaks} streaks, {sparks} spark bursts, {lights} flash lights");
+}
+
+/// `MUZZLE_CONVERGE_SEC`: how long our projectile takes to converge from
+/// the barrel onto its true flight.
+const MUZZLE_CONVERGE_SECONDS: f64 = 0.22;
+/// `PROJECTILE_FORGET_TICKS`: the longest projectile life and a second.
+const PROJECTILE_FORGET_SECONDS: f64 = 11.0;
+
+/// `getProjectileMuzzlePosition`: a projectile within 120 units of the eye
+/// flying within about 45 degrees of the view starts 34 units out along the
+/// screen ray through the muzzle (deep enough that its model and trail
+/// clear the near plane); `None` for anything else.
+fn projectile_muzzle(view_model: &WeaponViewModel, camera: &Camera, position: DVec3, velocity: DVec3) -> Option<DVec3> {
+    if position.distance(camera.position.as_dvec3()) > 120.0 {
+        return None;
+    }
+    let speed = velocity.length();
+    if speed <= 1.0 || velocity.dot(camera.forward().as_dvec3()) / speed < 0.7 {
+        return None;
+    }
+    Some(view_model.muzzle_world_position(camera, 34.0))
+}
+
+/// `getWeaponMuzzleWorldPositionToRef`'s choices for one drawn player:
+/// their gun's muzzle tag, the gun's origin, then the body.
+#[derive(Debug, Clone, Copy)]
+struct RemoteMuzzle {
+    tag: Option<DVec3>,
+    root: Option<DVec3>,
+    body: DVec3,
+}
+
+impl RemoteMuzzle {
+    /// The muzzle for a shot along `direction`: the tag; else 10 units
+    /// out from the gun; else 5 out from 20 above the body's origin.
+    fn resolve(&self, direction: DVec3) -> DVec3 {
+        let length = direction.length();
+        let forward = if length > 0.0001 { direction / length } else { DVec3::Z };
+        if let Some(tag) = self.tag {
+            return tag;
+        }
+        if let Some(root) = self.root {
+            return root + forward * 10.0;
+        }
+        self.body + DVec3::new(0.0, 20.0, 0.0) + forward * 5.0
+    }
+}
+
+/// This frame's muzzles: ours on screen, the others in their hands.
+struct FrameMuzzles<'a> {
+    local: Option<&'a str>,
+    view: Option<(&'a WeaponViewModel, &'a Camera)>,
+    remote: &'a HashMap<String, RemoteMuzzle>,
+}
+
+impl ShotMuzzles for FrameMuzzles<'_> {
+    fn local(&self) -> Option<&str> {
+        self.local
+    }
+
+    fn view_muzzle(&self, distance: f64) -> Option<DVec3> {
+        self.view
+            .map(|(view_model, camera)| view_model.muzzle_world_position(camera, distance))
+    }
+
+    fn remote_muzzle(&self, entity_id: &str, direction: DVec3) -> Option<DVec3> {
+        self.remote.get(entity_id).map(|m| m.resolve(direction))
+    }
 }
 
 /// The player on screen: our own, else the one followed (none for a free
@@ -854,6 +979,12 @@ pub struct MapRenderer {
     spare_trails: Vec<(&'static str, ProjectileTrail)>,
     /// The flying projectiles' pool lights, by entity.
     live_projectile_lights: HashMap<String, PooledLight>,
+    /// When each projectile was last in a snapshot, on the lights' clock: a
+    /// projectile seen before is mid-flight, not a new shot.
+    projectile_seen: HashMap<String, f64>,
+    /// Our new shots' muzzle convergence (`renderOffset`): the offset from
+    /// the true position to the barrel, and when it was fired.
+    projectile_offsets: HashMap<String, (DVec3, f64)>,
     /// The pool's clock for them.
     live_light_clock: f64,
     /// The effects' clock (seconds) for a demo or match; held effects
@@ -931,6 +1062,16 @@ pub struct MapRenderer {
     /// The local player (whose own body is not drawn) and their view yaw,
     /// for their corpse (`startLocalRagdollDeathCamera`).
     local_player: Option<(String, f64)>,
+    /// Where each drawn player's shots leave from this frame
+    /// (`getWeaponMuzzleWorldPosition`).
+    remote_muzzles: HashMap<String, RemoteMuzzle>,
+    /// `beamActive`: our Voltaic beam is drawn from the muzzle each frame.
+    local_beam: bool,
+    /// The blade tips' flashes riding the tip, by anchor: their pixel jitter.
+    blade_tip_flashes: Vec<(u32, (f64, f64))>,
+    next_flash_anchor: u32,
+    /// The last frame's height in pixels, for the blade tip's jitter.
+    frame_height: f64,
     /// What the death camera follows, and where and facing what the local
     /// player died; taken by the window to start it.
     local_death: Option<(DeathFollow, DVec3, f64)>,
@@ -1053,13 +1194,34 @@ impl MapRenderer {
 
     /// `presentFire`'s muzzle flash for the weapon in hand, at its muzzle
     /// under `camera`.
-    pub fn fire_view_muzzle_flash(&mut self, camera: &Camera) {
+    /// A swing (not a charged throw) also flashes at the blade's tip,
+    /// jittered a few pixels, riding it.
+    pub fn fire_view_muzzle_flash(&mut self, camera: &Camera, projectile_fire: bool) {
         let Some(view_model) = &self.view_model else {
             return;
         };
         let position = view_model.muzzle_world_position(camera, 5.0);
-        if let Some(flash) = muzzle_flash(&view_model.view.weapon, position) {
-            self.hitscan.fire_muzzle_flash(self.effect_time, &flash);
+        let Some(flash) = muzzle_flash(&view_model.view.weapon, position) else {
+            return;
+        };
+        self.hitscan.fire_muzzle_flash(self.effect_time, &flash);
+        if view_model.view.weapon == "blade" && !projectile_fire {
+            // `(Math.random() - 0.5) * 8` pixels each way.
+            let seed = self.effect_time.to_bits() as u32 ^ self.next_flash_anchor.wrapping_mul(0x9E37_79B9);
+            let mut random = mulberry32(seed);
+            let jitter = ((random() - 0.5) * 8.0, (random() - 0.5) * 8.0);
+            if let Some(tip) = view_model.blade_tip_world_position(camera, jitter, self.frame_height) {
+                let anchor = self.next_flash_anchor;
+                self.next_flash_anchor = self.next_flash_anchor.wrapping_add(1);
+                // Older tips are faded by now: a swing's flash lasts 0.16 s.
+                if self.blade_tip_flashes.len() >= 8 {
+                    self.blade_tip_flashes.remove(0);
+                }
+                self.blade_tip_flashes.push((anchor, jitter));
+                if let Some(flash) = blade_tip_flash(tip, anchor) {
+                    self.hitscan.fire_muzzle_flash(self.effect_time, &flash);
+                }
+            }
         }
     }
 
@@ -1070,6 +1232,49 @@ impl MapRenderer {
         let p = position.as_dvec3();
         // Quake axes: x, z, y up.
         sample_light_vols(self.light_grid.as_ref()?, &self.light_vols, p.x, p.z, p.y)
+    }
+
+    /// `setBeamActive`: our Voltaic beam shows (or lets go and fades).
+    pub fn set_beam_active(&mut self, active: bool) {
+        if active && !self.local_beam {
+            self.hitscan.begin_lightning();
+        }
+        if !active && self.local_beam {
+            self.hitscan.stop_lightning(self.effect_time);
+        }
+        self.local_beam = active;
+    }
+
+    /// `updateBeam`: while our beam is on, it leaves this frame's muzzle
+    /// along this frame's view, traced from the eye.
+    pub fn update_beam(&mut self, camera: &Camera) {
+        if !self.local_beam {
+            return;
+        }
+        let Some(view_model) = &self.view_model else {
+            return;
+        };
+        if view_model.view.weapon != "voltaic" {
+            return;
+        }
+        let origin = view_model.muzzle_world_position(camera, 5.0);
+        let mut no_world = ();
+        let world: &mut dyn ShotWorld = match &mut self.shot_world {
+            Some(world) => world,
+            None => &mut no_world,
+        };
+        self.hitscan.update_lightning_beam(
+            self.effect_time,
+            world,
+            &BeamConfig {
+                origin,
+                trace_origin: Some(camera.position.as_dvec3()),
+                direction: camera.forward().as_dvec3(),
+                max_range: Some(850.0),
+                // The Voltaic's muzzle flash colour.
+                color: Some(Vec3::new(1.0, 0.7, 0.1)),
+            },
+        );
     }
 
     /// Puts `id` in hand now. The one view in the browser keeps its bob,
@@ -1249,6 +1454,7 @@ impl MapRenderer {
             .retain(|id, _| departed.contains_key(id) || players.iter().any(|(p, _, _)| p == id));
         self.live_tints
             .retain(|id, _| departed.contains_key(id) || players.iter().any(|(p, _, _)| p == id));
+        self.remote_muzzles.clear();
         for (id, interp, style) in players {
             if self.ragdolled.contains(id) {
                 continue;
@@ -1267,11 +1473,21 @@ impl MapRenderer {
                 interp.powerup_mask.unwrap_or(0),
                 self.item_time,
             );
+            let mut muzzle = RemoteMuzzle {
+                tag: None,
+                root: None,
+                body: DVec3::new(interp.x, interp.y, interp.z),
+            };
             if let (Some(weapon), Some(hand)) = (self.live_weapons.get(id), renderer.hand_world(id, interp)) {
                 let quad =
                     mask_has_quad(interp.powerup_mask.unwrap_or(0)).then(|| get_quad_damage_pulse(self.item_time));
                 self.hand_weapons.draws(weapon, hand, quad, &mut self.live_draws);
+                if let Some((tag, root)) = self.hand_weapons.muzzle(weapon, hand) {
+                    muzzle.tag = tag.map(Vec3::as_dvec3);
+                    muzzle.root = Some(root.as_dvec3());
+                }
             }
+            self.remote_muzzles.insert(id.clone(), muzzle);
             // The player's box (Q3's -15 -15 -24 to 15 15 32, Babylon order).
             let at = DVec3::new(interp.x, interp.y, interp.z);
             self.live_actors.push((
@@ -1378,8 +1594,27 @@ impl MapRenderer {
     /// Draws the projectiles in flight this frame, facing along their
     /// velocity, each carrying its pool light; call after
     /// [`Self::set_live_players`], which clears the frame's live draws.
-    pub fn set_live_projectiles(&mut self, projectiles: &[LiveProjectile], dt: f64) {
+    /// `camera` is the eye our own shots leave the gun under.
+    pub fn set_live_projectiles(&mut self, projectiles: &[LiveProjectile], dt: f64, camera: &Camera) {
         self.live_light_clock += dt;
+        // `processProjectileEntities`' muzzle: a projectile first seen now,
+        // near us and flying along our view, is our shot and starts at our
+        // barrel (`getProjectileMuzzlePosition`); its drawing converges onto
+        // the true flight (`updateServerPosition`).
+        let clock = self.live_light_clock;
+        self.projectile_seen
+            .retain(|_, seen| clock - *seen <= PROJECTILE_FORGET_SECONDS);
+        self.projectile_offsets
+            .retain(|_, (_, born)| clock - *born < MUZZLE_CONVERGE_SECONDS);
+        for p in projectiles {
+            let new = self.projectile_seen.insert(p.id.clone(), clock).is_none();
+            if new && let Some(view_model) = &self.view_model {
+                let position = DVec3::from(p.position);
+                if let Some(muzzle) = projectile_muzzle(view_model, camera, position, DVec3::from(p.velocity)) {
+                    self.projectile_offsets.insert(p.id.clone(), (muzzle - position, clock));
+                }
+            }
+        }
         let gone: Vec<String> = self
             .live_projectile_lights
             .keys()
@@ -1433,7 +1668,14 @@ impl MapRenderer {
             let Some((def, model)) = self.live_projectile_models.iter().find(|(d, _)| d.id == p.def_id) else {
                 continue;
             };
-            let position = DVec3::from(p.position).as_vec3();
+            let drawn = DVec3::from(p.position)
+                + self
+                    .projectile_offsets
+                    .get(&p.id)
+                    .map_or(DVec3::ZERO, |(offset, born)| {
+                        *offset * (1.0 - (clock - born) / MUZZLE_CONVERGE_SECONDS)
+                    });
+            let position = drawn.as_vec3();
             let velocity = DVec3::from(p.velocity).as_vec3();
             let direction = if velocity.length_squared() > 1e-6 {
                 velocity
@@ -1456,11 +1698,7 @@ impl MapRenderer {
                         .map(|i| spare.swap_remove(i).1);
                     (def, reused.unwrap_or_default())
                 });
-                trail.push(
-                    DVec3::from(p.position),
-                    DVec3::from(p.velocity).normalize_or_zero(),
-                    def.trail_length,
-                );
+                trail.push(drawn, DVec3::from(p.velocity).normalize_or_zero(), def.trail_length);
             }
             if let Some(intensity) = def.light_intensity.filter(|i| *i > 0.0) {
                 match self.live_projectile_lights.get(&p.id) {
@@ -1735,7 +1973,14 @@ impl MapRenderer {
         (!hit.start_solid && hit.fraction < 1.0).then(|| DVec3::new(hit.end_pos.x, hit.end_pos.y, hit.end_pos.z))
     }
 
-    pub fn play_effects(&mut self, events: &[SnapshotEvent], weapons: &HashMap<String, String>, dt: f64) {
+    /// `camera` is the eye our own gun is drawn under.
+    pub fn play_effects(
+        &mut self,
+        events: &[SnapshotEvent],
+        weapons: &HashMap<String, String>,
+        dt: f64,
+        camera: &Camera,
+    ) {
         self.effect_time += dt;
         let now = self.effect_time;
         self.explosions.update(now);
@@ -1784,7 +2029,7 @@ impl MapRenderer {
             Some(world) => world,
             None => &mut no_world,
         };
-        play_remote_shots(
+        play_shots(
             events,
             &mut EffectTargets {
                 now,
@@ -1793,6 +2038,11 @@ impl MapRenderer {
                 lights: &mut self.lights,
             },
             &|id| weapons.get(id).cloned(),
+            &FrameMuzzles {
+                local: self.local_player.as_ref().map(|(id, _)| id.as_str()),
+                view: self.view_model.as_ref().map(|v| (v, camera)),
+                remote: &self.remote_muzzles,
+            },
         );
         self.hitscan.update(now, &mut self.lights);
         // Fade the flashes, and give back the ones that are out.
@@ -1843,6 +2093,7 @@ impl MapRenderer {
 
     pub fn prepare(&mut self, gpu: &Gpu, camera: &Camera, size: [f32; 2]) {
         let aspect = size[0] / size[1];
+        self.frame_height = f64::from(size[1]);
         self.culling.update(camera, aspect);
         let lights: Vec<DynamicLight> = if self.dynamic_lights {
             self.lights.lights().chain(self.charge_glows.iter().copied()).collect()
@@ -1970,12 +2221,23 @@ impl MapRenderer {
             fog: uniforms,
         };
         self.hitscan.streaks.prepare(gpu, &frame);
-        // The muzzle flashes ride the live barrel (`setMuzzleAnchorResolver`).
+        // The muzzle flashes ride the live barrel (`setMuzzleAnchorResolver`),
+        // the blade's tip flashes its tip.
         if let Some(view_model) = &self.view_model {
-            self.hitscan
-                .muzzle_flashes
-                .track_anchor(view_model.muzzle_world_position(camera, 5.0));
+            let height = self.frame_height;
+            let tips = &self.blade_tip_flashes;
+            self.hitscan.muzzle_flashes.track_anchors(|anchor| match anchor {
+                None => Some(view_model.muzzle_world_position(camera, 5.0)),
+                Some(id) => tips
+                    .iter()
+                    .find(|(a, _)| *a == id)
+                    .and_then(|(_, jitter)| view_model.blade_tip_world_position(camera, *jitter, height)),
+            });
         }
+        // Remote beams leave their shooters' guns as they are now.
+        let muzzles = &self.remote_muzzles;
+        self.hitscan
+            .refresh_remote_lightning_starts(&mut |id, direction| muzzles.get(id).map(|m| m.resolve(direction)));
         self.hitscan.muzzle_flashes.prepare(gpu, &frame);
         self.hitscan.impact_sparks.prepare(gpu, &frame);
         self.hitscan.rails.prepare(gpu, &frame);
@@ -2054,6 +2316,7 @@ impl MapRenderer {
             }
         }
         if let Some(view_model) = &mut self.view_model {
+            view_model.dynamic_lights = self.dynamic_lights;
             view_model.prepare(gpu, camera, aspect);
         }
     }
@@ -2580,6 +2843,7 @@ pub fn build_renderer(gpu: &Gpu, map: &mut LoadedMap, output_format: wgpu::Textu
                     scale: Some(*scale),
                     intensity: None,
                     duration: Some(*duration),
+                    anchor: None,
                 },
             ),
             EffectView::Impact {
@@ -2695,6 +2959,8 @@ pub fn build_renderer(gpu: &Gpu, map: &mut LoadedMap, output_format: wgpu::Textu
         actor_draws: Vec::new(),
         live_projectile_models,
         live_projectile_lights: HashMap::new(),
+        projectile_seen: HashMap::new(),
+        projectile_offsets: HashMap::new(),
         live_trails: HashMap::new(),
         spare_trails: Vec::new(),
         live_light_clock: 0.0,
@@ -2734,6 +3000,11 @@ pub fn build_renderer(gpu: &Gpu, map: &mut LoadedMap, output_format: wgpu::Textu
         departed: HashMap::new(),
         live_worlds: HashMap::new(),
         local_player: None,
+        remote_muzzles: HashMap::new(),
+        local_beam: false,
+        blade_tip_flashes: Vec::new(),
+        next_flash_anchor: 0,
+        frame_height: 720.0,
         local_death: None,
         damage_numbers,
         damage_number_renderer: DamageNumberRenderer::new(gpu, format, &damage_font),
@@ -3119,8 +3390,8 @@ pub fn start_prepared(o: &ViewOptions, prepared: Prepared) -> Result<i32, String
                 .collect();
             renderer.set_live_weapons(&view.weapons);
             renderer.set_live_players(&drawn, 1.0 / 60.0, 1.0 / 60.0);
-            renderer.set_live_projectiles(&projectiles, 1.0 / 60.0);
-            renderer.play_effects(&view.effects, &view.weapons, 1.0 / 60.0);
+            renderer.set_live_projectiles(&projectiles, 1.0 / 60.0, &camera);
+            renderer.play_effects(&view.effects, &view.weapons, 1.0 / 60.0, &camera);
             renderer.play_bomb_sites(feed.match_state(), 1.0 / 60.0);
             renderer.pickup_active.clone_from(&view.pickup_active);
             renderer.play_gibs(&view.effects, 1.0 / 60.0);
@@ -3271,6 +3542,10 @@ pub fn start_prepared(o: &ViewOptions, prepared: Prepared) -> Result<i32, String
                 ..ViewModelInput::default()
             });
         }
+    }
+    // `--fire AGE`: our gun fires once along the view, AGE seconds ago.
+    if let (Some(age), Some(weapon)) = (o.fire, renderer.view_model.as_ref().map(|v| v.view.weapon.clone())) {
+        fire_view_shot(&mut renderer, &camera, &weapon, age, o.aim);
     }
     // One long step: a still is fully under or fully dry.
     renderer.update_underwater(&mut camera, 1.0);
@@ -3426,4 +3701,27 @@ fn held_trail(position: Vec3, direction: Vec3, speed: f64, max_length: Option<f6
         .collect();
     trail.push(head, dir, max_length);
     trail
+}
+
+#[cfg(test)]
+mod tests {
+    use super::RemoteMuzzle;
+    use shagger::rendering::glam::DVec3;
+
+    #[test]
+    fn a_remote_shot_leaves_the_tag_then_the_gun_then_the_body() {
+        let mut m = RemoteMuzzle {
+            tag: Some(DVec3::new(1.0, 2.0, 3.0)),
+            root: Some(DVec3::new(4.0, 5.0, 6.0)),
+            body: DVec3::new(10.0, 0.0, 0.0),
+        };
+        let dir = DVec3::new(0.0, 0.0, 2.0);
+        assert_eq!(m.resolve(dir), DVec3::new(1.0, 2.0, 3.0));
+        m.tag = None;
+        assert_eq!(m.resolve(dir), DVec3::new(4.0, 5.0, 16.0));
+        m.root = None;
+        assert_eq!(m.resolve(dir), DVec3::new(10.0, 20.0, 5.0));
+        // No direction: straight ahead along +Z.
+        assert_eq!(m.resolve(DVec3::ZERO), DVec3::new(10.0, 20.0, 5.0));
+    }
 }

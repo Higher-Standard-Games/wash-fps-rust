@@ -3876,7 +3876,7 @@ dependencies = [
 [[package]]
 name = "shagger"
 version = "0.0.1"
-source = "git+https://github.com/Higher-Standard-Games/shagger?rev=3bbfc31f81c78770b357581fc8a0cf4b39137041#3bbfc31f81c78770b357581fc8a0cf4b39137041"
+source = "git+https://github.com/Higher-Standard-Games/shagger?rev=162fd28d2e52b75e6bc0fdea290f70d847250329#162fd28d2e52b75e6bc0fdea290f70d847250329"
 dependencies = [
  "bytemuck",
  "cpal",
@@ -3913,7 +3913,7 @@ dependencies = [
 [[package]]
 name = "shagger_shared"
 version = "0.0.1"
-source = "git+https://github.com/Higher-Standard-Games/shagger?rev=3bbfc31f81c78770b357581fc8a0cf4b39137041#3bbfc31f81c78770b357581fc8a0cf4b39137041"
+source = "git+https://github.com/Higher-Standard-Games/shagger?rev=162fd28d2e52b75e6bc0fdea290f70d847250329#162fd28d2e52b75e6bc0fdea290f70d847250329"
 dependencies = [
  "flate2",
 ]
