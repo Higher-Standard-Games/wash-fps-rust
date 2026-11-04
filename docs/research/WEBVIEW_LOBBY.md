@@ -788,6 +788,29 @@ Not covered yet:
 - **GitHub's Linux runner** has no Vulkan or GL adapter for wgpu. Linux is
   proven by the run here.
 
+### 18.4 W4 progress (November 4, 2026)
+
+- **Demos** go through `demo:play` (`filename`, `base`, `reel`). The client
+  downloads with the native menu's cache and checks, answers once the file
+  is in, and plays it in the same window. Leaving playback sends
+  `demo:ended`, and the page shows the Demos page again without a reload.
+  `demo:cancel` stops a download. The Demos page takes a registered
+  `DemoPlayer`; a browser registers none.
+- **File save.** A `blob:` or `data:` link with `download`, in the page or
+  clicked from code (`ProfileView.saveKeyFile`), becomes `file:save`. The
+  client writes it to the Downloads folder (home when there is none) under
+  a free name, and the page says where it went. Ran on Linux.
+- **Clipboard.** `navigator.clipboard.writeText` works in WebKitGTK (Copy
+  key says Copied ✓), as it does in WebView2 and WKWebView on a secure
+  origin, so `clipboard:write` is not added.
+- **Update notice.** Once the page has said hello, the client sends
+  `native:update` with the newer version and its package URL. The page shows
+  Download (opened in the browser) and Later, and both send
+  `update:dismiss`.
+- Left for W4: console passthrough, invite paste, and taking Babylon out of
+  the lobby-only bundle (DemoService is still imported for the browser's
+  own playback).
+
 ### 18.3 W3 progress (November 4, 2026)
 
 Landed: shagger `lobby/storage_mirror.rs` and `Cvars::declarations`, the

@@ -22,7 +22,9 @@ use shagger::lobby::storage_mirror::StorageMirror;
 use shagger::rendering::gpu::Gpu;
 use shagger::rendering::wgpu;
 use shagger::ui::egui_layer::{EguiLayer, egui};
-use shagger::webview::{HostEvent, WebviewConfig, WebviewHost, open_external, origin_of};
+use shagger::webview::{
+    HostEvent, WebviewConfig, WebviewHost, open_external, origin_of, safe_file_name, save_download,
+};
 use washoi::client::demo_download::{DemoDownload, DemoDownloadState};
 use washoi::client::lobby_panel::LobbyChoice;
 use winit::application::ApplicationHandler;
@@ -36,7 +38,16 @@ use crate::window::{OpenWindow, next_frame, open_window, present, run_on_event_l
 pub const BRIDGE_VERSION: u32 = 1;
 
 /// What the client offers the page, for `hello`.
-const CAPABILITIES: [&str; 6] = ["match", "external", "fullscreen", "quit", "storage", "demo"];
+const CAPABILITIES: [&str; 8] = [
+    "match",
+    "external",
+    "fullscreen",
+    "quit",
+    "storage",
+    "demo",
+    "file-save",
+    "update",
+];
 
 /// How long the page has to say hello before the screen gives up on it.
 const HELLO_TIMEOUT: Duration = Duration::from_secs(30);
@@ -57,6 +68,8 @@ thread_local! {
     static HOST: RefCell<Option<WebviewHost>> = const { RefCell::new(None) };
     /// The page said hello at least once.
     static GREETED: Cell<bool> = const { Cell::new(false) };
+    /// The page has been told of the newer release (`native:update`).
+    static UPDATE_TOLD: Cell<bool> = const { Cell::new(false) };
     /// The mirrored keys as the last match started, to tell the page what
     /// the match changed (`storage:changed`).
     static BEFORE_MATCH: RefCell<Option<Map<String, Value>>> = const { RefCell::new(None) };
@@ -184,6 +197,32 @@ fn act(message: &Value) -> Action {
             )),
         },
         "demo:cancel" => Action::CancelDemo,
+        "update:dismiss" => {
+            washoi::update_check::dismiss();
+            Action::Nothing
+        }
+        "file:save" => match text(message, "text") {
+            Some(body) => {
+                let name = safe_file_name(&text(message, "suggestedName").unwrap_or_default(), "washoi-file.txt");
+                Action::Reply(match save_download(&name, body.as_bytes()) {
+                    Ok(path) => reply(
+                        message,
+                        "file:save",
+                        json!({"saved": true, "path": path.display().to_string()}),
+                    ),
+                    Err(why) => reply(
+                        message,
+                        "error",
+                        json!({"code": "save_failed", "message": why.to_string()}),
+                    ),
+                })
+            }
+            None => Action::Reply(reply(
+                message,
+                "error",
+                json!({"code": "bad_request", "message": "file:save needs text"}),
+            )),
+        },
         "storage:set" => match (text(message, "key"), message.get("value")) {
             (Some(key), Some(Value::String(v))) => Action::Storage(key, Some(v.clone())),
             (Some(key), Some(Value::Null) | None) => Action::Storage(key, None),
@@ -267,6 +306,8 @@ impl LobbyApp {
                 HostEvent::Message(message) => {
                     if text(&message, "type").as_deref() == Some("hello") {
                         GREETED.with(|g| g.set(true));
+                        // A new page load: it has not seen the update notice.
+                        UPDATE_TOLD.with(|t| t.set(false));
                         self.problem = None;
                     }
                     match act(&message) {
@@ -326,6 +367,16 @@ impl LobbyApp {
         }
         if self.poll_demo(event_loop) {
             return;
+        }
+        // A newer release, once the page can show it (its update notice).
+        if GREETED.with(Cell::get)
+            && !UPDATE_TOLD.with(Cell::get)
+            && let Some(update) = washoi::update_check::available()
+        {
+            UPDATE_TOLD.with(|t| t.set(true));
+            let told =
+                json!({"v": BRIDGE_VERSION, "type": "native:update", "version": update.version, "url": update.url});
+            Self::with_host(|h| h.send(&told));
         }
         if !GREETED.with(Cell::get) && self.problem.is_none() && self.waiting_since.elapsed() > HELLO_TIMEOUT {
             self.problem = Some(format!("The lobby at {} did not start.", self.url));
@@ -669,7 +720,7 @@ mod tests {
             panic!("played without a ticket");
         };
         assert_eq!(no["code"], "bad_request");
-        let Action::Reply(unknown) = act(&json!({"v": 1, "type": "file:save", "id": "r6"})) else {
+        let Action::Reply(unknown) = act(&json!({"v": 1, "type": "console:exec", "id": "r6"})) else {
             panic!("unknown accepted");
         };
         assert_eq!(unknown["code"], "unknown_type");
