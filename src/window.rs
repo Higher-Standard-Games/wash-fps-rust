@@ -135,6 +135,9 @@ struct App {
     first_person: FirstPersonView,
     /// The viewed player's weapon was reloading in the last weapon state.
     view_reloading: bool,
+    /// The eyes we look through are charging the blade (`_localCharging`):
+    /// the shot that ends the charge is the throw, not a swing.
+    view_charging: bool,
     /// This frame's: put on the camera for drawing only.
     view_offset: Option<ViewOffset>,
     death_follow: Option<DeathFollow>,
@@ -713,12 +716,16 @@ impl App {
                         SnapshotEvent::WeaponFire {
                             entity_id, weapon_id, ..
                         } if *entity_id == viewed => {
+                            let projectile_fire = std::mem::take(&mut self.view_charging);
                             if let Some(view_model) = &mut s.renderer.view_model {
                                 let style = shot_style(canonical_weapon_id(weapon_id));
-                                view_model.view.present_fire(&style, false);
+                                view_model.view.present_fire(&style, projectile_fire);
                             }
                             s.renderer.fire_view_muzzle_flash(&self.camera);
                         }
+                        SnapshotEvent::WeaponCharge {
+                            entity_id, charging, ..
+                        } if *entity_id == viewed => self.view_charging = *charging,
                         SnapshotEvent::WeaponState {
                             entity_id,
                             current_weapon,
@@ -1759,6 +1766,7 @@ pub fn run(
         death_camera: DeathCamera::default(),
         first_person: FirstPersonView::default(),
         view_reloading: false,
+        view_charging: false,
         view_offset: None,
         death_follow: None,
         audio,

@@ -7,6 +7,7 @@
 
 use shagger::core::cvar::with_cvars;
 use shagger::loader::model::gltf_model::GltfModel;
+use shagger::loader::model::tags_loader::{find_tag, parse_tags};
 use shagger::loader::pk3::pk3_loader::Pk3Loader;
 use shagger::rendering::camera::Camera;
 use shagger::rendering::glam::{DVec3, Mat4, Vec3};
@@ -17,6 +18,7 @@ use shagger::shared::js::js_round;
 use shagger::ui::font::Font;
 use shagger::weapon::ammo_counter_display::{AmmoCounterDisplay, AmmoCounterTuning, parse_ammo_counter};
 use shagger::weapon::muzzle::muzzle_flash_renderer::{MuzzleFlashSpawn, MuzzleFlashStyle};
+use shagger::weapon::weapon_barrels::{BarrelSpin, babylon_euler, barrel_material_mode};
 use shagger::weapon::weapon_view_manager::{
     ShotStyle, ViewModelDef, WEAPON_CAMERA_MAX_Z, WEAPON_CAMERA_MIN_Z, WEAPON_OUTLINE_WIDTH, WeaponView, blade_light,
     view_material_mode, weapon_light, weapon_outline,
@@ -26,7 +28,7 @@ use crate::client::quad_damage_visual::{
     QUAD_DAMAGE_COLOR, QUAD_VIEW_WEAPON_OUTLINE_MIN, QUAD_VIEW_WEAPON_OUTLINE_RANGE, get_quad_damage_pulse,
 };
 use crate::shared::entities::definitions::weapons::weapons_table::{WeaponModel, weapon_model};
-use crate::world::fps_pickup::package_path;
+use crate::world::fps_pickup::{directory, package_path};
 
 /// A weapon definition's view-model placement for `WeaponViewManager`.
 #[must_use]
@@ -39,6 +41,8 @@ pub fn view_model_def(weapon: &WeaponModel) -> ViewModelDef {
         scale: v.scale,
         ads_time: Some(v.ads_time),
         ads_require_ready: v.ads_require_ready,
+        melee: weapon.melee,
+        charge_time: weapon.charge_time,
     }
 }
 
@@ -137,6 +141,93 @@ pub struct WeaponViewModel {
     /// `muzzleSocket`: the model's `tag_flash` (or `tag_muzzle`), in the
     /// glTF scene's space.
     muzzle: Option<Vec3>,
+    /// The barrel sub-models (`WeaponBarrels.load`), their motion in
+    /// [`WeaponView::barrels`].
+    barrels: Vec<ViewBarrel>,
+}
+
+/// A barrel sub-model on the view model: where `WeaponBarrels.load` put
+/// its root, in the weapon's glTF scene space.
+struct ViewBarrel {
+    handle: ModelHandle,
+    model: GltfModel,
+    /// The socket it hangs on: the weapon's `tag_barrel` node, or the
+    /// weapon's root when `tags.txt` places it.
+    parent: Mat4,
+    /// The root's position and Euler rotation before it turns.
+    rest: Vec3,
+    rotation: Vec3,
+}
+
+/// `WeaponBarrels.load`'s barrel material set-up (`loadSource`): energy
+/// and glass layers as `prepareBarrelMaterials` draws them, the rest lit
+/// from both sides.
+fn view_barrel_material_mode(material: &shagger::loader::model::gltf_model::ModelMaterial) -> ModelMaterialMode {
+    match barrel_material_mode(material) {
+        ModelMaterialMode::Lit => ModelMaterialMode::LitTwoSided,
+        mode => mode,
+    }
+}
+
+/// `WeaponBarrels.load`: each barrel of `weapon`, its model from the
+/// packages, placed on the weapon `model`. A `tag_barrel` rule in the
+/// barrels' `tags.txt` places them from the weapon's root (a bone's
+/// position plus the rule's offset and rotation); otherwise they hang on
+/// the weapon's own `tag_barrel` node. Each adds its offset.
+fn load_view_barrels(
+    gpu: &Gpu,
+    pk3: &mut Pk3Loader,
+    renderer: &mut ModelRenderer,
+    weapon: &WeaponModel,
+    model: &GltfModel,
+) -> (Vec<ViewBarrel>, Vec<BarrelSpin>) {
+    let mut barrels = Vec::new();
+    let mut spins = Vec::new();
+    let Some(first) = weapon.barrels.first() else {
+        return (barrels, spins);
+    };
+    let tags = pk3
+        .get_file(&format!("{}tags.txt", directory(&package_path(first.model_path))))
+        .map(|bytes| parse_tags(&String::from_utf8_lossy(&bytes)))
+        .unwrap_or_default();
+    let barrel_tag = find_tag(&tags, "tag_barrel");
+    let skeleton = &model.skeleton;
+    let globals = skeleton.global_matrices(&skeleton.rest());
+    // `findViewBarrelSocket`: a tags.txt rule wins over the node.
+    let socket = if barrel_tag.is_none() {
+        skeleton.find("tag_barrel").and_then(|i| globals.get(i).copied())
+    } else {
+        None
+    };
+    // The rule's bone, when the weapon has it.
+    let bone = barrel_tag
+        .filter(|t| socket.is_none() && !t.bone_name.is_empty())
+        .and_then(|t| skeleton.find(&t.bone_name))
+        .and_then(|i| skeleton.nodes.get(i))
+        .map_or(Vec3::ZERO, |n| n.rest.translation);
+    for def in weapon.barrels {
+        let package = package_path(def.model_path);
+        let Some(barrel_model) = pk3.get_file(&package).and_then(|b| GltfModel::from_glb(&b).ok()) else {
+            eprintln!("{package}: no barrel model");
+            continue;
+        };
+        let handle = renderer.upload(gpu, &barrel_model, view_barrel_material_mode);
+        let tag_offset = barrel_tag.map_or(Vec3::ZERO, |t| t.offset);
+        let rest = bone + tag_offset + def.offset.map_or(Vec3::ZERO, Vec3::from);
+        let rotation = match barrel_tag {
+            Some(t) if socket.is_none() => t.rotation,
+            _ => Vec3::ZERO,
+        };
+        barrels.push(ViewBarrel {
+            handle,
+            model: barrel_model,
+            parent: socket.unwrap_or(Mat4::IDENTITY),
+            rest,
+            rotation,
+        });
+        spins.push(BarrelSpin::new(&def.motion));
+    }
+    (barrels, spins)
 }
 
 /// `FPSPlayer`'s quad outline on the gun: the quad colour, its width
@@ -179,9 +270,13 @@ impl WeaponViewModel {
             .iter()
             .find_map(|tag| model.attachment_points.get(*tag))
             .map(|tag| tag.position);
+        let (barrels, spins) = load_view_barrels(gpu, pk3, &mut renderer, weapon, &model);
+        let mut view = WeaponView::new(name, Some(view_model_def(weapon)));
+        view.barrels = spins;
         Ok(Self {
             renderer,
-            view: WeaponView::new(name, Some(view_model_def(weapon))),
+            view,
+            barrels,
             muzzle,
             handle,
             model,
@@ -212,8 +307,10 @@ impl WeaponViewModel {
                 .and_then(|m| self.model.materials.get(m))
                 .map_or(ModelMaterialMode::Lit, |m| view_material_mode(name, m));
             // `applyWeaponOutlines`: the powerup's colour and width when
-            // one is on, divided by the root's scale like the black one.
-            let outline = weapon_outline(&mode, self.view.scale).map(|black| match self.powerup_outline {
+            // one is on, else the blade's charge (`WeaponCharge`), divided
+            // by the root's scale like the black one. The quad wins.
+            let over = self.powerup_outline.or(self.view.charge_outline);
+            let outline = weapon_outline(&mode, self.view.scale).map(|black| match over {
                 Some(powerup) => Outline {
                     color: powerup.color,
                     width: black.width / WEAPON_OUTLINE_WIDTH * powerup.width,
@@ -224,6 +321,17 @@ impl WeaponViewModel {
                 outline,
                 ..ModelDraw::new(self.handle, i, root * primitive.node_matrix)
             });
+        }
+        // The barrels, turned and slid as `WeaponBarrels.update` leaves
+        // them, under the loader's handedness flip; no outline.
+        for (barrel, spin) in self.barrels.iter().zip(&self.view.barrels) {
+            let (position, rotation) = spin.pose(barrel.rest, barrel.rotation);
+            let local = barrel.parent
+                * Mat4::from_scale_rotation_translation(Vec3::new(1.0, 1.0, -1.0), babylon_euler(rotation), position);
+            for (i, primitive) in barrel.model.primitives.iter().enumerate() {
+                self.draws
+                    .push(ModelDraw::new(barrel.handle, i, root * local * primitive.node_matrix));
+            }
         }
         if let Some((counter, tag)) = &mut self.counter {
             // `displayedAmmo | 0`.

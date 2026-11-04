@@ -4,14 +4,41 @@
 //! `rlauncher.ts`, `voltaic.ts`).
 //!
 //! Only what drawing a weapon needs so far: the model, its scale, its
-//! barrel sub-models and its view-model placement (`viewModel`, `ads.time`,
+//! barrel sub-models and their motion, its view-model placement, whether
+//! it is a melee weapon and its charge time (`viewModel`, `ads.time`,
 //! `adsRequireReady`). Stats come with the systems that use them.
 
-/// A barrel sub-model (`BarrelDef`): its model and its offset from the mount.
+use shagger::weapon::weapon_barrels::{BarrelMotion, SpinAxis};
+
+/// A barrel sub-model (`BarrelDef`): its model, its offset from the mount
+/// and how it moves on the view model.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct BarrelModel {
     pub model_path: &'static str,
     pub offset: Option<[f32; 3]>,
+    pub motion: BarrelMotion,
+}
+
+/// A barrel that only moves with the shots.
+const STILL: BarrelMotion = BarrelMotion {
+    spin_speed: 0.0,
+    firing_spin_speed: None,
+    spin_down_seconds: None,
+    spin_direction: None,
+    spin_axis: SpinAxis::X,
+    fire_step_degrees: None,
+    slide_distance: None,
+};
+
+/// The plasmagun's chambers: idling, spinning up while it fires.
+const fn plasma_chamber(spin_direction: f64) -> BarrelMotion {
+    BarrelMotion {
+        spin_speed: 2.6,
+        firing_spin_speed: Some(9.75),
+        spin_down_seconds: Some(1.5),
+        spin_direction: Some(spin_direction),
+        ..STILL
+    }
 }
 
 /// A GLB view model's placement (`viewModel`) and its aim (`ads.time`,
@@ -47,6 +74,10 @@ pub struct WeaponModel {
     pub scale: f32,
     pub barrels: &'static [BarrelModel],
     pub view: ViewModelPlacement,
+    /// `meleeRadius` is set: a swing, and alt fire charges it.
+    pub melee: bool,
+    /// `chargeTime`, seconds.
+    pub charge_time: Option<f64>,
 }
 
 pub const BLADE: WeaponModel = WeaponModel {
@@ -54,6 +85,8 @@ pub const BLADE: WeaponModel = WeaponModel {
     model_path: "/data/models/weapons/blade/arc_blade.glb",
     scale: 1.0,
     barrels: &[],
+    melee: true,
+    charge_time: Some(1.0),
     view: ViewModelPlacement {
         hip_offset: [10.0, -28.0, 10.0],
         hip_rotation: [
@@ -73,6 +106,8 @@ pub const ELECTROBOLT: WeaponModel = WeaponModel {
     model_path: "/data/models/weapons/electrobolt/electrobolt.glb",
     scale: 2.0,
     barrels: &[],
+    melee: false,
+    charge_time: None,
     view: gun_view(-21.0, 0.375, true),
 };
 
@@ -83,7 +118,15 @@ pub const GRENADE_LAUNCHER: WeaponModel = WeaponModel {
     barrels: &[BarrelModel {
         model_path: "/data/models/weapons/glauncher/glauncher_barrel.glb",
         offset: None,
+        // The drum turns a round on with each shot.
+        motion: BarrelMotion {
+            spin_direction: Some(1.0),
+            fire_step_degrees: Some(405.0),
+            ..STILL
+        },
     }],
+    melee: false,
+    charge_time: None,
     view: gun_view(-20.0, 0.16, true),
 };
 
@@ -94,7 +137,14 @@ pub const MACHINEGUN: WeaponModel = WeaponModel {
     barrels: &[BarrelModel {
         model_path: "/data/models/weapons/machinegun/machinegun_barrel.glb",
         offset: None,
+        // The bolt cycles with each shot.
+        motion: BarrelMotion {
+            slide_distance: Some(1.5),
+            ..STILL
+        },
     }],
+    melee: false,
+    charge_time: None,
     view: gun_view(-20.0, 0.08, false),
 };
 
@@ -107,12 +157,16 @@ pub const PLASMAGUN: WeaponModel = WeaponModel {
         BarrelModel {
             model_path: "/data/models/weapons/plasmagun/plasmagun_barrel.glb",
             offset: Some([0.0, 0.0, -4.0]),
+            motion: plasma_chamber(1.0),
         },
         BarrelModel {
             model_path: "/data/models/weapons/plasmagun/plasmagun_barrel.glb",
             offset: Some([0.0, 0.0, 0.0]),
+            motion: plasma_chamber(-1.0),
         },
     ],
+    melee: false,
+    charge_time: None,
     view: gun_view(-22.0, 0.08, false),
 };
 
@@ -121,6 +175,8 @@ pub const RIOTGUN: WeaponModel = WeaponModel {
     model_path: "/data/models/weapons/riotgun/riotgun.glb",
     scale: 2.0,
     barrels: &[],
+    melee: false,
+    charge_time: None,
     view: gun_view(-21.0, 0.08, false),
 };
 
@@ -129,6 +185,8 @@ pub const ROCKET_LAUNCHER: WeaponModel = WeaponModel {
     model_path: "/data/models/weapons/rlauncher/rlauncher.glb",
     scale: 2.0,
     barrels: &[],
+    melee: false,
+    charge_time: None,
     view: gun_view(-20.0, 0.16, true),
 };
 
@@ -137,6 +195,8 @@ pub const VOLTAIC: WeaponModel = WeaponModel {
     model_path: "/data/models/weapons/voltaic/voltaic.glb",
     scale: 2.0,
     barrels: &[],
+    melee: false,
+    charge_time: None,
     view: gun_view(-21.0, 0.08, false),
 };
 

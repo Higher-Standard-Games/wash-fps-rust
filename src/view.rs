@@ -784,6 +784,9 @@ pub fn load_map(data: &Path, map: &str, report: &mut dyn FnMut(PrepareStep)) -> 
     })
 }
 
+/// `MAX_REMOTE_CHARGE_GLOW_LIGHTS` (wash-fps `GameEvents.ts`).
+const MAX_REMOTE_CHARGE_GLOW_LIGHTS: usize = 6;
+
 /// The map's sky, world and pickup models, and which world batches the
 /// camera can see.
 pub struct MapRenderer {
@@ -842,6 +845,10 @@ pub struct MapRenderer {
     pub effect_time: f64,
     /// Explosion flashes from events: their lights, looks and start times.
     live_flashes: Vec<(PooledLight, &'static ExplosionLook, f64)>,
+    /// Other players charging their blade, in the order they started
+    /// (`chargingPlayers`), and this frame's glows on them.
+    charging: Vec<String>,
+    charge_glows: Vec<DynamicLight>,
     pub sky: Option<SkyRenderer>,
     /// The map's world fog and the `r_fog` cvars over it (MapLoader's
     /// `WorldFogController.setMap`).
@@ -1020,6 +1027,7 @@ impl MapRenderer {
         }
         if let Some(mut old) = self.view_model.take() {
             old.view.cancel_reload();
+            old.view.charge.reset();
             old.view.switch_offsets = SwitchAnimOffsets::default();
             self.holster.insert(old.view.weapon.clone(), old);
         }
@@ -1060,6 +1068,7 @@ impl MapRenderer {
         dt: f64,
         effect_dt: f64,
     ) {
+        self.update_charge_glows(players);
         self.joints.truncate(self.static_joints);
         self.live_draws.clear();
         self.live_actors.clear();
@@ -1503,6 +1512,29 @@ impl MapRenderer {
 
     /// Names the local player and their view yaw before [`Self::play_gibs`],
     /// so their death leaves a corpse for the death camera.
+    /// wash-fps `GameEvents.ts`'s charge glows: a teal light 30 units
+    /// above each other player charging their blade, at most six, pulsing
+    /// between 4 and 12 (`Game.ts`).
+    fn update_charge_glows(&mut self, players: &[(String, InterpolatedEntity, PlayerModelVisualStyle)]) {
+        self.charge_glows.clear();
+        let pulse = 8.0 + 4.0 * (self.item_time * 8.0).sin();
+        let color = Vec3::new(0.05, 1.0, 0.9);
+        for id in &self.charging {
+            if self.charge_glows.len() >= MAX_REMOTE_CHARGE_GLOW_LIGHTS {
+                break;
+            }
+            let Some((_, p, _)) = players.iter().find(|(p, _, _)| p == id) else {
+                continue;
+            };
+            self.charge_glows.push(DynamicLight {
+                position: Vec3::new(p.x as f32, (p.y + 30.0) as f32, p.z as f32),
+                diffuse: color * pulse as f32,
+                specular: color * pulse as f32,
+                range: 60.0,
+            });
+        }
+    }
+
     pub fn set_local_player(&mut self, id: Option<&str>, yaw: f64) {
         self.local_player = id.map(|id| (id.to_owned(), yaw));
     }
@@ -1545,6 +1577,18 @@ impl MapRenderer {
         let now = self.effect_time;
         self.explosions.update(now);
         for event in events {
+            // `weapon_charge` from someone else: the glow on them comes and
+            // goes with it (our own charge shows on the view model).
+            if let SnapshotEvent::WeaponCharge {
+                entity_id, charging, ..
+            } = event
+                && self.local_player.as_ref().is_none_or(|(id, _)| id != entity_id)
+            {
+                self.charging.retain(|id| id != entity_id);
+                if *charging {
+                    self.charging.push(entity_id.clone());
+                }
+            }
             if let SnapshotEvent::ProjectileImpact { def_id, at, normal } = event {
                 // Older demos name the weapon; anything else is a rocket.
                 let projectile = match def_id.as_str() {
@@ -1637,7 +1681,7 @@ impl MapRenderer {
         let aspect = size[0] / size[1];
         self.culling.update(camera, aspect);
         let lights: Vec<DynamicLight> = if self.dynamic_lights {
-            self.lights.lights().collect()
+            self.lights.lights().chain(self.charge_glows.iter().copied()).collect()
         } else {
             Vec::new()
         };
@@ -2456,6 +2500,8 @@ pub fn build_renderer(gpu: &Gpu, map: &mut LoadedMap, output_format: wgpu::Textu
         live_light_clock: 0.0,
         effect_time: 0.0,
         live_flashes: Vec::new(),
+        charging: Vec::new(),
+        charge_glows: Vec::new(),
         sky,
         fog,
         fog_serial: None,
