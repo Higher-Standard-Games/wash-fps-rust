@@ -1411,6 +1411,16 @@ pub fn toggle_fullscreen() {
     };
     let full = window.fullscreen().is_none();
     window.set_fullscreen(full.then_some(Fullscreen::Borderless(None)));
+    // The game remembers it for the next start; `washoi view` does not.
+    if KEEP_WINDOW.with(Cell::get) {
+        with_cvars(|c| c.set("vid_fullscreen", i32::from(full)));
+    }
+}
+
+/// The game's first window opens fullscreen unless the player left it
+/// windowed (`vid_fullscreen`, on by default).
+fn starts_fullscreen() -> bool {
+    with_cvars(|c| !c.exists("vid_fullscreen") || c.get_number("vid_fullscreen") != 0.0)
 }
 
 /// Every screen's handler, with one addition: when the system ends the
@@ -1643,6 +1653,11 @@ fn create_window(event_loop: &ActiveEventLoop) -> Result<Arc<Window>, String> {
     {
         use winit::platform::wayland::WindowAttributesExtWayland;
         attributes = WindowAttributesExtWayland::with_name(attributes, "net.washoi.Washoi", "washoi");
+    }
+    // The game (one window for every screen) starts as the player left it;
+    // `washoi view` and the tools open a window.
+    if PLACEMENT.with(Cell::get).is_none() && KEEP_WINDOW.with(Cell::get) && starts_fullscreen() {
+        attributes = attributes.with_fullscreen(Some(Fullscreen::Borderless(None)));
     }
     if let Some(last) = PLACEMENT.with(Cell::get) {
         attributes = attributes.with_inner_size(last.size).with_maximized(last.maximized);

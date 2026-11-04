@@ -1033,6 +1033,14 @@ pub fn register_client_cvars(cvars: &mut Cvars) {
         0,
         "Match clock counts up from 0:00 (time played) instead of down (time left)",
     );
+    // Native only: the game window starts borderless fullscreen, and
+    // Alt+Enter's choice is remembered here for the next start.
+    int_flag(
+        cvars,
+        "vid_fullscreen",
+        1,
+        "Start the game in borderless fullscreen (Alt+Enter switches and is remembered)",
+    );
     // SHAG core/FpsDisplaySettings.ts.
     int_flag(cvars, "show_fps", 1, "Show the FPS counter");
     // SHAG network/client/NetGraph.ts.

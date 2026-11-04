@@ -2706,6 +2706,10 @@ From the first play-through on the webview lobby build:
   Leave match; Escape again resumes. Settings shows the lobby page's
   in-match settings over the match (WEBVIEW_LOBBY.md 8). Not yet:
   Spectate, Join and Loadout.
+- **Fullscreen by default**: the game's window opens borderless
+  fullscreen; Alt+Enter flips it and `vid_fullscreen` (native only, in
+  `cvars.json`) remembers the choice for the next start. `washoi view`
+  and the tools still open a window.
 
 ### 0.1.1 released: skins, ammo counters, the end screen (November 3, 2026)
 
