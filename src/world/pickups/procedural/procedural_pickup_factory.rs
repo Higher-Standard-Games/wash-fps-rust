@@ -50,7 +50,8 @@ pub fn recipe_for_pickup(kind_type: PickupType, kind: &str) -> Option<&'static P
 
 /// The map's procedural pickups.
 pub struct ProceduralPickups {
-    visuals: Vec<(ProceduralPickupVisual, ModelHandle)>,
+    /// Each visual, its model and its pickup id.
+    visuals: Vec<(ProceduralPickupVisual, ModelHandle, u32)>,
     /// Icons that did not load, by path.
     pub missing_icons: Vec<String>,
 }
@@ -232,7 +233,11 @@ pub fn build_procedural_pickups(
             let model = upload_recipe(gpu, models, &set, &first, icon.as_ref());
             (set, model)
         });
-        visuals.push((ProceduralPickupVisual::new(recipe, set, position, entry.id), *model));
+        visuals.push((
+            ProceduralPickupVisual::new(recipe, set, position, entry.id),
+            *model,
+            entry.id,
+        ));
     }
     ProceduralPickups { visuals, missing_icons }
 }
@@ -251,8 +256,12 @@ impl ProceduralPickups {
 
     /// Every part's draw `elapsed` seconds after the visuals were built;
     /// `camera_rotation` turns camera axes into world axes, for billboards.
-    pub fn draws(&self, elapsed: f64, camera_rotation: DMat3, out: &mut Vec<ModelDraw>) {
-        for (visual, model) in &self.visuals {
+    /// Only the pickups `active` says are up are drawn (`setActive`).
+    pub fn draws(&self, elapsed: f64, camera_rotation: DMat3, active: impl Fn(u32) -> bool, out: &mut Vec<ModelDraw>) {
+        for (visual, model, id) in &self.visuals {
+            if !active(*id) {
+                continue;
+            }
             let pose = visual.pose(elapsed);
             for (i, part) in visual.parts.iter().enumerate() {
                 let mut draw = ModelDraw::new(*model, i, visual.part_world(part, &pose, camera_rotation).as_mat4());

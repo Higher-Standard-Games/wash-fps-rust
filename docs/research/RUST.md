@@ -2687,6 +2687,25 @@ entries below that name those files are history (WEBVIEW_LOBBY.md 16).
 
 Newest first. Each entry names the commits and what proves them.
 
+### After 0.1.1: muzzle flashes, server pickups, the Esc menu (November 4, 2026)
+
+From the first play-through on the webview lobby build:
+
+- **Muzzle flashes** (shagger 8ebda91): `presentFire`'s flash for the
+  viewed player's shots, at the gun's `tag_flash` seen through the weapon
+  camera (`getMuzzleWorldPosition`), riding the barrel while it fades; the
+  Voltaic keeps its own corona. Unit tests on the screen ray and the table.
+  Not yet: the blade tip's flash, the flash light on the gun, remote
+  players' flashes.
+- **Pickups follow the server** (`reconcileActiveSet`): the snapshot's
+  `pickupActiveMask` decides which map pickups are drawn, weapons and
+  procedural items alike, so taken and gametype-disabled items are gone.
+  Not yet: the procedural pickups' collect and respawn effects.
+- **The Esc menu** (`client/hud/widgets/pause_menu.rs`, `PauseMenu.ts`):
+  in play, Escape or a lost mouse frees the mouse and opens Resume and
+  Leave match; Escape again resumes. Not yet: Settings (in the webview
+  lobby), Spectate, Join and Loadout.
+
 ### 0.1.1 released: skins, ammo counters, the end screen (November 3, 2026)
 
 - **Normal and gloss maps** (shagger 5d9fff7): model materials sample

@@ -90,7 +90,7 @@ use washoi::client::game_events::{EffectTargets, GameAudio, play_remote_shots};
 use washoi::client::live_play::{LivePlay, PlayInput};
 use washoi::client::live_watch::LiveWatch;
 use washoi::client::match_state_manager::MatchStateManager;
-use washoi::client::weapon_view::{WeaponViewModel, quad_view_weapon_outline};
+use washoi::client::weapon_view::{WeaponViewModel, muzzle_flash, quad_view_weapon_outline};
 use washoi::shared::entities::definitions::projectiles::{PROJECTILES, projectile_def};
 use washoi::shared::net::snapshot_events::SnapshotEvent;
 
@@ -787,6 +787,11 @@ pub struct MapRenderer {
     pub model_draws: Vec<ModelDraw>,
     /// Health, armour, ammo and the quad, posed each frame.
     pub items: ProceduralPickups,
+    /// Each weapon pickup's id and its draws, at the head of `model_draws`.
+    weapon_pickup_spans: Vec<(u32, std::ops::Range<usize>)>,
+    /// The server's word on which pickups are up, by id
+    /// (`reconcileActiveSet`); a pickup it has not named is drawn.
+    pub pickup_active: Vec<bool>,
     /// Seconds since the items were built (`visualElapsed`).
     pub item_time: f64,
     /// This frame's draws.
@@ -936,6 +941,11 @@ pub fn shag_image_processing() -> ImageProcessingConfiguration {
     }
 }
 
+/// A pickup the server has not named is there (the map's own state).
+fn pickup_shown(active: &[bool], id: u32) -> bool {
+    active.get(id as usize).copied().unwrap_or(true)
+}
+
 /// The weapons a player can hold (`WeaponsTable`'s ids).
 const HELD_WEAPONS: [&str; 8] = [
     "blade",
@@ -981,6 +991,18 @@ impl MapRenderer {
                 self.switch_anim.reset();
                 self.hold_now(id);
             }
+        }
+    }
+
+    /// `presentFire`'s muzzle flash for the weapon in hand, at its muzzle
+    /// under `camera`.
+    pub fn fire_view_muzzle_flash(&mut self, camera: &Camera) {
+        let Some(view_model) = &self.view_model else {
+            return;
+        };
+        let position = view_model.muzzle_world_position(camera, 5.0);
+        if let Some(flash) = muzzle_flash(&view_model.view.weapon, position) {
+            self.hitscan.fire_muzzle_flash(self.effect_time, &flash);
         }
     }
 
@@ -1657,7 +1679,16 @@ impl MapRenderer {
             soft,
         );
         self.world.prepare(gpu, camera.view_projection(aspect), camera.position);
-        self.frame_draws.clone_from(&self.model_draws);
+        // The weapon pickups lead `model_draws`; the taken ones stay out.
+        self.frame_draws.clear();
+        let mut next = 0;
+        for (id, span) in &self.weapon_pickup_spans {
+            if !pickup_shown(&self.pickup_active, *id) {
+                self.frame_draws.extend_from_slice(&self.model_draws[next..span.start]);
+                next = span.end;
+            }
+        }
+        self.frame_draws.extend_from_slice(&self.model_draws[next..]);
         self.frame_draws.extend_from_slice(&self.live_draws);
         self.gib_renderer.draws(&self.gibs, &mut self.frame_draws);
         // The ragdolls' palettes go after the frame's, and leave with it.
@@ -1668,9 +1699,11 @@ impl MapRenderer {
             self.ragdoll_trails
                 .draws(gpu, &mut self.models, ragdolls, &mut self.frame_draws);
         }
+        let active = &self.pickup_active;
         self.items.draws(
             self.item_time,
             camera_rotation(camera.view().as_dmat4()),
+            |id| pickup_shown(active, id),
             &mut self.frame_draws,
         );
         for (model, world) in &self.projectiles {
@@ -1718,6 +1751,12 @@ impl MapRenderer {
             fog: uniforms,
         };
         self.hitscan.streaks.prepare(gpu, &frame);
+        // The muzzle flashes ride the live barrel (`setMuzzleAnchorResolver`).
+        if let Some(view_model) = &self.view_model {
+            self.hitscan
+                .muzzle_flashes
+                .track_anchor(view_model.muzzle_world_position(camera, 5.0));
+        }
         self.hitscan.muzzle_flashes.prepare(gpu, &frame);
         self.hitscan.impact_sparks.prepare(gpu, &frame);
         self.hitscan.rails.prepare(gpu, &frame);
@@ -2071,6 +2110,7 @@ pub fn build_renderer(gpu: &Gpu, map: &mut LoadedMap, output_format: wgpu::Textu
         eprintln!("pickup model: {failure}");
     }
     let mut model_draws = pickups.draws;
+    let weapon_pickup_spans = pickups.spans;
     let items = build_procedural_pickups(gpu, &mut map.pk3, &mut models, &map.pickups);
     println!("items: {} procedural pickups", items.len());
     if !items.missing_icons.is_empty() {
@@ -2379,6 +2419,8 @@ pub fn build_renderer(gpu: &Gpu, map: &mut LoadedMap, output_format: wgpu::Textu
         models,
         model_draws,
         items,
+        weapon_pickup_spans,
+        pickup_active: Vec::new(),
         item_time: 0.0,
         frame_draws: Vec::new(),
         static_joints: joints.len(),
@@ -2752,6 +2794,7 @@ pub fn start(o: &ViewOptions) -> Result<i32, String> {
             renderer.set_live_players(&drawn, 1.0 / 60.0, 1.0 / 60.0);
             renderer.set_live_projectiles(&projectiles, 1.0 / 60.0);
             renderer.play_effects(&view.effects, &view.weapons, 1.0 / 60.0);
+            renderer.pickup_active.clone_from(&view.pickup_active);
             renderer.play_gibs(&view.effects, 1.0 / 60.0);
             renderer.play_hit_feedback(
                 &view.effects,

@@ -9,13 +9,14 @@ use shagger::core::cvar::with_cvars;
 use shagger::loader::model::gltf_model::GltfModel;
 use shagger::loader::pk3::pk3_loader::Pk3Loader;
 use shagger::rendering::camera::Camera;
-use shagger::rendering::glam::{DVec3, Mat4};
+use shagger::rendering::glam::{DVec3, Mat4, Vec3};
 use shagger::rendering::gpu::Gpu;
 use shagger::rendering::model_renderer::{ModelDraw, ModelHandle, ModelMaterialMode, ModelRenderer, Outline};
 use shagger::rendering::wgpu;
 use shagger::shared::js::js_round;
 use shagger::ui::font::Font;
 use shagger::weapon::ammo_counter_display::{AmmoCounterDisplay, AmmoCounterTuning, parse_ammo_counter};
+use shagger::weapon::muzzle::muzzle_flash_renderer::{MuzzleFlashSpawn, MuzzleFlashStyle};
 use shagger::weapon::weapon_view_manager::{
     ShotStyle, ViewModelDef, WEAPON_CAMERA_MAX_Z, WEAPON_CAMERA_MIN_Z, WEAPON_OUTLINE_WIDTH, WeaponView, blade_light,
     view_material_mode, weapon_light, weapon_outline,
@@ -67,6 +68,41 @@ pub fn shot_style(weapon: &str) -> ShotStyle {
     }
 }
 
+/// A weapon definition's `muzzleFlash` (wash-fps
+/// `shared/entities/definitions/weapons/*.ts`), spawned at `position`.
+/// `None` for the Voltaic: a beam weapon, whose renderer draws its own
+/// muzzle corona (`presentFire`).
+#[must_use]
+pub fn muzzle_flash(weapon: &str, position: DVec3) -> Option<MuzzleFlashSpawn> {
+    use MuzzleFlashStyle::{Arcs, Burst, Plume};
+    let (color, duration, style, scale) = match weapon {
+        "blade" => ([0.05, 1.0, 0.9], 0.16, Burst, None),
+        "electrobolt" => ([0.3, 0.5, 1.0], 0.12, Arcs, Some(2.3)),
+        "glauncher" => ([0.6, 1.0, 0.3], 0.15, Plume, Some(2.2)),
+        "machinegun" => ([1.0, 0.9, 0.3], 0.075, Burst, None),
+        "plasmagun" => ([0.3, 1.0, 0.3], 0.09, Burst, Some(1.4)),
+        "riotgun" => ([1.0, 0.7, 0.2], 0.14, Plume, Some(1.4)),
+        "rlauncher" => ([1.0, 0.5, 0.1], 0.16, Plume, Some(2.4)),
+        _ => return None,
+    };
+    let intensity = match weapon {
+        "blade" | "riotgun" => 25.0,
+        "electrobolt" => 35.0,
+        "glauncher" => 22.0,
+        "machinegun" => 18.0,
+        "plasmagun" => 20.0,
+        _ => 30.0,
+    };
+    Some(MuzzleFlashSpawn {
+        position,
+        color: Vec3::from_array(color),
+        style,
+        scale,
+        intensity: Some(intensity),
+        duration: Some(duration),
+    })
+}
+
 /// `DEFAULT_PHYSICS_TICK_RATE`.
 const TICK_RATE: f64 = 125.0;
 
@@ -98,6 +134,9 @@ pub struct WeaponViewModel {
     counter: Option<(AmmoCounterDisplay, Mat4)>,
     /// `setAmmoCount`: the clip the counter shows.
     pub ammo: f64,
+    /// `muzzleSocket`: the model's `tag_flash` (or `tag_muzzle`), in the
+    /// glTF scene's space.
+    muzzle: Option<Vec3>,
 }
 
 /// `FPSPlayer`'s quad outline on the gun: the quad colour, its width
@@ -134,9 +173,16 @@ impl WeaponViewModel {
             let display = AmmoCounterDisplay::new(gpu, &mut renderer, config, &font);
             Some((display, Mat4::from_rotation_translation(tag.rotation, tag.position)))
         });
+        // `findWeaponTag(glbRoot, ["tag_flash", "tag_muzzle", "muzzle"])`;
+        // only `tag_` nodes are attachment points.
+        let muzzle = ["tag_flash", "tag_muzzle"]
+            .iter()
+            .find_map(|tag| model.attachment_points.get(*tag))
+            .map(|tag| tag.position);
         Ok(Self {
             renderer,
             view: WeaponView::new(name, Some(view_model_def(weapon))),
+            muzzle,
             handle,
             model,
             draws: Vec::new(),
@@ -202,6 +248,14 @@ impl WeaponViewModel {
             .prepare(gpu, view_proj, camera.position, &self.draws, &[] as &[Mat4]);
     }
 
+    /// `getMuzzleWorldPosition(distance)` under `camera`: on the screen
+    /// ray through the muzzle tag, `distance` units out.
+    #[must_use]
+    pub fn muzzle_world_position(&self, camera: &Camera, distance: f64) -> DVec3 {
+        self.view
+            .muzzle_world_position(camera.view().inverse(), camera.fov_y, self.muzzle, distance)
+    }
+
     /// Records the weapon into a pass whose depth was cleared.
     pub fn draw(&self, pass: &mut wgpu::RenderPass<'_>) {
         self.renderer.draw_opaque(pass);
@@ -212,6 +266,21 @@ impl WeaponViewModel {
 #[cfg(test)]
 mod shot_tests {
     use super::*;
+
+    #[test]
+    fn each_gun_has_its_flash_but_the_beam() {
+        let at = DVec3::new(1.0, 2.0, 3.0);
+        let mg = muzzle_flash("machinegun", at).unwrap();
+        assert_eq!(mg.position, at);
+        assert_eq!(mg.duration, Some(0.075));
+        assert_eq!(mg.style, MuzzleFlashStyle::Burst);
+        let rl = muzzle_flash("rlauncher", at).unwrap();
+        assert_eq!(
+            (rl.style, rl.scale, rl.intensity),
+            (MuzzleFlashStyle::Plume, Some(2.4), Some(30.0))
+        );
+        assert!(muzzle_flash("voltaic", at).is_none());
+    }
 
     #[test]
     fn refire_follows_the_tick_rate() {

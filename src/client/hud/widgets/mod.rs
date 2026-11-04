@@ -8,6 +8,7 @@ pub mod event_feed;
 pub mod frag_counter;
 pub mod frag_message;
 pub mod gametype_badge;
+pub mod pause_menu;
 pub mod phase_message;
 pub mod pickup_toast;
 pub mod powerup_timer;

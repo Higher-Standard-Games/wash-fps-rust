@@ -64,6 +64,7 @@ use washoi::client::demo_playback_keys::{DemoKeyAction, DemoKeyContext, Modifier
 use washoi::client::demo_service::analysis_report;
 use washoi::client::first_person_view::{BodyFrame, FirstPersonView, ViewKeys, ViewOffset};
 use washoi::client::game_events::GameAudio;
+use washoi::client::hud::widgets::pause_menu::{PauseMenu, PauseMenuAction};
 use washoi::client::teleport_effect::TeamColor;
 use washoi::client::washoi_style::install_style;
 use washoi::client::weapon_view::{clip_reload_time, quad_view_weapon_outline, shot_style};
@@ -143,6 +144,8 @@ struct App {
     console: GameConsole,
     /// A command asked to leave (`quit`, `disconnect`).
     leave: bool,
+    /// The Esc menu over a match we play in (`FPSPauseMenu`).
+    pause_menu: PauseMenu,
     /// A demo's highlight reel, driving the demo and the camera.
     reel: Option<CinematicDemoPlayer>,
     overlay: ReelOverlay,
@@ -255,6 +258,46 @@ impl App {
                     event,
                     WindowEvent::KeyboardInput { .. } | WindowEvent::MouseInput { .. } | WindowEvent::MouseWheel { .. }
                 ))
+    }
+
+    /// Playing in a match, before its post-game (where the board shows
+    /// the way home, and `showMatchMenu` stays away).
+    fn in_play(&self) -> bool {
+        matches!(self.feed, Some(Feed::Play(..))) && !self.opened_up
+    }
+
+    /// Escape in play: the mouse goes and the menu comes up; with the menu
+    /// up, Escape resumes (`FPSHud`'s `pointerlockchange`, `MatchInputBindings`).
+    /// While the menu is up the keys are its, not the game's.
+    fn pause_menu_key(&mut self, code: KeyCode, event: &winit::event::KeyEvent) -> bool {
+        if !self.in_play() {
+            self.pause_menu.close();
+            return false;
+        }
+        if code == KeyCode::Escape {
+            if event.state == ElementState::Pressed && !event.repeat {
+                if self.pause_menu.open {
+                    self.pause_menu_action(PauseMenuAction::Resume);
+                } else {
+                    self.set_captured(false);
+                    self.pause_menu.open();
+                }
+            }
+            return true;
+        }
+        self.pause_menu.open && event.state == ElementState::Pressed
+    }
+
+    /// A key on the Esc menu.
+    fn pause_menu_action(&mut self, action: PauseMenuAction) {
+        self.pause_menu.close();
+        match action {
+            PauseMenuAction::Resume => self.set_captured(true),
+            PauseMenuAction::Leave => {
+                println!("lobby: back to the lobby");
+                self.leave = true;
+            }
+        }
     }
 
     fn set_captured(&mut self, captured: bool) {
@@ -609,6 +652,7 @@ impl App {
             }
             s.renderer.set_live_projectiles(&view.projectiles, effect_dt);
             s.renderer.play_effects(&view.effects, &view.weapons, effect_dt);
+            s.renderer.pickup_active.clone_from(&view.pickup_active);
             let local = match feed {
                 Feed::Play(..) => feed.local_entity(),
                 _ => None,
@@ -650,6 +694,7 @@ impl App {
                                 let style = shot_style(canonical_weapon_id(weapon_id));
                                 view_model.view.present_fire(&style, false);
                             }
+                            s.renderer.fire_view_muzzle_flash(&self.camera);
                         }
                         SnapshotEvent::WeaponState {
                             entity_id,
@@ -861,6 +906,26 @@ impl App {
             .and_then(|i| self.drawn.get(i))
             .map(|(id, _, _)| id.as_str());
         let mut demo_action = None;
+        let mut menu_action = None;
+        let pause_menu = &self.pause_menu;
+        let (kicker, player) = match feed {
+            Some(Feed::Play(p, _)) if pause_menu.open => {
+                let state = p.match_state();
+                let kicker = [state.gametype_name(), p.map.as_str()]
+                    .into_iter()
+                    .filter(|s| !s.is_empty())
+                    .collect::<Vec<_>>()
+                    .join(" · ");
+                let player = p
+                    .roster()
+                    .iter()
+                    .find(|(id, _)| *id == p.player_id)
+                    .map(|(_, s)| s.name.clone())
+                    .unwrap_or_default();
+                (kicker, player)
+            }
+            _ => (String::new(), String::new()),
+        };
         let demo_hud = self.demo_hud.as_ref().filter(|_| cards);
         let ui = s.egui.run(&s.window, |ui| {
             if let (Some(reel), Some(Feed::Demo(demo)), true) = (reel, feed, cards) {
@@ -875,6 +940,7 @@ impl App {
                 });
                 demo_action = hud.ui(ui.ctx(), demo, followed.map(|id| (id, name.unwrap_or(id))));
             }
+            menu_action = pause_menu.ui(ui.ctx(), &kicker, &player);
             console.ui(ui.ctx());
         });
         s.egui
@@ -894,6 +960,9 @@ impl App {
             b.end_frame(&s.gpu);
         }
         self.frames += 1;
+        if let Some(action) = menu_action {
+            self.pause_menu_action(action);
+        }
         if let (Some(action), Some(Feed::Demo(demo))) = (demo_action, &mut self.feed) {
             match action {
                 DemoOverlayAction::TogglePause => demo.toggle_play_pause(),
@@ -1123,6 +1192,9 @@ impl ApplicationHandler for App {
                 if self.chat_key(code, &event) {
                     return;
                 }
+                if self.pause_menu_key(code, &event) {
+                    return;
+                }
                 with_input(|i| match event.state {
                     ElementState::Pressed => i.key_down(&dom_code(code)),
                     ElementState::Released => i.key_up(&dom_code(code)),
@@ -1184,7 +1256,7 @@ impl ApplicationHandler for App {
                 if home {
                     println!("lobby: back to the lobby");
                     event_loop.exit();
-                } else if !self.captured && state == ElementState::Pressed && !self.opened_up {
+                } else if !self.captured && state == ElementState::Pressed && !self.opened_up && !self.pause_menu.open {
                     self.set_captured(true);
                 } else {
                     self.firing = state == ElementState::Pressed;
@@ -1204,6 +1276,10 @@ impl ApplicationHandler for App {
                 self.held.clear();
                 self.firing = false;
                 with_input(InputSystem::release_held_input);
+                // The mouse lost in play brings the menu up (`pointerlockchange`).
+                if self.captured && self.in_play() {
+                    self.pause_menu.open();
+                }
                 self.set_captured(false);
             }
             WindowEvent::RedrawRequested => {
@@ -1630,6 +1706,7 @@ pub fn run(
         death_follow: None,
         audio,
         leave: false,
+        pause_menu: PauseMenu::default(),
         reel,
         overlay: ReelOverlay::default(),
         demo_hud: None,

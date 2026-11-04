@@ -7,9 +7,10 @@
 //! it), with `_glow` layers drawn as added light. Its barrels
 //! (`_loadBarrels`) hang on the weapon's barrel mount, kept whole.
 //!
-//! Health, armour, ammo and powerups draw as procedural visuals in wash-fps;
-//! they are not drawn here yet. Every pickup is drawn, as if all were
-//! available.
+//! Health, armour, ammo and powerups draw as procedural visuals
+//! (`pickups/procedural`). Each pickup's draws are kept by its id, so the
+//! renderer leaves out the ones the server says are taken
+//! (`reconcileActiveSet`).
 
 use std::collections::HashMap;
 
@@ -47,6 +48,8 @@ pub fn directory(path: &str) -> &str {
 /// Every weapon pickup's draws, built once.
 pub struct WeaponPickups {
     pub draws: Vec<ModelDraw>,
+    /// Each pickup's id and its draws in [`Self::draws`], in order.
+    pub spans: Vec<(u32, std::ops::Range<usize>)>,
     /// Model paths that failed to load, with why.
     pub failures: Vec<String>,
 }
@@ -95,47 +98,63 @@ pub fn build_weapon_pickups(
     };
 
     let mut draws = Vec::new();
+    let mut spans = Vec::new();
     for entry in entries {
         if entry.kind_type != PickupType::Weapon {
             continue;
         }
-        let Some(def) = weapon_model(entry.kind) else { continue };
-        let Some((handle, model)) = load(def.model_path, false, models, pk3) else {
-            continue;
-        };
-        let position = Vec3::new(
-            entry.position.x as f32,
-            entry.position.y as f32,
-            entry.position.z as f32,
-        );
-        let leader = leader_matrix(position, map_weapon_yaw(entry.id) as f32, pickup_scale(Some(def.scale)));
-        for (primitive, world) in flattened_pickup_matrices(&model, leader).into_iter().enumerate() {
-            draws.push(ModelDraw::new(handle, primitive, world));
-        }
-        let Some(first) = def.barrels.first() else { continue };
-        let tags = pk3
-            .get_file(&format!("{}tags.txt", directory(&package_path(first.model_path))))
-            .map(|bytes| parse_tags(&String::from_utf8_lossy(&bytes)))
-            .unwrap_or_default();
-        let mount = find_barrel_mount(&tags, &model.attachment_points);
-        for barrel in def.barrels {
-            let Some((barrel_handle, barrel_model)) = load(barrel.model_path, true, models, pk3) else {
-                continue;
-            };
-            let root = leader
-                * barrel_root_matrix(
-                    &mount,
-                    &BarrelDef {
-                        model_path: barrel.model_path.to_owned(),
-                        offset: barrel.offset.map(Vec3::from),
-                    },
-                );
-            for (primitive, p) in barrel_model.primitives.iter().enumerate() {
-                draws.push(ModelDraw::new(barrel_handle, primitive, root * p.node_matrix));
-            }
+        let first = draws.len();
+        add_weapon_pickup(entry, models, pk3, &mut load, &mut draws);
+        if draws.len() > first {
+            spans.push((entry.id, first..draws.len()));
         }
     }
-    WeaponPickups { draws, failures }
+    WeaponPickups { draws, spans, failures }
+}
+
+/// One weapon pickup's model and barrels.
+fn add_weapon_pickup(
+    entry: &PickupEntry,
+    models: &mut ModelRenderer,
+    pk3: &mut Pk3Loader,
+    load: &mut impl FnMut(&str, bool, &mut ModelRenderer, &mut Pk3Loader) -> Option<(ModelHandle, GltfModel)>,
+    draws: &mut Vec<ModelDraw>,
+) {
+    let Some(def) = weapon_model(entry.kind) else { return };
+    let Some((handle, model)) = load(def.model_path, false, models, pk3) else {
+        return;
+    };
+    let position = Vec3::new(
+        entry.position.x as f32,
+        entry.position.y as f32,
+        entry.position.z as f32,
+    );
+    let leader = leader_matrix(position, map_weapon_yaw(entry.id) as f32, pickup_scale(Some(def.scale)));
+    for (primitive, world) in flattened_pickup_matrices(&model, leader).into_iter().enumerate() {
+        draws.push(ModelDraw::new(handle, primitive, world));
+    }
+    let Some(first) = def.barrels.first() else { return };
+    let tags = pk3
+        .get_file(&format!("{}tags.txt", directory(&package_path(first.model_path))))
+        .map(|bytes| parse_tags(&String::from_utf8_lossy(&bytes)))
+        .unwrap_or_default();
+    let mount = find_barrel_mount(&tags, &model.attachment_points);
+    for barrel in def.barrels {
+        let Some((barrel_handle, barrel_model)) = load(barrel.model_path, true, models, pk3) else {
+            continue;
+        };
+        let root = leader
+            * barrel_root_matrix(
+                &mount,
+                &BarrelDef {
+                    model_path: barrel.model_path.to_owned(),
+                    offset: barrel.offset.map(Vec3::from),
+                },
+            );
+        for (primitive, p) in barrel_model.primitives.iter().enumerate() {
+            draws.push(ModelDraw::new(barrel_handle, primitive, root * p.node_matrix));
+        }
+    }
 }
 
 #[cfg(test)]

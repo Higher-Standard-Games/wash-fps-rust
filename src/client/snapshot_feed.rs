@@ -41,6 +41,9 @@ pub struct DemoView {
     /// The players of every snapshot that arrived since the last frame, as
     /// sent (`processFPSMovementAudio` reads them).
     pub snapshots: Vec<HashMap<String, EntitySnapshot>>,
+    /// Which map pickups are there to take, by pickup id: the server's
+    /// `pickupActiveMask` as the snapshots so far tell it.
+    pub pickup_active: Vec<bool>,
 }
 
 /// `PROJECTILE_FORGET_TICKS`: 11 seconds at `DEFAULT_PHYSICS_TICK_RATE` (125).
@@ -68,6 +71,18 @@ pub struct SnapshotFeed {
     effects: Vec<SnapshotEvent>,
     weapons: HashMap<String, String>,
     snapshots: Vec<HashMap<String, EntitySnapshot>>,
+    /// `FPSPickup.reconcileActiveSet`'s pickups, by id.
+    pickup_active: Vec<bool>,
+}
+
+/// `FPSPickup.reconcileActiveSet`: each pickup the mask names takes its
+/// state; an empty mask (none sent) changes nothing, and a pickup past
+/// its end keeps its own.
+pub fn reconcile_active_set(active: &mut Vec<bool>, mask: &[bool]) {
+    if active.len() < mask.len() {
+        active.resize(mask.len(), true);
+    }
+    active[..mask.len()].copy_from_slice(mask);
 }
 
 impl SnapshotFeed {
@@ -80,6 +95,9 @@ impl SnapshotFeed {
     /// local player's own body is left out.
     pub fn push(&mut self, now: f64, state: &GameState<SnapshotEvent>, local_entity_id: &str) {
         apply_roster(&mut self.teams, state, local_entity_id);
+        // Every snapshot: the convergent source of truth for which pickups
+        // are up, so a dropped snapshot heals on the next one.
+        reconcile_active_set(&mut self.pickup_active, &state.pickup_active_mask);
         self.roster = state.players.iter().map(|(k, p)| (k.to_owned(), p.clone())).collect();
         let entities = extract_entities(state, local_entity_id);
         // The sounds hear every player, our own footsteps too
@@ -165,6 +183,7 @@ impl SnapshotFeed {
             weapons: self.weapons.clone(),
             teams: self.teams.clone(),
             snapshots: std::mem::take(&mut self.snapshots),
+            pickup_active: self.pickup_active.clone(),
         }
     }
 }
@@ -205,4 +224,28 @@ fn extract_projectiles(state: &GameState<SnapshotEvent>) -> HashMap<String, Enti
         );
     }
     out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_mask_decides_which_pickups_are_up() {
+        let mut active = Vec::new();
+        // No mask yet: nothing known, every pickup drawn.
+        reconcile_active_set(&mut active, &[]);
+        assert!(active.is_empty());
+        reconcile_active_set(&mut active, &[true, false, true]);
+        assert_eq!(active, [true, false, true]);
+        // An empty mask leaves the last one standing.
+        reconcile_active_set(&mut active, &[]);
+        assert_eq!(active, [true, false, true]);
+        // Taken and back.
+        reconcile_active_set(&mut active, &[false, true, true]);
+        assert_eq!(active, [false, true, true]);
+        // A shorter mask leaves the pickups past its end as they were.
+        reconcile_active_set(&mut active, &[true]);
+        assert_eq!(active, [true, true, true]);
+    }
 }
