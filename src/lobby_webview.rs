@@ -23,6 +23,7 @@ use shagger::rendering::gpu::Gpu;
 use shagger::rendering::wgpu;
 use shagger::ui::egui_layer::{EguiLayer, egui};
 use shagger::webview::{HostEvent, WebviewConfig, WebviewHost, open_external, origin_of};
+use washoi::client::demo_download::{DemoDownload, DemoDownloadState};
 use washoi::client::lobby_panel::LobbyChoice;
 use winit::application::ApplicationHandler;
 use winit::event::WindowEvent;
@@ -35,7 +36,7 @@ use crate::window::{OpenWindow, next_frame, open_window, present, run_on_event_l
 pub const BRIDGE_VERSION: u32 = 1;
 
 /// What the client offers the page, for `hello`.
-const CAPABILITIES: [&str; 5] = ["match", "external", "fullscreen", "quit", "storage"];
+const CAPABILITIES: [&str; 6] = ["match", "external", "fullscreen", "quit", "storage", "demo"];
 
 /// How long the page has to say hello before the screen gives up on it.
 const HELLO_TIMEOUT: Duration = Duration::from_secs(30);
@@ -66,12 +67,16 @@ thread_local! {
 pub struct AfterMatch {
     /// Why it did not start or broke off; `None` when the player went back.
     pub error: Option<String>,
+    /// It was a recording from the Demos page, not a match: the page is
+    /// shown again as it was (`demo:ended`), not reloaded.
+    pub demo: bool,
 }
 
 /// What the lobby decided.
 #[derive(Debug)]
 pub enum LobbyOutcome {
     Quit,
+    /// A match, or a recording (`demo` set) the page asked for.
     Match(LobbyChoice),
 }
 
@@ -144,6 +149,11 @@ enum Action {
     Match(Box<LobbyChoice>, Value),
     /// `storage:set`: a mirrored key and its new value (`None`: removed).
     Storage(String, Option<String>),
+    /// `demo:play`: the request, where recordings are served, the file and
+    /// the reel length.
+    Demo(Value, String, String, Option<f64>),
+    /// `demo:cancel`.
+    CancelDemo,
     Nothing,
 }
 
@@ -162,6 +172,18 @@ fn act(message: &Value) -> Action {
         "open:external" => text(message, "url").map_or(Action::Nothing, Action::External),
         "app:quit" => Action::Quit,
         "window:fullscreen" => Action::Fullscreen,
+        "demo:play" => match (text(message, "base"), text(message, "filename")) {
+            (Some(base), Some(file)) if base.starts_with("https://") || base.starts_with("http://") => {
+                let reel = message.get("reel").and_then(Value::as_f64).filter(|m| *m > 0.0);
+                Action::Demo(message.clone(), base.trim_end_matches('/').to_owned(), file, reel)
+            }
+            _ => Action::Reply(reply(
+                message,
+                "error",
+                json!({"code": "bad_request", "message": "demo:play needs an http(s) base and a filename"}),
+            )),
+        },
+        "demo:cancel" => Action::CancelDemo,
         "storage:set" => match (text(message, "key"), message.get("value")) {
             (Some(key), Some(Value::String(v))) => Action::Storage(key, Some(v.clone())),
             (Some(key), Some(Value::Null) | None) => Action::Storage(key, None),
@@ -188,9 +210,17 @@ struct Open {
     layer: EguiLayer,
 }
 
+/// A recording the page asked for, downloading.
+struct PendingDemo {
+    request: Value,
+    download: DemoDownload,
+    reel: Option<f64>,
+}
+
 struct LobbyApp {
     url: String,
     mirror: StorageMirror,
+    demo: Option<PendingDemo>,
     after: Option<AfterMatch>,
     open: Option<Open>,
     outcome: Option<LobbyOutcome>,
@@ -258,6 +288,23 @@ impl LobbyApp {
                                 eprintln!("lobby: not keeping {key}");
                             }
                         }
+                        Action::Demo(request, base, file, reel) => {
+                            if let Some(old) = self.demo.take() {
+                                Self::refuse(&old.request, "cancelled", "Another recording was picked.");
+                            }
+                            let download = DemoDownload::start(&base, &file);
+                            self.demo = Some(PendingDemo {
+                                request,
+                                download,
+                                reel,
+                            });
+                        }
+                        Action::CancelDemo => {
+                            if let Some(mut old) = self.demo.take() {
+                                old.download.cancel();
+                                Self::refuse(&old.request, "cancelled", "Cancelled.");
+                            }
+                        }
                         Action::Match(choice, answer) => {
                             BEFORE_MATCH.with(|b| *b.borrow_mut() = Some(self.mirror.snapshot()));
                             Self::with_host(|h| {
@@ -277,10 +324,56 @@ impl LobbyApp {
                 HostEvent::Malformed(text) => eprintln!("lobby: page sent {text}"),
             }
         }
+        if self.poll_demo(event_loop) {
+            return;
+        }
         if !GREETED.with(Cell::get) && self.problem.is_none() && self.waiting_since.elapsed() > HELLO_TIMEOUT {
             self.problem = Some(format!("The lobby at {} did not start.", self.url));
             Self::with_host(WebviewHost::hide);
         }
+    }
+
+    fn refuse(request: &Value, code: &str, message: &str) {
+        let answer = reply(request, "error", json!({"code": code, "message": message}));
+        Self::with_host(|h| h.send(&answer));
+    }
+
+    /// The page's recording: true once it is in and the screen hands it on.
+    fn poll_demo(&mut self, event_loop: &ActiveEventLoop) -> bool {
+        let Some(pending) = &mut self.demo else {
+            return false;
+        };
+        pending.download.poll();
+        let path = match &pending.download.state {
+            DemoDownloadState::Loading { .. } => return false,
+            DemoDownloadState::Failed(why) => {
+                let why = why.clone();
+                if let Some(p) = self.demo.take() {
+                    Self::refuse(&p.request, "download_failed", &why);
+                }
+                return false;
+            }
+            DemoDownloadState::Ready(path) => path.clone(),
+        };
+        let Some(p) = self.demo.take() else { return false };
+        BEFORE_MATCH.with(|b| *b.borrow_mut() = Some(self.mirror.snapshot()));
+        Self::with_host(|h| {
+            h.send(&reply(&p.request, "ok", json!({})));
+            h.send(&json!({"v": BRIDGE_VERSION, "type": "demo:started"}));
+            h.hide();
+        });
+        self.outcome = Some(LobbyOutcome::Match(LobbyChoice {
+            server_url: String::new(),
+            map: path.display().to_string(),
+            admission_ticket: None,
+            name: String::new(),
+            play: false,
+            demo: Some(path),
+            reel: p.reel,
+            team: None,
+        }));
+        event_loop.exit();
+        true
     }
 
     fn retry(&mut self) {
@@ -438,7 +531,8 @@ impl ApplicationHandler for LobbyApp {
                     });
                 }
             }
-            let mut ended = json!({"v": BRIDGE_VERSION, "type": "match:ended", "reason": "returned"});
+            let kind = if after.demo { "demo:ended" } else { "match:ended" };
+            let mut ended = json!({"v": BRIDGE_VERSION, "type": kind, "reason": "returned"});
             if let Some(why) = after.error {
                 ended["reason"] = "disconnected".into();
                 ended["message"] = why.into();
@@ -495,6 +589,7 @@ pub fn run(url: &str, mirror: &StorageMirror, after: Option<AfterMatch>) -> Resu
     let mut app = LobbyApp {
         url: url.to_owned(),
         mirror: mirror.clone(),
+        demo: None,
         after,
         open: None,
         outcome: None,
@@ -574,7 +669,7 @@ mod tests {
             panic!("played without a ticket");
         };
         assert_eq!(no["code"], "bad_request");
-        let Action::Reply(unknown) = act(&json!({"v": 1, "type": "demo:play", "id": "r6"})) else {
+        let Action::Reply(unknown) = act(&json!({"v": 1, "type": "file:save", "id": "r6"})) else {
             panic!("unknown accepted");
         };
         assert_eq!(unknown["code"], "unknown_type");
@@ -582,6 +677,24 @@ mod tests {
         assert!(matches!(
             act(&json!({"v": 1, "type": "storage:set", "value": "x"})),
             Action::Nothing
+        ));
+    }
+
+    #[test]
+    fn a_demo_request_names_its_file_and_reel() {
+        let play = json!({"v": 1, "type": "demo:play", "id": "r7", "filename": "a.shagdemo",
+            "base": "https://eu.washoi.net/data/demos/", "reel": 2});
+        let Action::Demo(_, base, file, reel) = act(&play) else {
+            panic!("no demo")
+        };
+        assert_eq!(base, "https://eu.washoi.net/data/demos");
+        assert_eq!(file, "a.shagdemo");
+        assert_eq!(reel, Some(2.0));
+        let local = json!({"v": 1, "type": "demo:play", "id": "r8", "filename": "a", "base": "file:///etc"});
+        assert!(matches!(act(&local), Action::Reply(r) if r["code"] == "bad_request"));
+        assert!(matches!(
+            act(&json!({"v": 1, "type": "demo:cancel"})),
+            Action::CancelDemo
         ));
     }
 

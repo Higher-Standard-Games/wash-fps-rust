@@ -627,16 +627,27 @@ fn lobby_mode(lobby: &str, o: &Options) -> i32 {
         match lobby_webview::run(&page, &mirror, after.take()) {
             Ok(lobby_webview::LobbyOutcome::Quit) => return 0,
             Ok(lobby_webview::LobbyOutcome::Match(c)) => {
-                let how = if c.play { "play" } else { "watch" };
-                println!("lobby: {how} at {}", c.server_url);
-                let watch = Some((c.server_url.clone(), c.name.clone(), c.admission_ticket.clone()));
-                let mut v = view_options(o, c.server_url.clone(), None, watch, c.play);
-                v.team.clone_from(&c.team);
-                let error = view::start(&v).err();
+                let started = if let Some(demo) = &c.demo {
+                    println!("lobby: demo {}", demo.display());
+                    let mut v = view_options(o, c.map.clone(), Some(demo.clone()), None, false);
+                    v.reel = c.reel.or(o.reel);
+                    view::start(&v)
+                } else {
+                    let how = if c.play { "play" } else { "watch" };
+                    println!("lobby: {how} at {}", c.server_url);
+                    let watch = Some((c.server_url.clone(), c.name.clone(), c.admission_ticket.clone()));
+                    let mut v = view_options(o, c.server_url.clone(), None, watch, c.play);
+                    v.team.clone_from(&c.team);
+                    view::start(&v)
+                };
+                let error = started.err();
                 if let Some(why) = &error {
                     eprintln!("{why}");
                 }
-                after = Some(lobby_webview::AfterMatch { error });
+                after = Some(lobby_webview::AfterMatch {
+                    error,
+                    demo: c.demo.is_some(),
+                });
             }
             Err(e) => return fatal(&format!("lobby: {e}")),
         }
