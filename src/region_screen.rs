@@ -19,7 +19,7 @@ use shagger::rendering::offscreen::{OFFSCREEN_FORMAT, render_encoded_to_rgba};
 use shagger::rendering::wgpu;
 use shagger::ui::egui_layer::{EguiLayer, egui};
 use washoi::client::hud::washiki;
-use washoi::client::lobby_panel::{display_family, hsl, install_style};
+use washoi::client::washoi_style::{display_family, hsl, install_style};
 use washoi::regions::{self, Region, world_dots};
 use winit::application::ApplicationHandler;
 use winit::event::{ElementState, WindowEvent};

@@ -2678,6 +2678,11 @@ matches, demos, links, files and the window to the native client; native
 files are the store for settings and the key, mirrored into the page's local
 storage.
 
+On November 4, 2026 the egui lobby (`menu.rs`, `lobby_panel.rs`, the
+profile, leaderboard, demos and welcome views, the egui settings screen and
+`washoi menu`) was removed: the webview lobby replaces it, and the log
+entries below that name those files are history (WEBVIEW_LOBBY.md 16).
+
 ## 24. Progress log
 
 Newest first. Each entry names the commits and what proves them.

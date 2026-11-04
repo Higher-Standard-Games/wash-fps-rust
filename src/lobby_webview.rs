@@ -26,7 +26,6 @@ use shagger::webview::{
     HostEvent, WebviewConfig, WebviewHost, open_external, origin_of, safe_file_name, save_download,
 };
 use washoi::client::demo_download::{DemoDownload, DemoDownloadState};
-use washoi::client::lobby_panel::LobbyChoice;
 use winit::application::ApplicationHandler;
 use winit::event::WindowEvent;
 use winit::event_loop::ActiveEventLoop;
@@ -83,6 +82,25 @@ pub struct AfterMatch {
     /// It was a recording from the Demos page, not a match: the page is
     /// shown again as it was (`demo:ended`), not reloaded.
     pub demo: bool,
+}
+
+/// Where the lobby page sent this player.
+#[derive(Debug, Clone, PartialEq)]
+pub struct LobbyChoice {
+    pub server_url: String,
+    pub map: String,
+    pub admission_ticket: Option<String>,
+    /// The account's name, to join the game server as.
+    pub name: String,
+    /// True to play; false to watch.
+    pub play: bool,
+    /// A recording to play instead (the Demos page), saved on disk.
+    pub demo: Option<std::path::PathBuf>,
+    /// Its highlight reel instead, about this many minutes long.
+    pub reel: Option<f64>,
+    /// The side this player took in the room (`alpha` or `bravo`), for the
+    /// game server to honour on join; `None` in a mode without teams.
+    pub team: Option<String>,
 }
 
 /// What the lobby decided.

@@ -1,5 +1,4 @@
-//! wash-fps `client/settings`: the settings screen.
+//! wash-fps `client/settings`: the settings' cvars. The settings screen is
+//! the lobby page's own (docs/research/WEBVIEW_LOBBY.md 8).
 
-pub mod controls_page;
-pub mod fps_settings_view;
 pub mod settings_model;

@@ -4,7 +4,7 @@
 
 //! The native client binary. Run without arguments, it is the game: it
 //! brings the game data up to date (`data_sync_screen`), then opens the
-//! menu on the region's lobby. The modes below are the tools the port was
+//! region's lobby page (`lobby_webview`). The modes below are the tools the port was
 //! built with.
 //!
 //! ```text
@@ -16,7 +16,6 @@
 //! washoi watch <ws://game-server> [--name NAME] [--ticket TICKET] [--data DIR] [--screenshot FILE.png] [--time T] [--at X,Y,Z,YAW] [--follow N] [--seconds N]
 //! washoi play <ws://game-server> [--name NAME] [--ticket TICKET] [--data DIR] [--screenshot FILE.png] [--time T] [--say TEXT] [--seconds N]
 //! washoi connect <ws://game-server> [--name NAME] [--ticket TICKET] [--seconds N] [--play]
-//! washoi menu <ws://lobby> [--key-file FILE] [--cvars FILE] [--screenshot FILE.png [--quick | --tab PAGE | --settings PAGE | --console "CMD; CMD"] [--seconds N] [--size WxH]]
 //! washoi lobby <ws://lobby> [--key-file FILE] list
 //! washoi lobby <ws://lobby> [--key-file FILE] spectate [--window] [--seconds N]
 //! washoi lobby <ws://lobby> [--key-file FILE] queue <gametype> [--seconds N] [--play | --window]
@@ -80,7 +79,6 @@ mod bench;
 mod data_sync_screen;
 mod demo_overlay;
 mod lobby_webview;
-mod menu;
 mod reel_overlay;
 mod region_screen;
 mod view;
@@ -117,7 +115,6 @@ fn usage() -> ! {
          \x20      washoi watch <ws://game-server> [--name NAME] [--ticket TICKET] [--data DIR] [--screenshot FILE.png] [--time T] [--at X,Y,Z,YAW] [--follow N] [--seconds N]\n\
          \x20      washoi play <ws://game-server> [--name NAME] [--ticket TICKET] [--data DIR] [--screenshot FILE.png] [--time T] [--say TEXT] [--seconds N]\n\
          \x20      washoi connect <ws://game-server> [--name NAME] [--ticket TICKET] [--seconds N] [--play]\n\
-         \x20      washoi menu <ws://lobby> [--key-file FILE] [--cvars FILE] [--screenshot FILE.png [--quick | --tab PAGE | --settings PAGE | --console \"CMD; CMD\"] [--seconds N] [--size WxH]]\n\
          \x20      washoi lobby <ws://lobby> [--key-file FILE] list\n\
          \x20      washoi lobby <ws://lobby> [--key-file FILE] spectate [--window] [--seconds N]\n\
          \x20      washoi lobby <ws://lobby> [--key-file FILE] queue <gametype> [--seconds N] [--play | --window]\n\
@@ -158,14 +155,6 @@ struct Options {
     say: Option<String>,
     /// From the lobby into the window rather than headless (`--window`).
     window: bool,
-    /// The menu's screenshot presses Quick play (`--quick`).
-    quick: bool,
-    /// The menu's screenshot opens this settings page (`--settings`).
-    settings: Option<String>,
-    /// The menu's screenshot opens this rail page (`--tab`).
-    tab: Option<String>,
-    /// The menu's screenshot opens the console and runs these (`--console`).
-    console: Option<String>,
     /// The cvar file instead of `~/.config/washoi/cvars.json` (`--cvars`).
     cvars: Option<PathBuf>,
     /// The region whose lobby and data the game uses (`--region`).
@@ -215,10 +204,6 @@ fn parse_options(args: impl Iterator<Item = String>) -> Options {
             "--scoreboard" => o.scoreboard = true,
             "--say" => o.say = Some(value()),
             "--window" => o.window = true,
-            "--quick" => o.quick = true,
-            "--settings" => o.settings = Some(value()),
-            "--console" => o.console = Some(value()),
-            "--tab" => o.tab = Some(value()),
             "--cvars" => o.cvars = Some(PathBuf::from(value())),
             "--region" => o.region = Some(value()),
             "--offline" => o.offline = true,
@@ -489,7 +474,6 @@ fn main() {
                 }
             }
         }
-        "menu" => menu_mode(&url, &o),
         "view" | "demo" | "watch" | "play" => {
             let demo = (mode == "demo").then(|| PathBuf::from(&url));
             let watch = (mode == "watch" || mode == "play").then(|| {
@@ -510,7 +494,7 @@ fn main() {
 }
 
 /// The window's options from the command line.
-/// Where the menu keeps the account key when `--key-file` does not say: the
+/// Where the lobby keeps the account key when `--key-file` does not say: the
 /// browser keeps it in local storage, which outlives a session the same way.
 /// The region named by `--region`, else `WASHOI_REGION`.
 fn named_region(o: &Options) -> Option<String> {
@@ -565,7 +549,7 @@ fn game_data_dir(o: &Options) -> PathBuf {
 }
 
 /// The game as a player starts it: the data brought up to date, then the
-/// menu on the region's lobby, with the packages from that data.
+/// region's lobby page, with the packages from that data.
 fn game(mut o: Options) -> i32 {
     // One window for the session, the lobby page a child of it
     // (WEBVIEW_LOBBY.md 3); GTK first on Linux.
@@ -661,73 +645,6 @@ fn default_key_file() -> Option<PathBuf> {
 }
 
 use washoi::config_dir;
-
-fn menu_mode(url: &str, o: &Options) -> i32 {
-    let key_file = o.key_file.clone().or_else(default_key_file);
-    let go = |c: &washoi::client::lobby_panel::LobbyChoice| {
-        if let Some(demo) = &c.demo {
-            match c.reel {
-                Some(minutes) => println!("lobby: demo {} as a {minutes} min reel", demo.display()),
-                None => println!("lobby: demo {}", demo.display()),
-            }
-            return;
-        }
-        let how = if c.play { "play" } else { "watch" };
-        println!("lobby: {how} at {} on {}", c.server_url, c.map);
-    };
-    if let Some(path) = &o.screenshot {
-        let size = o.size.unwrap_or((1280, 720));
-        let seconds = o.seconds.unwrap_or(5.0);
-        let shot = menu::Shot {
-            quick: o.quick,
-            settings: o.settings.clone(),
-            console: o.console.clone(),
-            tab: o.tab.clone(),
-            seconds,
-            size,
-        };
-        return match menu::screenshot(url, key_file, &shot, path) {
-            Ok(choice) => {
-                if let Some(c) = &choice {
-                    go(c);
-                }
-                0
-            }
-            Err(e) => {
-                eprintln!("menu: {e}");
-                1
-            }
-        };
-    }
-    if !o.offline {
-        washoi::update_check::start();
-    }
-    // Why the last match or demo did not start, shown on the next menu.
-    let mut match_error = None;
-    loop {
-        match menu::choose(url, key_file.clone(), match_error.take()) {
-            Ok(Some(c)) => {
-                go(&c);
-                let started = if let Some(demo) = &c.demo {
-                    let mut v = view_options(o, c.map.clone(), Some(demo.clone()), None, false);
-                    v.reel = c.reel.or(o.reel);
-                    view::start(&v)
-                } else {
-                    let watch = Some((c.server_url.clone(), c.name.clone(), c.admission_ticket.clone()));
-                    let mut v = view_options(o, c.server_url.clone(), None, watch, c.play);
-                    v.team.clone_from(&c.team);
-                    view::start(&v)
-                };
-                if let Err(why) = started {
-                    eprintln!("{why}");
-                    match_error = Some(why);
-                }
-            }
-            Ok(None) => return 0,
-            Err(e) => return fatal(&format!("menu: {e}")),
-        }
-    }
-}
 
 /// An error that ends the game: printed, added to `washoi.log` in the
 /// config folder, and in a release build shown in a dialog, since a game
@@ -883,7 +800,7 @@ fn lobby(url: &str, o: &Options) -> i32 {
                     .map_or_else(|| w.player_id.clone(), |i| i.name.clone());
                 println!("logged in as {name}, {} online", w.online_players.len());
                 if let (Some(new_key), Some(file)) = (&w.key, &o.key_file) {
-                    match washoi::client::lobby_panel::save_key(file, new_key) {
+                    match shagger::core::atomic_file::write_atomic(file, new_key.as_bytes()) {
                         Ok(()) => println!("new account: key saved to {}", file.display()),
                         Err(e) => println!("new account: could not save its key: {e}"),
                     }

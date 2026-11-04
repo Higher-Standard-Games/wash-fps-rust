@@ -3007,7 +3007,7 @@ fn print_reel(reel: &CinematicDemoPlayer) {
 fn composite_ui(gpu: &Gpu, pixels: &mut [u8], width: u32, height: u32, draw: impl Fn(&egui::Context)) {
     use shagger::ui::egui_layer::EguiLayer;
     let mut layer = EguiLayer::offscreen(gpu, OFFSCREEN_FORMAT);
-    washoi::client::lobby_panel::install_style(&layer.ctx);
+    washoi::client::washoi_style::install_style(&layer.ctx);
     let input = || egui::RawInput {
         screen_rect: Some(egui::Rect::from_min_size(
             egui::Pos2::ZERO,

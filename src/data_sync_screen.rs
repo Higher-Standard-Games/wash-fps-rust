@@ -19,7 +19,7 @@ use shagger::loader::pk3::package_store::{SyncProgress, has_packages, is_synced,
 use shagger::rendering::gpu::Gpu;
 use shagger::rendering::wgpu;
 use shagger::ui::egui_layer::{EguiLayer, egui};
-use washoi::client::lobby_panel::install_style;
+use washoi::client::washoi_style::install_style;
 use winit::application::ApplicationHandler;
 use winit::event::{ElementState, WindowEvent};
 use winit::event_loop::ActiveEventLoop;

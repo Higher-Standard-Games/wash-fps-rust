@@ -661,21 +661,30 @@ reloads anyway. The cost is losing lobby chat during the match.
 
 ## 16. What retires on the native side
 
-Once the webview lobby ships (0.2.0):
+Removed on November 4, 2026, before 0.2.0 (the owner's call: the egui lobby
+is not coming back; git keeps it):
 
 - **wash-fps-rust:**
-  - `menu.rs`'s lobby tabs, `client/lobby_panel.rs`, `lobby_welcome_dialog.rs`
-    and `lobby_welcome_guide.rs`;
+  - `menu.rs`, `client/lobby_panel.rs`, `lobby_welcome_dialog.rs` and
+    `lobby_welcome_guide.rs`;
   - `profile_view.rs`, `leaderboard_view.rs` and `demos_view.rs`;
-  - the menu's `--screenshot --tab` modes.
+  - the egui settings screen (`settings/fps_settings_view.rs`,
+    `settings/controls_page.rs`), which only the menu opened, and
+    `client/credits` with `assets/docs/TERMS.md`, which only it showed;
+  - `washoi menu` and its `--screenshot --quick/--tab/--settings/--console`
+    modes.
 
   These were one-to-one ports kept only for the native menu. RUST.md's port
-  rule notes them as retired, not missing.
+  rule notes them as retired, not missing. The egui look the other native
+  screens share (`install_style`, `hsl`, `display_family`) moved to
+  `client/washoi_style.rs`; `LobbyChoice` to `lobby_webview.rs`.
 - **Kept:**
   - shagger's `LobbyClient` and its `SettingsSync` port, used by `washoi
-    lobby …` and the local-server tests;
-  - the region screen, the data sync screen, the in-game settings, the
-    console, the end screen, demo playback and download.
+    lobby …` and the local-server tests; shagger's `MatchLobbyView` stays in
+    the engine, unused by Washoi for now;
+  - `settings/settings_model.rs` (the client cvars it registers);
+  - the region screen, the data sync screen, the console, the end screen,
+    demo playback and download.
 
 ## 17. Testing
 
@@ -799,9 +808,7 @@ Not covered yet:
   main that touch the lobby and by hand. A full match stays a local test
   (the steps in 17): it needs the lobby, game and bot servers and the
   game data.
-- **The egui lobby** (`menu.rs`'s lobby tabs, `lobby_panel.rs`, the lobby
-  views and `washoi menu`) is no longer reached from `washoi` and is
-  removed once the webview lobby has been tried on Windows and macOS.
+- **The egui lobby is removed** (section 16).
 
 ### 18.4 W4 progress (November 4, 2026)
 

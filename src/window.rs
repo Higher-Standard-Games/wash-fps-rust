@@ -64,8 +64,8 @@ use washoi::client::demo_playback_keys::{DemoKeyAction, DemoKeyContext, Modifier
 use washoi::client::demo_service::analysis_report;
 use washoi::client::first_person_view::{BodyFrame, FirstPersonView, ViewKeys, ViewOffset};
 use washoi::client::game_events::GameAudio;
-use washoi::client::lobby_panel::install_style;
 use washoi::client::teleport_effect::TeamColor;
+use washoi::client::washoi_style::install_style;
 use washoi::client::weapon_view::{clip_reload_time, quad_view_weapon_outline, shot_style};
 use washoi::console::{ConsoleRequest, DemoConsole, GameConsole};
 use washoi::shared::net::snapshot_events::SnapshotEvent;
