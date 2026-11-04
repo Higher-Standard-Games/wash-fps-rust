@@ -14,18 +14,20 @@ use std::collections::HashMap;
 
 use shagger::animation::player_model_assets::{VANGUARD_ANIMATIONS, VANGUARD_MODEL, VANGUARD_ROOT};
 use shagger::animation::player_model_manager::{PlayerModel, PlayerModelInstance, PlayerModelVisualStyle};
+use shagger::babylon::meshes::vertex_data::babylon_local_matrix;
 use shagger::loader::model::glb::GlbError;
 use shagger::loader::model::gltf_model::GltfModel;
 use shagger::loader::model::tags_loader::parse_tags;
 use shagger::loader::pk3::pk3_loader::Pk3Loader;
 use shagger::network::client::snapshot_buffer::InterpolatedEntity;
+use shagger::rendering::glam::DVec3;
 use shagger::rendering::glam::{EulerRot, Mat4, Quat, Vec3};
 use shagger::rendering::gpu::Gpu;
 use shagger::rendering::model_renderer::{ModelDraw, ModelHandle, ModelMaterialMode, ModelRenderer, Outline};
 use shagger::weapon::weapon_barrels::{
     BarrelDef, barrel_material_mode, barrel_root_matrix, find_barrel_mount, world_weapon_material_mode,
 };
-use shagger::world::pickup::flattened_pickup_matrices;
+use shagger::world::pickup::{flattened_pickup_matrices, pickup_scale};
 
 use super::quad_damage_visual::{
     QUAD_DAMAGE_COLOR, QUAD_EMISSIVE_MIN, QUAD_EMISSIVE_RANGE, QUAD_PLAYER_OUTLINE_MIN, QUAD_PLAYER_OUTLINE_RANGE,
@@ -394,6 +396,32 @@ impl HandWeapons {
             .flatten()
             .map(|tag| leader.transform_point3(tag.position));
         Some((tag, leader.w_axis.truncate()))
+    }
+
+    /// The draws of `weapon` on the floor (`DroppedWeaponVisual.place`): the
+    /// leader at `position`, turned by Babylon Euler `rotation` and scaled
+    /// by the weapon's scale (1.5 when none), the other meshes flattened
+    /// under it as on a pickup, the barrels on their mount.
+    pub fn world_draws(&self, weapon: &str, position: [f64; 3], rotation: [f64; 3], draws: &mut Vec<ModelDraw>) {
+        let Some(def) = weapon_model(weapon) else { return };
+        let Some(w) = self.weapons.iter().find(|w| w.def.id == def.id) else {
+            return;
+        };
+        let scale = f64::from(pickup_scale(Some(def.scale)));
+        let leader = babylon_local_matrix(
+            DVec3::from_array(position),
+            DVec3::from_array(rotation),
+            DVec3::splat(scale),
+        )
+        .as_mat4();
+        for (primitive, world) in flattened_pickup_matrices(&w.model, leader).into_iter().enumerate() {
+            draws.push(ModelDraw::new(w.handle, primitive, world));
+        }
+        for (handle, model, root) in &w.barrels {
+            for (primitive, p) in model.primitives.iter().enumerate() {
+                draws.push(ModelDraw::new(*handle, primitive, leader * *root * p.node_matrix));
+            }
+        }
     }
 
     /// The draws of `weapon` held in a hand at `hand` (world), with the

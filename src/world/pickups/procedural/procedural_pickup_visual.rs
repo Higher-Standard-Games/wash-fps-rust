@@ -11,9 +11,11 @@
 //! - Quad: a gold Q on a dark badge, rocking gently.
 //!
 //! The visual here is the parts and their poses; the draws are made from
-//! them by [`super::procedural_pickup_factory`]. Not ported: visibility
-//! (`setActive`, `setInView`), the respawn assembly and the collect
-//! transient.
+//! them by [`super::procedural_pickup_factory`]. [`PickupVisualState`] is
+//! the server's word on it (`setActive`, with `Pickup.setActiveState`
+//! before it): hidden until told, the collect burst when taken and the
+//! respawn assembly when back. Not ported: `setInView` (the depth test
+//! hides what is behind walls).
 
 use std::f64::consts::PI;
 
@@ -22,6 +24,8 @@ use shagger::rendering::glam::{DMat3, DMat4, DVec3, Vec3};
 
 use super::procedural_pickup_asset_cache::{Proto, PrototypeSet};
 use super::procedural_pickup_materials::ENERGY_BOOST;
+use super::procedural_pickup_recipes::PROCEDURAL_GLOBAL_SCALE;
+use super::procedural_pickup_transient::{ProceduralPickupTransient, TransientOptions};
 use super::types::{ProceduralPickupFamily, ProceduralPickupRecipe, Rgb};
 
 const TAU: f64 = PI * 2.0;
@@ -210,6 +214,12 @@ impl ProceduralPickupVisual {
     /// `elapsed` seconds.
     #[must_use]
     pub fn pose(&self, elapsed: f64) -> VisualPose {
+        self.pose_assembling(elapsed, 1.0)
+    }
+
+    /// [`Self::pose`] at `assemble_scale` of its size (the respawn assembly).
+    #[must_use]
+    pub fn pose_assembling(&self, elapsed: f64, assemble_scale: f64) -> VisualPose {
         let t = elapsed + self.phase;
         let r = &self.recipe;
         let bob_w = t * r.bob_frequency * BOB_SPEED * TAU;
@@ -224,7 +234,7 @@ impl ProceduralPickupVisual {
         } else {
             t * r.spin_speed * DEG2RAD
         };
-        let breathe = 1.0 + 0.02 * (t * r.pulse_frequency * TAU).sin();
+        let breathe = assemble_scale * (1.0 + 0.02 * (t * r.pulse_frequency * TAU).sin());
         let local = babylon_local_matrix(DVec3::new(x, y, 0.0), DVec3::new(0.0, yaw, 0.0), DVec3::splat(breathe));
         let cosmetic = DMat4::from_translation(self.position) * local;
 
@@ -251,6 +261,19 @@ impl ProceduralPickupVisual {
                 .map(|ring| cosmetic * DMat4::from_rotation_y(t * ring.speed))
                 .collect(),
             ring_offset: (t * RING_SCROLL_SPEED) % 1.0,
+        }
+    }
+
+    /// `createTransient`'s options: the collection burst for this recipe.
+    #[must_use]
+    pub fn transient_options(&self) -> TransientOptions {
+        let eff = self.recipe.scale * PROCEDURAL_GLOBAL_SCALE;
+        TransientOptions {
+            duration: if self.recipe.high_tier { 0.46 } else { 0.34 },
+            end_diameter: 32.0 * eff,
+            style: self.recipe.collect_style,
+            scale: eff,
+            family: self.recipe.family,
         }
     }
 
@@ -291,6 +314,85 @@ impl ProceduralPickupVisual {
     }
 }
 
+/// A map pickup's visibility as the server tells it: `Pickup.isActive`
+/// (`setActiveState`) and the visual's own `setActive`, the respawn
+/// assembly and the collection burst.
+#[derive(Debug, Clone, PartialEq)]
+pub struct PickupVisualState {
+    /// `Pickup.isActive`.
+    is_active: bool,
+    /// The visual's `prevActive`: `None` until its first authoritative value.
+    prev_active: Option<bool>,
+    /// Drawn (`visible`).
+    pub visible: bool,
+    assemble_age: f64,
+    assemble_duration: f64,
+    /// The collection burst, played again on each collection.
+    pub transient: ProceduralPickupTransient,
+}
+
+impl PickupVisualState {
+    /// `server_managed`: a map pickup in a match or demo starts hidden until
+    /// the first active mask (fail-closed); a held view shows it.
+    #[must_use]
+    pub fn new(visual: &ProceduralPickupVisual, server_managed: bool) -> Self {
+        Self {
+            is_active: !server_managed,
+            prev_active: None,
+            visible: !server_managed,
+            assemble_age: f64::INFINITY,
+            assemble_duration: if visual.recipe.high_tier { 0.7 } else { 0.45 },
+            transient: ProceduralPickupTransient::new(&visual.transient_options()),
+        }
+    }
+
+    /// `Pickup.setActiveState` then `ProceduralPickupVisual.setActive`;
+    /// `cosmetic` is where the item floats (local x and y), for the burst.
+    pub fn set_active(&mut self, active: bool, cosmetic: [f64; 2]) {
+        if active == self.is_active {
+            return;
+        }
+        self.is_active = active;
+        let Some(prev) = self.prev_active else {
+            // First authoritative value: applied silently.
+            self.prev_active = Some(active);
+            self.visible = active;
+            return;
+        };
+        if active == prev {
+            return;
+        }
+        self.prev_active = Some(active);
+        if active {
+            self.visible = true;
+            self.assemble_age = 0.0;
+        } else {
+            let y = if cosmetic[1] == 0.0 { HOVER_LIFT } else { cosmetic[1] };
+            self.transient.play([cosmetic[0], y]);
+            self.visible = false;
+        }
+    }
+
+    /// `update`'s clocks: the burst runs while hidden; the assembly while
+    /// shown. The item's size this frame (`assembleScale`).
+    pub fn update(&mut self, dt: f64) -> f64 {
+        self.transient.update(dt);
+        if !self.visible {
+            return 1.0;
+        }
+        self.assembly_scale_after(dt)
+    }
+
+    fn assembly_scale_after(&mut self, dt: f64) -> f64 {
+        if self.assemble_age < self.assemble_duration {
+            self.assemble_age += dt;
+            let p = (self.assemble_age / self.assemble_duration).min(1.0);
+            return 0.35 + 0.65 * (1.0 - (1.0 - p) * (1.0 - p));
+        }
+        1.0
+    }
+}
+
 /// The inverse of a view matrix's rotation: camera axes to world axes.
 #[must_use]
 pub fn camera_rotation(view: DMat4) -> DMat3 {
@@ -300,6 +402,34 @@ pub fn camera_rotation(view: DMat4) -> DMat3 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_server_hides_bursts_and_brings_back() {
+        let recipe = get_procedural_pickup_recipe("armor_ra").unwrap();
+        let set = build_prototype_set(recipe);
+        let visual = ProceduralPickupVisual::new(recipe, &set, DVec3::ZERO, 3);
+        let mut state = PickupVisualState::new(&visual, true);
+        // Hidden until told; the first word (here: still out) is silent.
+        assert!(!state.visible);
+        state.set_active(false, [0.0, 30.0]);
+        assert!(!state.visible && !state.transient.playing());
+        // Its first appearance is silent too: `isActive` was false.
+        state.set_active(true, [0.0, 30.0]);
+        assert!(state.visible);
+        assert_eq!(state.update(0.1), 1.0);
+        // Taken: the burst plays while the item is hidden.
+        state.set_active(false, [0.0, 34.0]);
+        assert!(!state.visible && state.transient.playing());
+        // Back: it assembles from 0.35 of its size.
+        state.set_active(true, [0.0, 30.0]);
+        let first = state.update(0.0);
+        assert!((first - 0.35).abs() < 1e-12);
+        let later = state.update(0.5);
+        assert!(later > 0.9 && later < 1.0);
+        assert_eq!(state.update(1.0), 1.0);
+        // A held view shows it from the start.
+        assert!(PickupVisualState::new(&visual, false).visible);
+    }
     use crate::world::pickups::procedural::procedural_pickup_asset_cache::build_prototype_set;
     use crate::world::pickups::procedural::procedural_pickup_recipes::get_procedural_pickup_recipe;
 

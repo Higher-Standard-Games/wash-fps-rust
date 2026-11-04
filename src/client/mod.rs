@@ -13,6 +13,7 @@ pub mod demo_download;
 pub mod demo_playback;
 pub mod demo_playback_keys;
 pub mod demo_service;
+pub mod dropped_weapon_renderer;
 pub mod first_person_view;
 pub mod fps_actions;
 pub mod fps_announcer;

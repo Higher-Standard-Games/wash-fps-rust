@@ -17,7 +17,7 @@ use shagger::babylon::materials::texture::get_texture_matrix;
 use shagger::babylon::meshes::vertex_data::VertexData;
 use shagger::loader::model::gltf_model::{AlphaMode, GltfModel, ModelImage, ModelMaterial, ModelPrimitive, Skeleton};
 use shagger::loader::pk3::pk3_loader::Pk3Loader;
-use shagger::rendering::glam::{DMat3, DVec3, Mat4, Vec3};
+use shagger::rendering::glam::{DMat3, DMat4, DVec3, Mat4, Vec3};
 use shagger::rendering::gpu::Gpu;
 use shagger::rendering::model_renderer::{ModelDraw, ModelHandle, ModelMaterialMode, ModelRenderer};
 
@@ -26,7 +26,10 @@ use super::procedural_pickup_materials::{
     RING_GRADIENT_WIDTH, create_fresnel_shell_material, create_ring_gradient_material, ring_gradient_pixels,
 };
 use super::procedural_pickup_recipes::all_procedural_pickup_recipes;
-use super::procedural_pickup_visual::{PartMaterial, ProceduralPickupVisual};
+use super::procedural_pickup_transient::{
+    TransientMaterial, build_transient_shapes, transient_material, transient_tints,
+};
+use super::procedural_pickup_visual::{PartMaterial, PickupVisualState, ProceduralPickupVisual};
 use super::types::{ProceduralPickupFamily, ProceduralPickupRecipe};
 use crate::shared::bsp::pickup_table::{PickupEntry, PickupType};
 use crate::world::pickups::ammo_icon_texture::load_ammo_icon_texture;
@@ -52,6 +55,10 @@ pub fn recipe_for_pickup(kind_type: PickupType, kind: &str) -> Option<&'static P
 pub struct ProceduralPickups {
     /// Each visual, its model and its pickup id.
     visuals: Vec<(ProceduralPickupVisual, ModelHandle, u32)>,
+    /// Each visual's state, in the same order.
+    states: Vec<PickupVisualState>,
+    /// Each visual's respawn assembly scale this frame.
+    assembly: Vec<f64>,
     /// Icons that did not load, by path.
     pub missing_icons: Vec<String>,
 }
@@ -94,13 +101,17 @@ fn primitive(name: &str, data: &VertexData, material: usize, order: usize) -> Mo
         node: 0,
         node_scale: Vec3::ONE,
         node_matrix: Mat4::IDENTITY,
-        normals: data
-            .normals
-            .as_chunks::<3>()
-            .0
-            .iter()
-            .map(|n| [n[0], n[1], n[2]])
-            .collect(),
+        // The burst's flash has no normals; it is self-lit.
+        normals: if data.normals.len() == data.positions.len() {
+            data.normals
+                .as_chunks::<3>()
+                .0
+                .iter()
+                .map(|n| [n[0], n[1], n[2]])
+                .collect()
+        } else {
+            vec![[0.0, 1.0, 0.0]; positions.len()]
+        },
         positions,
         uvs,
         indices: data
@@ -187,6 +198,31 @@ fn upload_recipe(
         let data = set.geometry(part.proto).expect("a visual part has its prototype");
         primitives.push(primitive(&format!("pp_{}_{}", part.name, recipe.id), data, i, i));
     }
+    // The collection burst's pieces follow the parts.
+    let tints = transient_tints(recipe.color);
+    for (data, material) in build_transient_shapes(&visual.transient_options()).pieces {
+        let i = primitives.len();
+        materials.push(ModelMaterial {
+            name: format!("{i}"),
+            base_color: [1.0; 4],
+            base_color_image: None,
+            metallic: 0.0,
+            roughness: 1.0,
+            metallic_roughness_image: None,
+            normal_image: None,
+            emissive: [0.0; 3],
+            emissive_image: None,
+            alpha_mode: AlphaMode::Opaque,
+            alpha_cutoff: 0.5,
+            double_sided: true,
+        });
+        modes.push(transient_material(match material {
+            TransientMaterial::Bright => tints[0],
+            TransientMaterial::Dark => tints[1],
+            TransientMaterial::Flash => tints[2],
+        }));
+        primitives.push(primitive(&format!("pp_transient_{i}_{}", recipe.id), &data, i, i));
+    }
     let model = GltfModel {
         primitives,
         materials,
@@ -239,7 +275,17 @@ pub fn build_procedural_pickups(
             entry.id,
         ));
     }
-    ProceduralPickups { visuals, missing_icons }
+    let states = visuals
+        .iter()
+        .map(|(v, _, _)| PickupVisualState::new(v, false))
+        .collect();
+    let assembly = vec![1.0; visuals.len()];
+    ProceduralPickups {
+        visuals,
+        states,
+        assembly,
+        missing_icons,
+    }
 }
 
 impl ProceduralPickups {
@@ -254,15 +300,50 @@ impl ProceduralPickups {
         self.visuals.is_empty()
     }
 
+    /// Map pickups in a match or demo: hidden until the server's first
+    /// active mask names them (`startHidden`).
+    pub fn set_server_managed(&mut self) {
+        for (state, (visual, _, _)) in self.states.iter_mut().zip(&self.visuals) {
+            *state = PickupVisualState::new(visual, true);
+        }
+    }
+
+    /// `reconcileActiveSet` for these pickups: each one `active` names takes
+    /// its state at `elapsed` seconds, then `dt` seconds of the bursts and
+    /// assemblies run.
+    pub fn reconcile(&mut self, elapsed: f64, dt: f64, active: impl Fn(u32) -> Option<bool>) {
+        for (i, (visual, _, id)) in self.visuals.iter().enumerate() {
+            let state = &mut self.states[i];
+            if let Some(active) = active(*id) {
+                let pose = visual.pose_assembling(elapsed, self.assembly[i]);
+                let local = pose.cosmetic_translation - visual.position;
+                state.set_active(active, [local.x, local.y]);
+            }
+            self.assembly[i] = state.update(dt);
+        }
+    }
+
     /// Every part's draw `elapsed` seconds after the visuals were built;
     /// `camera_rotation` turns camera axes into world axes, for billboards.
-    /// Only the pickups `active` says are up are drawn (`setActive`).
-    pub fn draws(&self, elapsed: f64, camera_rotation: DMat3, active: impl Fn(u32) -> bool, out: &mut Vec<ModelDraw>) {
-        for (visual, model, id) in &self.visuals {
-            if !active(*id) {
+    /// Only the pickups the server says are up are drawn (`setActive`), and
+    /// the bursts of those just taken.
+    pub fn draws(&self, elapsed: f64, camera_rotation: DMat3, out: &mut Vec<ModelDraw>) {
+        for (i, (visual, model, _)) in self.visuals.iter().enumerate() {
+            let state = &self.states[i];
+            let anchor = DMat4::from_translation(visual.position);
+            for piece in state.transient.pieces() {
+                let mut draw = ModelDraw::new(
+                    *model,
+                    visual.parts.len() + piece.index,
+                    (anchor * piece.local).as_mat4(),
+                );
+                draw.alpha = Some(piece.alpha);
+                out.push(draw);
+            }
+            if !state.visible {
                 continue;
             }
-            let pose = visual.pose(elapsed);
+            let pose = visual.pose_assembling(elapsed, self.assembly[i]);
             for (i, part) in visual.parts.iter().enumerate() {
                 let mut draw = ModelDraw::new(*model, i, visual.part_world(part, &pose, camera_rotation).as_mat4());
                 draw.emissive = visual.part_emissive(part, &pose);
