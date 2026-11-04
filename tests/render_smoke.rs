@@ -50,6 +50,7 @@ fn dm2_fills_the_frame_from_every_spawn() {
                 pixels: t.pixels,
             })
         },
+        &std::collections::HashMap::new(),
         OFFSCREEN_FORMAT,
     );
     let clear = wgpu::Color {

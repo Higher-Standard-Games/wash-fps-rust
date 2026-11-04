@@ -2712,6 +2712,18 @@ whole areas rather than single items. 0.2.0 closes them in two steps.
 
 Newest first. Each entry names the commits and what proves them.
 
+### Teleporter voids: authored cubemaps on world surfaces (November 4, 2026)
+
+- **shagger c099827** ports `Q3EnvironmentPlugin`: a world pass whose
+  stage names a cube (`surroundmap`, `cubemap`) draws unlit, its colour the
+  cube sampled along the view ray (surround) or its reflection. The game
+  loads the cubes `WorldGeometry::environment_maps` names with
+  `load_environment_cubemap`, as `loadTextures` does. The teleporters of
+  washoi_dm5, dm12 and dm14 (`surroundmap env/televoid/void`) showed black;
+  a `washoi view washoi_dm5 --at 416,-470,440,-90` screenshot shows the
+  night sky. Not yet: `tcGen environment` sphere maps (glass and chrome on
+  nine maps, drawn as their base image) and `$cubemap` reflections.
+
 ### After 0.1.1: muzzle flashes, server pickups, the Esc menu (November 4, 2026)
 
 From the first play-through on the webview lobby build:

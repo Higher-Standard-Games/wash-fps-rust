@@ -1997,6 +1997,18 @@ pub fn build_renderer(gpu: &Gpu, map: &mut LoadedMap, output_format: wgpu::Textu
     let geometry = build_world_geometry(&map.bsp, |name, options| {
         map.shaders.resolve_material_passes(&map.pk3, name, options)
     });
+    // Authored cubemaps (`surroundmap`/`cubemap`), as `loadTextures` loads
+    // them; one that fails draws as a plain material.
+    let mut environments = HashMap::new();
+    for base in geometry.environment_maps() {
+        match load_environment_cubemap(&mut map.pk3, &base) {
+            Ok(faces) => {
+                println!("environment: {base} ({}x{} faces)", faces.size, faces.size);
+                environments.insert(base, faces);
+            }
+            Err(e) => eprintln!("[BspMeshBuilder] {e}"),
+        }
+    }
     let pk3 = &mut map.pk3;
     let mut renderer = WorldRenderer::new(
         gpu,
@@ -2009,6 +2021,7 @@ pub fn build_renderer(gpu: &Gpu, map: &mut LoadedMap, output_format: wgpu::Textu
                 pixels: t.pixels,
             })
         },
+        &environments,
         format,
     );
     let triangles: u32 = geometry.batches.iter().map(|b| b.index_count / 3).sum();
