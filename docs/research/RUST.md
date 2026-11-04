@@ -2694,8 +2694,8 @@ whole areas rather than single items. 0.2.0 closes them in two steps.
    them), weapon normal maps, Search & Destroy's map models, debris and
    blast, the HUD's smoothing, the match loading screen, and wdm5's
    teleporter sky shader.
-2. **A review against the browser game**, area by area, listing every
-   difference and closing it:
+2. **A review against the browser game**, area by area, fixing each
+   difference as it is found:
    - shader features (the Q3 shader keywords and stages the maps use);
    - weapon animations (switch, holster, reload, charge, slash, ADS);
    - weapon barrels and effects (barrels, muzzle flashes and lights,
