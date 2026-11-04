@@ -807,9 +807,28 @@ Not covered yet:
   `native:update` with the newer version and its package URL. The page shows
   Download (opened in the browser) and Later, and both send
   `update:dismiss`.
-- Left for W4: console passthrough, invite paste, and taking Babylon out of
-  the lobby-only bundle (DemoService is still imported for the browser's
-  own playback).
+- **Invite paste.** Pasting a room link outside a text field joins it. The
+  page follows the link's `?lobby=…&invite=…` deep link on `/client`. A link
+  for another region's host says to pick that region at start. Ran on Linux
+  with xclip.
+- **No second start click on any reload in a session.** This covers an
+  invite as well as a return: sessionStorage `washoi.native.started`.
+- **Babylon stays in the lobby-only bundle for now.** The import graph
+  reaches it through the engine's own lobby pieces:
+  - the 3D logo (`LogoCanvas`, a Babylon engine of its own);
+  - lobby audio (`AudioManager`);
+  - the `engine/core` barrel.
+
+  The page is still free of the game renderer, the scene and the maps,
+  which is where W0's 0.5 to 1.6 GB went. Under Xvfb with llvmpipe, the
+  built `/client` page held about 1.3 GB, against 0.25 GB for a blank page,
+  but software GL makes that number meaningless. Measure on real hardware
+  with the spike workflow before splitting SHAG's audio and logo off
+  Babylon. That work would be a SHAG change, not a wash-fps one.
+- **Console passthrough is deferred.** The lobby page's console sets cvars
+  through the mirror already. Native-only commands (connect, demo, timedemo)
+  have no use in the lobby, and passing them through needs an
+  unknown-command hook in SHAG's `CommandRegistry`.
 
 ### 18.3 W3 progress (November 4, 2026)
 
