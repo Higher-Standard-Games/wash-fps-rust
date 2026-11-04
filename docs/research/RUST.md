@@ -2712,6 +2712,37 @@ whole areas rather than single items. 0.2.0 closes them in two steps.
 
 Newest first. Each entry names the commits and what proves them.
 
+### 0.2.0 review: world shader features against the browser (November 4, 2026)
+
+- **How.** `tools/shader_routes.mjs` loads every package as the game does
+  and resolves each world texture's passes as `loadTextures` does, naming
+  the branch each pass ends in (environment cube, glow overlay
+  ShaderMaterial, generated PBR, filter blend ShaderMaterial, tcGen
+  environment, alpha modes, fullbright, vertex lighting plugin) with its
+  faces and maps. Each branch was checked against shagger's world
+  renderer; the native one drew four differently.
+- **Fixed (shagger 7aee05b, pinned with beb80b2).** `tcGen environment` (factory/glass,
+  metal/chrome, cha0s_ws/glass on seven maps) also draws its image as
+  Babylon's spherical reflection map. The glow overlay (base × raw
+  lightmap + glow: blxbis/trim4_turq_light, lights/neonlamp) drew without
+  its glow. Filter blend decals (graffiti, plaster) draw unlit, both
+  sides, without depth writes at `zOffset` -4, their display colour
+  multiplied in as the ShaderMaterial writes it. Vertex-lit material
+  surfaces (plastic_vertex, metal_vertex, decor models: about 1,300 faces)
+  take game lights, their normal and gloss maps (`BspVertexLightingPlugin`).
+  The shine overlay's depth offset is its `zOffset` -1.
+- **Proof.** Unit tests on the pattern and branch choices; `tools/parity`
+  on washoi_amphi1 (the turquoise light strips), washoi_snd1 (graffiti) and
+  washoi_dm14 (the glass box from below) match the browser by eye. The
+  harness's browser camera now frames narrower than `washoi view` (a newer
+  wash-fps camera change), so its mean differences overstate.
+- **Same in both, checked.** Generated PBR, normal and gloss maps, glow
+  emissive and shine passes, alpha test and blend modes, additive vertex
+  colour, `rgbGen const`, animation (tcMod, waves, animMap), autosprites,
+  soft particles, distance ramps and authored cubes. `clampMap`,
+  `depthFunc`, `detail` and non-autosprite deforms are ignored by both.
+  Not yet: `$cubemap` reflections (no shipped world texture uses one).
+
 ### Weapon barrels and effects review against the browser (November 4, 2026)
 
 Read side by side: SHAG `WeaponBarrels`, `WeaponViewManager` (`presentFire`,
