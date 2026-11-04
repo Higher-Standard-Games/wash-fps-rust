@@ -72,6 +72,10 @@ thread_local! {
     /// The mirrored keys as the last match started, to tell the page what
     /// the match changed (`storage:changed`).
     static BEFORE_MATCH: RefCell<Option<Map<String, Value>>> = const { RefCell::new(None) };
+    /// The page can show its settings over a match (`settings:ready`).
+    static SETTINGS_READY: Cell<bool> = const { Cell::new(false) };
+    /// The settings files, for what the page changes over a match.
+    static MIRROR: RefCell<Option<StorageMirror>> = const { RefCell::new(None) };
 }
 
 /// How the last match ended, for the page.
@@ -328,9 +332,14 @@ impl LobbyApp {
                             println!("lobby: the page said hello (web {web})");
                         }
                         GREETED.with(|g| g.set(true));
+                        // A new page load says again what it can do.
+                        SETTINGS_READY.with(|r| r.set(false));
                         // A new page load: it has not seen the update notice.
                         UPDATE_TOLD.with(|t| t.set(false));
                         self.problem = None;
+                    }
+                    if text(&message, "type").as_deref() == Some("settings:ready") {
+                        SETTINGS_READY.with(|r| r.set(true));
                     }
                     match act(&message) {
                         Action::Reply(answer) => {
@@ -659,6 +668,7 @@ impl ApplicationHandler for LobbyApp {
 /// # Errors
 /// The event loop or the window failed.
 pub fn run(url: &str, mirror: &StorageMirror, after: Option<AfterMatch>) -> Result<LobbyOutcome, String> {
+    MIRROR.with(|m| *m.borrow_mut() = Some(mirror.clone()));
     let mut app = LobbyApp {
         url: url.to_owned(),
         mirror: mirror.clone(),
@@ -677,6 +687,73 @@ pub fn run(url: &str, mirror: &StorageMirror, after: Option<AfterMatch>) -> Resu
         return Err(e);
     }
     Ok(app.outcome.unwrap_or(LobbyOutcome::Quit))
+}
+
+/// The page can show its settings over the match running now: it is
+/// loaded, hidden behind the match, and said `settings:ready`.
+#[must_use]
+pub fn match_settings_available() -> bool {
+    SETTINGS_READY.with(Cell::get) && HOST.with(|h| h.borrow().is_some())
+}
+
+/// The match menu's Settings key: shows the page over the match and asks it
+/// for its settings (`settings:open`), named for the match by `kicker`.
+pub fn open_match_settings(kicker: &str) -> bool {
+    LobbyApp::with_host(|h| {
+        // What the hidden page said during the match is stale.
+        drop(h.drain());
+        h.show();
+        h.send(&json!({"v": BRIDGE_VERSION, "type": "settings:open", "kicker": kicker}));
+    })
+    .is_some()
+}
+
+/// Each frame while the settings are up over a match: the page's settings
+/// writes reach the files and the live cvars, Alt+Enter still works, and
+/// `settings:closed` (Back or Escape) hides the page again. True once
+/// they are closed, or the page is gone.
+pub fn poll_match_settings() -> bool {
+    let Some(events) = LobbyApp::with_host(|h| h.drain()) else {
+        return true;
+    };
+    let mut closed = false;
+    for event in events {
+        let HostEvent::Message(message) = event else { continue };
+        match text(&message, "type").as_deref() {
+            Some("settings:closed") => closed = true,
+            // The page reloaded under the settings: they are gone.
+            Some("hello") => {
+                SETTINGS_READY.with(|r| r.set(false));
+                closed = true;
+            }
+            Some("settings:ready") => SETTINGS_READY.with(|r| r.set(true)),
+            _ => {}
+        }
+        match act(&message) {
+            Action::Reply(answer) => {
+                LobbyApp::with_host(|h| h.send(&answer));
+            }
+            Action::Fullscreen => toggle_fullscreen(),
+            Action::External(url) => {
+                if !open_external(&url) {
+                    eprintln!("settings: not opening {url}");
+                }
+            }
+            Action::Storage(key, value) => {
+                let kept = MIRROR.with(|m| m.borrow().as_ref().is_some_and(|m| m.apply(&key, value.as_deref())));
+                if !kept {
+                    eprintln!("settings: not keeping {key}");
+                }
+            }
+            // A match, a demo or quitting is the lobby's to start, not the
+            // settings'.
+            Action::Match(..) | Action::Demo(..) | Action::Quit | Action::CancelDemo | Action::Nothing => {}
+        }
+    }
+    if closed {
+        LobbyApp::with_host(WebviewHost::hide);
+    }
+    closed
 }
 
 #[cfg(test)]

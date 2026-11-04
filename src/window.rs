@@ -146,6 +146,10 @@ struct App {
     leave: bool,
     /// The Esc menu over a match we play in (`FPSPauseMenu`).
     pause_menu: PauseMenu,
+    /// The lobby page's settings are up over the match.
+    settings_open: bool,
+    /// The match as the menu names it (gametype · map).
+    menu_kicker: String,
     /// A demo's highlight reel, driving the demo and the camera.
     reel: Option<CinematicDemoPlayer>,
     overlay: ReelOverlay,
@@ -274,6 +278,10 @@ impl App {
             self.pause_menu.close();
             return false;
         }
+        // The page has the keyboard; what reaches the window is not the game's.
+        if self.settings_open {
+            return true;
+        }
         if code == KeyCode::Escape {
             if event.state == ElementState::Pressed && !event.repeat {
                 if self.pause_menu.open {
@@ -293,6 +301,13 @@ impl App {
         self.pause_menu.close();
         match action {
             PauseMenuAction::Resume => self.set_captured(true),
+            PauseMenuAction::Settings => {
+                if crate::lobby_webview::open_match_settings(&self.menu_kicker) {
+                    self.settings_open = true;
+                } else {
+                    self.pause_menu.open();
+                }
+            }
             PauseMenuAction::Leave => {
                 println!("lobby: back to the lobby");
                 self.leave = true;
@@ -909,7 +924,7 @@ impl App {
         let mut menu_action = None;
         let pause_menu = &self.pause_menu;
         let (kicker, player) = match feed {
-            Some(Feed::Play(p, _)) if pause_menu.open => {
+            Some(Feed::Play(p, _)) if pause_menu.open || self.settings_open => {
                 let state = p.match_state();
                 let kicker = [state.gametype_name(), p.map.as_str()]
                     .into_iter()
@@ -926,6 +941,8 @@ impl App {
             }
             _ => (String::new(), String::new()),
         };
+        self.pause_menu.settings = crate::lobby_webview::match_settings_available();
+        let pause_menu = &self.pause_menu;
         let demo_hud = self.demo_hud.as_ref().filter(|_| cards);
         let ui = s.egui.run(&s.window, |ui| {
             if let (Some(reel), Some(Feed::Demo(demo)), true) = (reel, feed, cards) {
@@ -960,8 +977,19 @@ impl App {
             b.end_frame(&s.gpu);
         }
         self.frames += 1;
+        self.menu_kicker = kicker;
         if let Some(action) = menu_action {
             self.pause_menu_action(action);
+        }
+        // Back from the settings is back to the match menu (`FPSHud`).
+        if self.settings_open && crate::lobby_webview::poll_match_settings() {
+            self.settings_open = false;
+            if self.in_play() {
+                self.pause_menu.open();
+            }
+            if let Some(s) = &self.surface {
+                s.window.focus_window();
+            }
         }
         if let (Some(action), Some(Feed::Demo(demo))) = (demo_action, &mut self.feed) {
             match action {
@@ -1256,7 +1284,12 @@ impl ApplicationHandler for App {
                 if home {
                     println!("lobby: back to the lobby");
                     event_loop.exit();
-                } else if !self.captured && state == ElementState::Pressed && !self.opened_up && !self.pause_menu.open {
+                } else if !self.captured
+                    && state == ElementState::Pressed
+                    && !self.opened_up
+                    && !self.pause_menu.open
+                    && !self.settings_open
+                {
                     self.set_captured(true);
                 } else {
                     self.firing = state == ElementState::Pressed;
@@ -1707,6 +1740,8 @@ pub fn run(
         audio,
         leave: false,
         pause_menu: PauseMenu::default(),
+        settings_open: false,
+        menu_kicker: String::new(),
         reel,
         overlay: ReelOverlay::default(),
         demo_hud: None,

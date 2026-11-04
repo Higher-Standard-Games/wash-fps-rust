@@ -3,9 +3,10 @@
 //! lost mouse opens it (`FPSHud`'s `pointerlockchange`), Resume or Escape
 //! takes the mouse back, and Leave match goes back to the lobby.
 //!
-//! Not yet: the Settings key (the settings live in the webview lobby, which
-//! is hidden during a match), Spectate and Join, and the mode's keys
-//! (Loadout).
+//! Settings opens the lobby page's settings over the match, when the page
+//! can (`settings`); Back there returns to this menu.
+//!
+//! Not yet: Spectate and Join, and the mode's keys (Loadout).
 
 use shagger::ui::egui_layer::egui;
 
@@ -16,6 +17,8 @@ use crate::client::washoi_style::{display_family, hsl};
 pub enum PauseMenuAction {
     /// Back to the fight: close and take the mouse again.
     Resume,
+    /// Controls and video: the lobby page's settings over the match.
+    Settings,
     /// Back to the lobby.
     Leave,
 }
@@ -24,6 +27,8 @@ pub enum PauseMenuAction {
 #[derive(Debug, Clone, Default)]
 pub struct PauseMenu {
     pub open: bool,
+    /// The Settings key is offered (the lobby page can show them).
+    pub settings: bool,
 }
 
 /// `fps-match-menu__note`.
@@ -87,6 +92,9 @@ impl PauseMenu {
                             };
                             if key(ui, "Resume", "Back to the fight", true) {
                                 action = Some(PauseMenuAction::Resume);
+                            }
+                            if self.settings && key(ui, "Settings", "Controls and video", false) {
+                                action = Some(PauseMenuAction::Settings);
                             }
                             ui.add_space(16.0);
                             ui.separator();

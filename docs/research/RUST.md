@@ -2703,8 +2703,9 @@ From the first play-through on the webview lobby build:
   Not yet: the procedural pickups' collect and respawn effects.
 - **The Esc menu** (`client/hud/widgets/pause_menu.rs`, `PauseMenu.ts`):
   in play, Escape or a lost mouse frees the mouse and opens Resume and
-  Leave match; Escape again resumes. Not yet: Settings (in the webview
-  lobby), Spectate, Join and Loadout.
+  Leave match; Escape again resumes. Settings shows the lobby page's
+  in-match settings over the match (WEBVIEW_LOBBY.md 8). Not yet:
+  Spectate, Join and Loadout.
 
 ### 0.1.1 released: skins, ammo counters, the end screen (November 3, 2026)
 

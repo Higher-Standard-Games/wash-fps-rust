@@ -282,6 +282,9 @@ flash: `document.documentElement.dataset.shell = "native"`.
 | page → native | `region:choose` | `{}` | — (the native region screen opens) |
 | page → native | `app:quit` | `{}` | — |
 | native → page | `native:update` | `{ version, url }` (from `update_check`) | — |
+| page → native | `settings:ready` | `{}`: the page can show its settings over a match | — |
+| native → page | `settings:open` | `{ kicker }`: the match menu's Settings key; the client shows the page | — |
+| page → native | `settings:closed` | `{}`: Back or Escape; the client hides the page and reopens its match menu | — |
 | native → page | `tick` | `{}` (only while hidden, only if W0 needs it) | — |
 
 `bridgeVersion` only moves for a change that breaks something. New messages
@@ -435,8 +438,13 @@ web's client cvar registry with the native one (section 17).
     comes from the native client. That keeps one settings layout, with fields
     the native renderer actually has, and no web release when the native
     client adds a video setting.
-- **During a match**, the native in-game settings (wash-fps-rust
-  `client/settings`, egui) stay. They edit the same cvars and the same files.
+- **During a match** (November 4, 2026; the egui settings screen is gone)
+  the match menu's Settings key shows the hidden page over the match with
+  `settings:open`, and the page opens the browser's in-match settings
+  overlay (`SettingsRailOverlay`). Its writes reach the files and the live
+  cvars through the mirror as in the lobby; `settings:closed` hides the
+  page and brings the match menu back. A page that never said
+  `settings:ready` gets no Settings key.
 
 ## 9. Links, navigation, downloads and the clipboard
 
