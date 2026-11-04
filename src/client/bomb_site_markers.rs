@@ -38,6 +38,8 @@ pub const GLYPH_BACKING: [f32; 4] = [24.0 / 255.0, 14.0 / 255.0, 2.0 / 255.0, 0.
 pub const RING_ALPHA: f32 = 0.75;
 /// Site blasts are bigger than a rocket.
 pub const BLAST_SCALE: f64 = 2.2;
+/// How far the detonation is felt. Map-scale, not weapon-scale.
+pub const BLAST_SHAKE_RANGE: f64 = 2600.0;
 /// Seconds between blast sounds, so a long chain reads as blasts not mud.
 pub const BLAST_SOUND_MIN_GAP: f64 = 0.09;
 /// The torus's tessellation.

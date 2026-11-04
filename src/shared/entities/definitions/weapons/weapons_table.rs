@@ -234,6 +234,32 @@ pub fn weapon_speed_bonus(id: &str) -> f64 {
     }
 }
 
+/// `WeaponDef.viewKick`: how far one shot kicks the view, in degrees, from
+/// the hip and aimed, and how long it takes to settle.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct ViewKickDef {
+    pub pitch: f64,
+    pub yaw: f64,
+    pub ads_pitch: f64,
+    pub ads_yaw: f64,
+    pub recover_seconds: f64,
+}
+
+/// `WEAPONS[id]?.viewKick`: only the machine gun kicks.
+#[must_use]
+pub fn weapon_view_kick(id: &str) -> Option<ViewKickDef> {
+    match id {
+        "machinegun" => Some(ViewKickDef {
+            pitch: 0.25,
+            yaw: 0.12,
+            ads_pitch: 0.4,
+            ads_yaw: 0.15,
+            recover_seconds: 0.14,
+        }),
+        _ => None,
+    }
+}
+
 /// `WEAPONS[id]?.hipfireBlocked`: the launchers fire only aimed, so the
 /// trigger puts the aim up (`FPSController`'s auto ADS).
 #[must_use]

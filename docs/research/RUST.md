@@ -2712,6 +2712,40 @@ whole areas rather than single items. 0.2.0 closes them in two steps.
 
 Newest first. Each entry names the commits and what proves them.
 
+### Movement review: the camera's motion against the browser (November 4, 2026)
+
+0.2.0's movement review, first person. The view effects, the slide dip,
+the ledge lift, the stair smoothing and the remote players' clips, speeds
+and crouch and slide drop were already ported and match. Found and fixed:
+
+- **No camera shake.** shagger `camera/camera_shake.rs` ports
+  `FPSController`'s shake and `ExplosionEffect.triggerCameraShake`'s
+  falloff (`explosion_shake`, with each preset's `shakeIntensity` and
+  `shakeMaxRange` on `ExplosionLook`). Rockets, grenades, plasma, blade
+  blasts and S&D site blasts (0.35, 2600 units) shake with
+  `cg_screenshake` (on); hits shake with `cg_hitshake` (off), both now
+  registered and on the Gameplay page.
+- **No view kick.** `ViewKick` was ported but never kicked: the machine
+  gun's `viewKick` (`weapon_view_kick`) now kicks on our own shots,
+  blended by ADS progress.
+- **The slide's dip did not aim.** The browser sends the camera's pitch
+  less the view kick, so the slide's dip and the ledge lift go into the
+  aim and the crosshair stays where shots land. The native aim was the
+  mouse's alone, about 12.6° off during a full slide. It now carries
+  `FirstPersonView::aim_pitch` (slide plus ledge).
+- **Speed threshold 280, not 320.** shagger's `viewport::BASE_SPEED` still
+  had the pre-beta ground speed, so bob, lean and speed FOV came in early.
+- **Weapon bob out of step.** It ran its own cycle and never saw a
+  landing. It now follows the view's walk bob (`state.bobCycle`), the
+  landing speed and `actualHorizSpeed`, as `updateWeaponBob` does.
+
+Not done here: watching someone (spectate, demos) is still a chase camera
+behind them, where the browser looks through their eyes with these same
+effects (`SpectateEyeCamera`, `DemoPovState`).
+
+Proved by unit tests in shagger (`camera_shake`, `explosion_effect`) and
+`first_person_view`.
+
 ### The weapon draws after image processing (November 4, 2026)
 
 - **Found.** Weapon skins looked washed out next to the browser, as if the

@@ -935,6 +935,8 @@ pub fn page_cvars(page: SettingsPageId) -> &'static [&'static str] {
             "cg_crosshairSpread",
             "cg_crosshairDmgColor",
             "cl_fov",
+            "cg_screenshake",
+            "cg_hitshake",
             "show_fps",
             "cl_showspeed",
             "cl_hints",
@@ -1012,6 +1014,19 @@ pub fn register_client_cvars(cvars: &mut Cvars) {
     // PlayerModelVisualSettings.ts, FPSPlayerAudio.ts.
     register_player_model_visual_cvars(cvars);
     register_player_audio_cvars(cvars);
+    // FPSController.ts.
+    int_flag(
+        cvars,
+        "cg_screenshake",
+        1,
+        "Shake the view when an explosion goes off near you (0 = off, 1 = on)",
+    );
+    int_flag(
+        cvars,
+        "cg_hitshake",
+        0,
+        "Shake the view when you are hit (0 = off, 1 = on)",
+    );
     // Game.ts.
     int_flag(
         cvars,

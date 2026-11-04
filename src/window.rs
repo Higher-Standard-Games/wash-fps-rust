@@ -408,7 +408,8 @@ impl App {
             reload: i.is_active(fps::RELOAD),
             use_key: i.is_active(fps::USE),
             yaw: f64::from(self.camera.yaw),
-            pitch: f64::from(self.camera.pitch),
+            // The slide's dip and the ledge lift aim too (`sendInput`).
+            pitch: f64::from(self.camera.pitch) + self.first_person.aim_pitch,
             // Picks go through `LivePlay::select_weapon`.
             weapon_slot: 0,
             auto_ads: false,
@@ -435,7 +436,7 @@ impl App {
             } else {
                 PlayInput {
                     yaw: f64::from(self.camera.yaw),
-                    pitch: f64::from(self.camera.pitch),
+                    pitch: f64::from(self.camera.pitch) + self.first_person.aim_pitch,
                     ..PlayInput::default()
                 }
             };
@@ -679,6 +680,17 @@ impl App {
             s.renderer.set_live_projectiles(&view.projectiles, effect_dt);
             s.renderer.play_effects(&view.effects, &view.weapons, effect_dt);
             s.renderer.play_bomb_sites(feed.match_state(), effect_dt);
+            // `triggerCameraShake`: explosions near our own body.
+            let spawned = std::mem::take(&mut s.renderer.spawned_explosions);
+            if let Feed::Play(p, _) = &*feed
+                && let Some(body) = p.feet()
+            {
+                let screenshake = with_cvars(|c| c.get_bool("cg_screenshake"));
+                let body = DVec3::new(body.x, body.y, body.z);
+                for (at, look) in spawned {
+                    self.first_person.explosion_at(look, at, body, screenshake);
+                }
+            }
             s.renderer.pickup_active.clone_from(&view.pickup_active);
             let local = match feed {
                 Feed::Play(..) => feed.local_entity(),
@@ -721,12 +733,27 @@ impl App {
                             if let Some(view_model) = &mut s.renderer.view_model {
                                 let style = shot_style(canonical_weapon_id(weapon_id));
                                 view_model.view.present_fire(&style, projectile_fire);
+                                // `kickLocalView`: only our own shots kick.
+                                if feed.local_entity() == Some(entity_id.as_str()) {
+                                    self.first_person
+                                        .kick_for_shot(canonical_weapon_id(weapon_id), view_model.view.ads_progress);
+                                }
                             }
                             s.renderer.fire_view_muzzle_flash(&self.camera);
                         }
                         SnapshotEvent::WeaponCharge {
                             entity_id, charging, ..
                         } if *entity_id == viewed => self.view_charging = *charging,
+                        // The pain shake, our own only (`GameEvents`).
+                        SnapshotEvent::Damage {
+                            entity_id,
+                            damage,
+                            weapon_id,
+                            ..
+                        } if feed.local_entity() == Some(entity_id.as_str()) => {
+                            let hitshake = with_cvars(|c| c.get_bool("cg_hitshake"));
+                            self.first_person.hit(f64::from(*damage), weapon_id, hitshake);
+                        }
                         SnapshotEvent::WeaponState {
                             entity_id,
                             current_weapon,
@@ -840,16 +867,25 @@ impl App {
         }
         s.renderer.advance_switch(f64::from(dt));
         if let Some(view_model) = &mut s.renderer.view_model {
-            let horizontal = f64::from(self.velocity.x.hypot(self.velocity.z));
-            // The view bob's walk cycle: a stride per 160 units, as a run reads.
+            let mut horizontal = f64::from(self.velocity.x.hypot(self.velocity.z));
+            // Our own eyes: the weapon bob follows the view's walk bob and
+            // feels the landings it does (`updateWeaponBob`). Anyone else's:
+            // a stride per 160 units, as a run reads.
+            let mut landing_velocity = 0.0;
             self.bob_cycle += horizontal * f64::from(dt) / 160.0 * std::f64::consts::PI;
+            let mut bob_cycle = self.bob_cycle;
+            if let Some(o) = &self.view_offset {
+                horizontal = o.horizontal_speed;
+                bob_cycle = o.bob_cycle;
+                landing_velocity = o.landing_velocity;
+            }
             view_model.view.update(&ViewModelInput {
                 delta_time: f64::from(dt),
                 grounded: self.grounded,
                 horizontal_speed: horizontal,
                 velocity_y: f64::from(self.velocity.y),
-                landing_velocity: 0.0,
-                bob_cycle: self.bob_cycle,
+                landing_velocity,
+                bob_cycle,
                 aiming: self.aiming,
                 reloading: false,
             });

@@ -13,7 +13,7 @@ use shagger::shared::js::js_hypot;
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use washoi::client::bomb_site_debris::BombSiteDebris;
-use washoi::client::bomb_site_markers::{BLAST_SCALE, BombSiteMarkers, MarkerPose};
+use washoi::client::bomb_site_markers::{BLAST_SCALE, BLAST_SHAKE_RANGE, BombSiteMarkers, MarkerPose};
 use washoi::client::cartoon_hit_effect::{CartoonHitEffect, CartoonHitRenderer};
 use washoi::client::damage_numbers::{DamageNumberRenderer, DamageNumbers};
 use washoi::client::fps_liquid_audio::play_liquid_crossing;
@@ -860,6 +860,9 @@ pub struct MapRenderer {
     pub effect_time: f64,
     /// Explosion flashes from events: their lights, looks and start times.
     live_flashes: Vec<(PooledLight, &'static ExplosionLook, f64)>,
+    /// The explosions set off since the window last took them, for the
+    /// camera shake (`triggerCameraShake`).
+    pub spawned_explosions: Vec<(DVec3, &'static ExplosionLook)>,
     /// Other players charging their blade, in the order they started
     /// (`chargingPlayers`), and this frame's glows on them.
     charging: Vec<String>,
@@ -962,9 +965,12 @@ pub struct MapRenderer {
     switch_clock: f64,
 }
 
-/// `BombSiteMarkers`' blast: the rocket's, `BLAST_SCALE` times as big.
+/// `BombSiteMarkers`' blast: the rocket's, `BLAST_SCALE` times as big, and
+/// felt across the map but gently (`BLAST_SHAKE_RANGE`).
 static BOMB_BLAST_LOOK: ExplosionLook = ExplosionLook {
     scale: ROCKET_EXPLOSION.scale * BLAST_SCALE,
+    shake_intensity: 0.35,
+    shake_max_range: BLAST_SHAKE_RANGE,
     ..ROCKET_EXPLOSION
 };
 
@@ -1176,6 +1182,7 @@ impl MapRenderer {
             let mut random = mulberry32(self.live_flashes.len() as u32 + blast.position.x.to_bits() as u32);
             self.explosions
                 .spawn(now, blast.position, &BOMB_BLAST_LOOK, DVec3::Y, &mut random);
+            self.spawned_explosions.push((blast.position, &BOMB_BLAST_LOOK));
             if let Some((intensity, range)) = explosion_flash(&BOMB_BLAST_LOOK, 0.0) {
                 let light = self.lights.acquire(
                     self.live_light_clock,
@@ -1739,6 +1746,7 @@ impl MapRenderer {
                 let normal = DVec3::new(normal.x, normal.y, normal.z);
                 let mut random = mulberry32(self.live_flashes.len() as u32 + now.to_bits() as u32);
                 self.explosions.spawn(now, position, look, normal, &mut random);
+                self.spawned_explosions.push((position, look));
                 if let Some((intensity, range)) = explosion_flash(look, 0.0) {
                     let light = self.lights.acquire(
                         self.live_light_clock,
@@ -2672,6 +2680,7 @@ pub fn build_renderer(gpu: &Gpu, map: &mut LoadedMap, output_format: wgpu::Textu
         live_light_clock: 0.0,
         effect_time: 0.0,
         live_flashes: Vec::new(),
+        spawned_explosions: Vec::new(),
         charging: Vec::new(),
         charge_glows: Vec::new(),
         sky,
