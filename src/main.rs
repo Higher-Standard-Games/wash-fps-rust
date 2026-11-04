@@ -11,6 +11,7 @@
 //! washoi [--region eu|us] [--data DIR] [--offline]
 //! washoi sync [--region eu|us] [--data DIR]
 //! washoi --version
+//! washoi loading <map> --screenshot FILE.png [--levelshot FILE.jpg] [--seconds N] [--size WxH]
 //! washoi view <map> [--data DIR] [--spawn N] [--screenshot FILE.png] [--size WxH] [--time T] [--at X,Y,Z,YAW] [--pitch DEG] [--player X,Y,Z,YAW[,CLIP[,FRAME[,quad][,WEAPON]]]]... [--projectile ID,X,Y,Z,YAW[,PITCH]]... [--explosion ID,X,Y,Z,AGE]... [--tracer X,Y,Z,X2,Y2,Z2,R,G,B,AGE]... [--muzzle X,Y,Z,R,G,B,STYLE,SCALE,DURATION,AGE]... [--impact X,Y,Z,NX,NY,NZ,IX,IY,IZ,R,G,B,HEAVY,AGE]... [--rail X,Y,Z,X2,Y2,Z2,R,G,B,KIND,NX,NY,NZ,AGE]... [--lightning MODE,X,Y,Z,X2,Y2,Z2,R,G,B,KIND,AGE]... [--hit X,Y,Z,DAMAGE,AGE[,head]]... [--teleport X,Y,Z,X2,Y2,Z2,YAW,AGE]... [--gib X,Y,Z,AGE]... [--ring X,Y,Z,KIND,RADIUS,ALPHA]... [--ragdoll X,Y,Z,YAW,DX,DY,DZ,AGE]... [--weapon ID [--aim] [--quad]] [--no-cull] [--no-lights] [--seconds N]
 //! washoi demo <file.shagdemo> [--data DIR] [--screenshot FILE.png] [--size WxH] [--time T] [--at X,Y,Z,YAW] [--pitch DEG] [--follow N] [--reel MINUTES] [--audio-out FILE.wav] [--scoreboard] [--seconds N]
 //! washoi watch <ws://game-server> [--name NAME] [--ticket TICKET] [--data DIR] [--screenshot FILE.png] [--time T] [--at X,Y,Z,YAW] [--follow N] [--seconds N]
@@ -79,6 +80,7 @@ mod bench;
 mod data_sync_screen;
 mod demo_overlay;
 mod lobby_webview;
+mod match_loading_screen;
 mod reel_overlay;
 mod region_screen;
 mod view;
@@ -108,6 +110,7 @@ fn usage() -> ! {
          usage: washoi [--region eu|us] [--data DIR] [--offline]\n\
          \x20      washoi sync [--region eu|us] [--data DIR]\n\
          \x20      washoi regions [--screenshot FILE.png [--seconds N] [--size WxH]]\n\
+         \x20      washoi loading <map> --screenshot FILE.png [--levelshot FILE.jpg] [--seconds N] [--size WxH]\n\
          \x20      washoi bench <file.shagdemo> [--data DIR] [--frames N] [--warmup N] [--follow N] [--out FILE.json]\n\
          \x20      washoi --version\n\
          \x20      washoi view <map> [--data DIR] [--spawn N] [--screenshot FILE.png] [--size WxH] [--time T] [--at X,Y,Z,YAW] [--pitch DEG] [--player X,Y,Z,YAW[,CLIP[,FRAME[,quad][,WEAPON]]]]... [--projectile ID,X,Y,Z,YAW[,PITCH]]... [--explosion ID,X,Y,Z,AGE]... [--weapon ID [--aim] [--quad]] [--no-cull] [--no-lights] [--seconds N]\n\
@@ -161,6 +164,8 @@ struct Options {
     region: Option<String>,
     /// Start with the data on disk, without checking for new data.
     offline: bool,
+    /// `washoi loading`: the levelshot to draw behind the stage.
+    levelshot: Option<PathBuf>,
     players: Vec<view::PlayerView>,
     projectiles: Vec<view::ProjectileView>,
     explosions: Vec<view::ExplosionView>,
@@ -186,6 +191,7 @@ fn parse_options(args: impl Iterator<Item = String>) -> Options {
             "--play" => o.play = true,
             "--data" => o.data = Some(PathBuf::from(value())),
             "--screenshot" => o.screenshot = Some(PathBuf::from(value())),
+            "--levelshot" => o.levelshot = Some(PathBuf::from(value())),
             "--at" => {
                 let v: Vec<f32> = value().split(',').filter_map(|n| n.trim().parse().ok()).collect();
                 o.at = Some(<[f32; 4]>::try_from(v).unwrap_or_else(|_| usage()));
@@ -457,6 +463,17 @@ fn main() {
         "lobby" => lobby(&url, &o),
         "game" => game(o),
         "regions" => regions_mode(&o),
+        "loading" => {
+            let Some(path) = &o.screenshot else { usage() };
+            let size = o.size.unwrap_or((1280, 720));
+            match match_loading_screen::screenshot(&url, o.levelshot.as_deref(), path, size, o.seconds.unwrap_or(2.0)) {
+                Ok(()) => 0,
+                Err(why) => {
+                    eprintln!("loading: {why}");
+                    1
+                }
+            }
+        }
         "bench" => {
             let mut v = view_options(&o, url.clone(), Some(PathBuf::from(&url)), None, false);
             v.bench = Some((o.frames.unwrap_or(600), o.warmup.unwrap_or(60), o.out.clone()));
@@ -484,7 +501,25 @@ fn main() {
                     o.ticket.clone(),
                 )
             });
-            view::run(&view_options(&o, url, demo, watch, mode == "play"))
+            let v = view_options(&o, url.clone(), demo, watch, mode == "play");
+            if v.screenshot.is_some() || mode == "view" {
+                view::run(&v)
+            } else {
+                // In the window, behind the loading screen, as the game does.
+                let handoff = (mode != "demo").then(|| match_loading_screen::Handoff {
+                    server_url: url,
+                    spectator: mode == "watch",
+                });
+                let lobby = region(&o).0;
+                match load_and_start(v, handoff, Some(&lobby)) {
+                    None => 0,
+                    Some(Ok(code)) => code,
+                    Some(Err(why)) => {
+                        eprintln!("{why}");
+                        1
+                    }
+                }
+            }
         }
         _ => usage(),
     };
@@ -611,18 +646,25 @@ fn lobby_mode(lobby: &str, o: &Options) -> i32 {
         match lobby_webview::run(&page, &mirror, after.take()) {
             Ok(lobby_webview::LobbyOutcome::Quit) => return 0,
             Ok(lobby_webview::LobbyOutcome::Match(c)) => {
-                let started = if let Some(demo) = &c.demo {
+                let (v, handoff) = if let Some(demo) = &c.demo {
                     println!("lobby: demo {}", demo.display());
                     let mut v = view_options(o, c.map.clone(), Some(demo.clone()), None, false);
                     v.reel = c.reel.or(o.reel);
-                    view::start(&v)
+                    (v, None)
                 } else {
                     let how = if c.play { "play" } else { "watch" };
                     println!("lobby: {how} at {}", c.server_url);
                     let watch = Some((c.server_url.clone(), c.name.clone(), c.admission_ticket.clone()));
                     let mut v = view_options(o, c.server_url.clone(), None, watch, c.play);
                     v.team.clone_from(&c.team);
-                    view::start(&v)
+                    let handoff = match_loading_screen::Handoff {
+                        server_url: c.server_url.clone(),
+                        spectator: !c.play,
+                    };
+                    (v, Some(handoff))
+                };
+                let Some(started) = load_and_start(v, handoff, Some(lobby)) else {
+                    return 0;
                 };
                 let error = started.err();
                 if let Some(why) = &error {
@@ -634,6 +676,41 @@ fn lobby_mode(lobby: &str, o: &Options) -> i32 {
                 });
             }
             Err(e) => return fatal(&format!("lobby: {e}")),
+        }
+    }
+}
+
+/// The match loading screen while the match connects and its map loads,
+/// then the match in the same window; `None` when the window was closed.
+/// `lobby` is the lobby's address, which names the site of the levelshots.
+fn load_and_start(
+    v: view::ViewOptions,
+    handoff: Option<match_loading_screen::Handoff>,
+    lobby: Option<&str>,
+) -> Option<Result<i32, String>> {
+    let v = std::sync::Arc::new(v);
+    Some(match match_loading_screen::run(v.clone(), handoff, lobby) {
+        Ok(match_loading_screen::Loaded::Ready(prepared)) => view::start_prepared(&v, *prepared),
+        Ok(match_loading_screen::Loaded::Failed(why)) => Err(why),
+        Ok(match_loading_screen::Loaded::Back) => Ok(0),
+        Ok(match_loading_screen::Loaded::Quit) => return None,
+        Err(why) => Err(why),
+    })
+}
+
+/// `washoi lobby ... --window`: the match from the lobby's handoff, behind
+/// the loading screen, as the game starts one.
+fn windowed(v: view::ViewOptions, server_url: &str, play: bool, lobby: &str) -> i32 {
+    let handoff = match_loading_screen::Handoff {
+        server_url: server_url.to_owned(),
+        spectator: !play,
+    };
+    match load_and_start(v, Some(handoff), Some(lobby)) {
+        None => 0,
+        Some(Ok(code)) => code,
+        Some(Err(why)) => {
+            eprintln!("{why}");
+            1
         }
     }
 }
@@ -834,7 +911,8 @@ fn lobby(url: &str, o: &Options) -> i32 {
                         client.disconnect();
                         if o.window {
                             let watch = Some((server.clone(), name.clone(), None));
-                            return view::run(&view_options(o, server, None, watch, false));
+                            let v = view_options(o, server.clone(), None, watch, false);
+                            return windowed(v, &server, false, url);
                         }
                         return play_match(&server, &name, None, o.seconds.unwrap_or(15.0), false, &data_dir(o));
                     }
@@ -899,7 +977,8 @@ fn lobby(url: &str, o: &Options) -> i32 {
                 if o.window {
                     // Into the window, playing (or watching, for a spectator's seat).
                     let watch = Some((server_url.clone(), name.clone(), admission_ticket));
-                    return view::run(&view_options(o, server_url, None, watch, true));
+                    let v = view_options(o, server_url.clone(), None, watch, true);
+                    return windowed(v, &server_url, true, url);
                 }
                 return play_match(
                     &server_url,

@@ -10,9 +10,8 @@
 use crate::client::game_events::canonical_weapon_id;
 use crate::liquid::client::local_air_tracker::{AirEvent, LocalAirTracker};
 use shagger::shared::js::{js_cos, js_sin};
-use std::cell::Cell;
 use std::path::{Path, PathBuf};
-use std::rc::Rc;
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use shagger::network::client::hosts::network_game_host::HostEvent;
@@ -223,8 +222,10 @@ pub struct LivePlay {
     /// The weapon in hand, from `weapon_state`.
     pub weapon: String,
     pub closed: Option<String>,
-    spawn_facing: Rc<Cell<Option<f64>>>,
-    teleport: Rc<Cell<Option<LocalTeleport>>>,
+    // Shared with the predictor's callbacks; a `Mutex` so the connection
+    // can be made on the loading screen's thread.
+    spawn_facing: Arc<Mutex<Option<f64>>>,
+    teleport: Arc<Mutex<Option<LocalTeleport>>>,
     was_jumppad_launching: bool,
     /// The local air, mirrored for the HUD and the gasp (`LocalLiquid`).
     pub air: LocalAirTracker,
@@ -289,20 +290,20 @@ impl LivePlay {
                     }
                     // Face the way the map's spawn point faces whenever the
                     // server places us there (`MatchMapLoader`'s `onSpawnFacing`).
-                    let spawn_facing = Rc::new(Cell::new(None));
-                    let facing = Rc::clone(&spawn_facing);
-                    predictor.on_spawn_facing(Box::new(move |yaw| facing.set(Some(yaw))));
+                    let spawn_facing = Arc::new(Mutex::new(None));
+                    let facing = Arc::clone(&spawn_facing);
+                    predictor.on_spawn_facing(Box::new(move |yaw| *lock(&facing) = Some(yaw)));
                     // MatchMapLoader's `onTeleport`: turn to the exit and
                     // play the effect, on fresh predictions only.
-                    let teleport = Rc::new(Cell::new(None));
-                    let teleported = Rc::clone(&teleport);
+                    let teleport = Arc::new(Mutex::new(None));
+                    let teleported = Arc::clone(&teleport);
                     predictor.on_teleport(Box::new(move |exit_yaw, from, to, entry_yaw| {
-                        teleported.set(Some(LocalTeleport {
+                        *lock(&teleported) = Some(LocalTeleport {
                             exit_yaw,
                             from,
                             to,
                             entry_yaw,
-                        }));
+                        });
                     }));
                     return Ok(Self {
                         session,
@@ -390,12 +391,12 @@ impl LivePlay {
     /// The yaw to turn the view to, once, after the server placed us at a
     /// spawn point.
     pub fn take_spawn_facing(&self) -> Option<f64> {
-        self.spawn_facing.take()
+        lock(&self.spawn_facing).take()
     }
 
     /// Our last teleport since the last call, once.
     pub fn take_teleport(&self) -> Option<LocalTeleport> {
-        self.teleport.take()
+        lock(&self.teleport).take()
     }
 
     /// Says `text` to everyone, or the team (`sendChat`).
@@ -609,11 +610,11 @@ impl LivePlay {
             // A spawn or a teleporter turns the view before the next
             // command goes (`processSnapshots` runs before `sendInput`), not
             // a frame later when the camera takes it.
-            if let Some(yaw) = self.spawn_facing.get() {
+            if let Some(yaw) = *lock(&self.spawn_facing) {
                 input.yaw = yaw;
                 input.pitch = 0.0;
             }
-            if let Some(t) = self.teleport.get() {
+            if let Some(t) = *lock(&self.teleport) {
                 input.yaw = t.exit_yaw;
             }
             // Fire-and-forget: the pick goes with one command.
@@ -642,6 +643,11 @@ impl LivePlay {
             self.session.send(SessionRequest::Command(command));
         }
     }
+}
+
+/// The value, whether or not a callback panicked holding it.
+fn lock<T>(m: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
+    m.lock().unwrap_or_else(std::sync::PoisonError::into_inner)
 }
 
 #[cfg(test)]

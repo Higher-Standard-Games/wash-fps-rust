@@ -713,18 +713,23 @@ pub struct LoadedMap {
     pub shot_world: Option<SweepCollisionBackend>,
 }
 
-/// Reads every package in `data` and the map's BSP from them.
-pub fn load_map(data: &Path, map: &str) -> Result<LoadedMap, String> {
+/// Reads every package in `data` and the map's BSP from them, reporting
+/// the load's phases as it reaches them.
+pub fn load_map(data: &Path, map: &str, report: &mut dyn FnMut(PrepareStep)) -> Result<LoadedMap, String> {
+    let mut phase = |phase: &'static str, detail: Option<String>| report(PrepareStep::Phase { phase, detail });
+    phase("Dependencies", Some("Reading the packages".into()));
     let mut pk3 = Pk3Loader::new();
     let count = ingest_pk3_dir(&mut pk3, data);
     if count == 0 {
         return Err(format!("no packages in {}", data.display()));
     }
     let path = format!("maps/{map}.bsp");
+    phase("Geometry", Some(path.clone()));
     let bytes = pk3
         .get_file(&path)
         .ok_or_else(|| format!("{path} is in none of the {count} packages"))?;
     let bsp = load(&bytes).map_err(|e| format!("{path}: {e}"))?;
+    phase("Collision", None);
     let collision = load_collision(&bytes).map_err(|e| format!("{path}: {e}"))?;
     let table = extract_pickups(&collision.entities);
     let mut world = SharedCollisionWorld::new(SweepBackendAdapter {
@@ -752,6 +757,7 @@ pub fn load_map(data: &Path, map: &str) -> Result<LoadedMap, String> {
             Some(Camera::from_q3([x, y, z + DEFAULT_VIEWHEIGHT as f32], angle))
         })
         .collect();
+    phase("Shaders", None);
     let mut shaders = Q3ShaderRegistry::new();
     shaders.load_shaders(&mut pk3);
     Ok(LoadedMap {
@@ -2572,7 +2578,40 @@ pub fn run(o: &ViewOptions) -> i32 {
 /// # Errors
 /// Why the view could not start.
 pub fn start(o: &ViewOptions) -> Result<i32, String> {
-    let mut feed = if let Some(path) = &o.demo {
+    let prepared = prepare(o, &mut |_| {})?;
+    start_prepared(o, prepared)
+}
+
+/// What a match, a demo or a map needs before its window opens: the feed
+/// connected or read, the map loaded, and the sound decoded.
+pub struct Prepared {
+    pub feed: Option<Feed>,
+    pub map: LoadedMap,
+    pub map_name: String,
+    /// For the window: the match's sound (none for a screenshot).
+    pub audio: Option<GameAudio>,
+}
+
+/// How far [`prepare`] has got, for the loading screen.
+#[derive(Debug, Clone, PartialEq)]
+pub enum PrepareStep {
+    /// The game server welcomed us; its map is next.
+    Connected { map: String },
+    /// A phase of the map's load, by `TransferLoadingView`'s phase names.
+    Phase {
+        phase: &'static str,
+        detail: Option<String>,
+    },
+}
+
+/// Connects to the match or reads the demo, then loads its map, reporting
+/// each step: the part of [`start`] the loading screen runs on a thread of
+/// its own (`MatchMapLoader.loadServerMap`).
+///
+/// # Errors
+/// Why the view could not start.
+pub fn prepare(o: &ViewOptions, report: &mut dyn FnMut(PrepareStep)) -> Result<Prepared, String> {
+    let feed = if let Some(path) = &o.demo {
         match DemoPlayback::load(path) {
             Ok(d) => {
                 println!(
@@ -2623,12 +2662,44 @@ pub fn start(o: &ViewOptions) -> Result<i32, String> {
         Some(Feed::Play(p, _)) => p.map.clone(),
         None => o.map.clone(),
     };
-    let mut map = match load_map(&o.data, &map_name) {
-        Ok(m) => m,
-        Err(why) => {
-            return Err(why.to_string());
-        }
-    };
+    report(PrepareStep::Connected { map: map_name.clone() });
+    let mut map = load_map(&o.data, &map_name, report)?;
+    // Without a sound card the game still keeps its sounds, and plays
+    // them once one appears (`AudioV2Sfx::maintain`).
+    let audio = (o.screenshot.is_none() && feed.is_some()).then(|| {
+        report(PrepareStep::Phase {
+            phase: "Assets",
+            detail: Some("Sounds".into()),
+        });
+        let mut audio = GameAudio::new(AudioV2Sfx::open_device_or_wait());
+        println!(
+            "audio: {} sounds, {} music tracks at {} Hz",
+            audio.preload(&mut map.pk3),
+            audio.load_music(&map.pk3, &o.data),
+            audio.sfx.sample_rate()
+        );
+        audio
+    });
+    Ok(Prepared {
+        feed,
+        map,
+        map_name,
+        audio,
+    })
+}
+
+/// The rest of [`start`], once [`prepare`] is done: the window, or the
+/// screenshot.
+///
+/// # Errors
+/// Why the view could not start.
+pub fn start_prepared(o: &ViewOptions, prepared: Prepared) -> Result<i32, String> {
+    let Prepared {
+        mut feed,
+        mut map,
+        map_name,
+        audio,
+    } = prepared;
     map.players.clone_from(&o.players);
     map.projectiles.clone_from(&o.projectiles);
     map.explosions.clone_from(&o.explosions);
@@ -2673,18 +2744,6 @@ pub fn start(o: &ViewOptions) -> Result<i32, String> {
         o.spawn.min(map.spawns.len() - 1)
     );
     let Some(path) = &o.screenshot else {
-        // Without a sound card the game still keeps its sounds, and plays
-        // them once one appears (`AudioV2Sfx::maintain`).
-        let audio = feed.as_ref().map(|_| {
-            let mut audio = GameAudio::new(AudioV2Sfx::open_device_or_wait());
-            println!(
-                "audio: {} sounds, {} music tracks at {} Hz",
-                audio.preload(&mut map.pk3),
-                audio.load_music(&map.pk3, &o.data),
-                audio.sfx.sample_rate()
-            );
-            audio
-        });
         let bench = o
             .bench
             .as_ref()

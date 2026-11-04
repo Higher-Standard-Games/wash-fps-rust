@@ -178,6 +178,9 @@ impl App {
             bench.attach(&gpu);
             self.surface_size = [config.width, config.height];
         }
+        // The match loading screen stays up while the renderer is built.
+        let mut surface = surface;
+        crate::match_loading_screen::draw_curtain(&window, &gpu, &mut surface, &config);
         let map = self.map.as_mut().expect("the map is loaded before the window opens");
         let renderer = build_renderer(&gpu, map, config.format);
         let hdr = HdrTarget::new(&gpu, config.width, config.height);

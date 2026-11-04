@@ -316,6 +316,21 @@ The native side, on `match:play`:
 2. Hides the webview, runs the existing `view::start` path with
    `watch = (serverUrl, name, ticket)` and `play = true`, and sends
    `match:started`.
+
+   The match loading screen (`src/match_loading_screen.rs`, drawn with
+   shagger's `ui::transfer_loading_view`, `components::connecting_overlay`
+   and `components::lobby_twin`) covers the window from here to the
+   match's first frame. It carries on the page's handoff (`ConnectingOverlay`,
+   status CONNECTING) while `view::prepare` connects on a thread of its own,
+   then becomes `TransferLoadingView` in its place, without a fade, as the
+   browser's does: the map's name over its levelshot (fetched from the
+   region's `/data/levelshots/`, kept in the cache), its load phases on the
+   rail and the bar. The renderer is built in the match window, so the
+   screen's last frame is drawn there first (`draw_curtain`) and stays up
+   over that build. A failure stays up for 3 s (any key goes on), then
+   returns to the page as `match:ended { reason: "disconnected" }`; Esc
+   returns to the page at once. Demos from the Demos page get the local
+   map's version of the screen (steps Map data, World, Game).
 3. If the game server refuses the ticket, sends `match:ticket_needed`. It
    waits up to 10 s for `match:ticket`, then gives up with
    `match:ended { reason: "disconnected" }`.

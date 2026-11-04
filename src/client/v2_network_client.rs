@@ -158,9 +158,9 @@ fn lifts_match(predicted: &[LiftState], server: &[LiftState]) -> bool {
 }
 
 /// A fresh prediction teleported the player: exit yaw, from, to, entry yaw.
-pub type TeleportCallback = Box<dyn FnMut(f64, Vec3, Vec3, f64)>;
+pub type TeleportCallback = Box<dyn FnMut(f64, Vec3, Vec3, f64) + Send>;
 /// The server placed the player at a spawn: the spawn's yaw.
-pub type SpawnFacingCallback = Box<dyn FnMut(f64)>;
+pub type SpawnFacingCallback = Box<dyn FnMut(f64) + Send>;
 
 /// One command as the caller makes it.
 #[derive(Debug, Clone, Copy, PartialEq)]

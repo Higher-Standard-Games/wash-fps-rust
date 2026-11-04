@@ -14,7 +14,7 @@ repository = "https://github.com/Higher-Standard-Games/wash-fps-rust"
 #   [patch."https://github.com/Higher-Standard-Games/shagger"]
 #   shagger = { path = "../shagger/crates/shagger" }
 #   shagger_shared = { path = "../shagger/crates/shagger_shared" }
-shagger = { git = "https://github.com/Higher-Standard-Games/shagger", rev = "c09982793609739780fa64cf90fbe37b1993a728", features = ["webview"] }
+shagger = { git = "https://github.com/Higher-Standard-Games/shagger", rev = "143920188a31e44bb2f56dc218088ee64da065a6", features = ["webview"] }
 
 # The window and its events for `washoi view` (RUST.md 12): winit 0.30, the
 # release wgpu 30 and egui 0.37 work with. Without winit's drawn Wayland
