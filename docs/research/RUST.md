@@ -2712,6 +2712,37 @@ whole areas rather than single items. 0.2.0 closes them in two steps.
 
 Newest first. Each entry names the commits and what proves them.
 
+### 0.2.0 review: items (November 4, 2026)
+
+Map items, dropped weapons and their effects, compared with wash-fps
+`world/FPSPickup.ts`, SHAG `engine/world/Pickup.ts`,
+`world/pickups/procedural` and `client/DroppedWeaponRenderer.ts`.
+
+- **Server visibility, checked.** The snapshot's `pickupActiveMask` reaches
+  the renderer in live play and demos (`reconcileActiveSet`, every
+  snapshot); the server keeps the mode's excluded items in the mask,
+  permanently off, so they stay hidden. Weapon pickups, which have no
+  procedural visual, are drawn until the mask says otherwise, as in the
+  browser.
+- **Fixed: weapons on the floor were never drawn.** `client/dropped_weapon_renderer.rs`
+  ports `DroppedWeaponRenderer`: a snapshot `item_` entity is a weapon on
+  the floor; one seen within 500 ms of its `weapon_drop` replays the server's
+  throw (`stepThrownItem`, over the shots' collision), spinning, rolling and
+  tumbling, and lies on its side when it lands; a late one eases to the
+  server's spot; a demo draws it where the server says, unturned. Drawn
+  with the hand weapons' models (`HandWeapons::world_draws`). Checked on
+  screen in the dm14 golden demo (electrobolt and grenade launcher on the
+  floor at 6 s).
+- **Fixed: no collect or respawn effects, and items shown before the server
+  spoke.** `procedural_pickup_transient.rs` ports the collection burst (six
+  fragments and a flash, faded and tumbled); `PickupVisualState` ports
+  `Pickup.setActiveState` with the visual's `setActive`: hidden until the
+  first mask in a match or demo (`startHidden`), first word silent, the
+  burst on collection, the 0.35-to-1 scale-in on respawn. Checked on screen
+  in the dm14 golden demo (two health pickups taken at 2.9 and 3.0 s).
+- **Not yet.** The weapon pickup and swap prompt (`PickupPrompt.ts`, "PRESS
+  [F] TO SWAP TO ..."), PVS culling of items (the depth test hides them
+  behind walls), the far-detail cut on dropped weapons.
 ### Weapon barrels and effects review against the browser (November 4, 2026)
 
 Read side by side: SHAG `WeaponBarrels`, `WeaponViewManager` (`presentFire`,
@@ -2827,6 +2858,7 @@ effects (`SpectateEyeCamera`, `DemoPovState`).
 
 Proved by unit tests in shagger (`camera_shake`, `explosion_effect`) and
 `first_person_view`.
+
 
 ### The weapon draws after image processing (November 4, 2026)
 

@@ -16,6 +16,7 @@ use washoi::client::bomb_site_debris::BombSiteDebris;
 use washoi::client::bomb_site_markers::{BLAST_SCALE, BLAST_SHAKE_RANGE, BombSiteMarkers, MarkerPose};
 use washoi::client::cartoon_hit_effect::{CartoonHitEffect, CartoonHitRenderer};
 use washoi::client::damage_numbers::{DamageNumberRenderer, DamageNumbers};
+use washoi::client::dropped_weapon_renderer::{DropThrow, DroppedWeaponInfo, DroppedWeaponRenderer};
 use washoi::client::fps_liquid_audio::play_liquid_crossing;
 use washoi::client::gib_system::{GibRenderer, GibSystem};
 use washoi::client::quad_damage_visual::{get_quad_damage_pulse, mask_has_quad};
@@ -944,6 +945,9 @@ pub struct MapRenderer {
     pub pickup_active: Vec<bool>,
     /// Seconds since the items were built (`visualElapsed`).
     pub item_time: f64,
+    /// Weapons on the floor (`DroppedWeaponRenderer`), drawn with
+    /// `hand_weapons`' models.
+    pub dropped_weapons: DroppedWeaponRenderer,
     /// This frame's draws.
     frame_draws: Vec<ModelDraw>,
     /// Projectile models and where they are held.
@@ -1973,6 +1977,48 @@ impl MapRenderer {
         (!hit.start_solid && hit.fraction < 1.0).then(|| DVec3::new(hit.end_pos.x, hit.end_pos.y, hit.end_pos.z))
     }
 
+    /// `FPSPickup.reconcileActiveSet` with the server's word on which map
+    /// pickups are up, by id, then `dt` seconds of the procedural pickups'
+    /// collection bursts and respawn assemblies.
+    pub fn play_pickups(&mut self, active: &[bool], dt: f64) {
+        self.pickup_active.clear();
+        self.pickup_active.extend_from_slice(active);
+        let mask = &self.pickup_active;
+        self.items
+            .reconcile(self.item_time, dt, |id| mask.get(id as usize).copied());
+    }
+
+    /// `GameEvents`' dropped weapons, after [`Self::play_effects`] this
+    /// frame: the throws `weapon_drop` starts, the snapshot's weapons on the
+    /// floor, and `dt` seconds of their motion through the map.
+    pub fn play_dropped_weapons(
+        &mut self,
+        events: &[SnapshotEvent],
+        items: &HashMap<String, DroppedWeaponInfo>,
+        dt: f64,
+    ) {
+        let now = self.effect_time * 1000.0;
+        for event in events {
+            if let SnapshotEvent::WeaponDrop { entity_id, at, vel, .. } = event {
+                let thrown = DropThrow {
+                    start: [at.x, at.y, at.z],
+                    velocity: [vel.x, vel.y, vel.z],
+                };
+                self.dropped_weapons.stash_throw(entity_id, thrown, now);
+            }
+        }
+        self.dropped_weapons.sync_server_entities(items, now);
+        // The shots' collision is the server's map: the throws step through it.
+        let Some(backend) = self.shot_world.take() else {
+            self.dropped_weapons
+                .update(dt, None::<&mut SharedCollisionWorld<SweepBackendAdapter>>);
+            return;
+        };
+        let mut world = SharedCollisionWorld::new(SweepBackendAdapter { backend });
+        self.dropped_weapons.update(dt, Some(&mut world));
+        self.shot_world = Some(world.backend.backend);
+    }
+
     /// `camera` is the eye our own gun is drawn under.
     pub fn play_effects(
         &mut self,
@@ -2155,6 +2201,14 @@ impl MapRenderer {
         }
         self.frame_draws.extend_from_slice(&self.model_draws[next..]);
         self.frame_draws.extend_from_slice(&self.live_draws);
+        for (_, weapon) in self.dropped_weapons.visuals() {
+            self.hand_weapons.world_draws(
+                &weapon.weapon_id,
+                weapon.position,
+                weapon.rotation,
+                &mut self.frame_draws,
+            );
+        }
         self.gib_renderer.draws(&self.gibs, &mut self.frame_draws);
         for fragment in self.bomb_debris.fragments() {
             if let Some(model) = self.debris_models.get(&fragment.path) {
@@ -2169,11 +2223,9 @@ impl MapRenderer {
             self.ragdoll_trails
                 .draws(gpu, &mut self.models, ragdolls, &mut self.frame_draws);
         }
-        let active = &self.pickup_active;
         self.items.draws(
             self.item_time,
             camera_rotation(camera.view().as_dmat4()),
-            |id| pickup_shown(active, id),
             &mut self.frame_draws,
         );
         for (model, world) in &self.projectiles {
@@ -2606,7 +2658,11 @@ pub fn build_renderer(gpu: &Gpu, map: &mut LoadedMap, output_format: wgpu::Textu
     }
     let mut model_draws = pickups.draws;
     let weapon_pickup_spans = pickups.spans;
-    let items = build_procedural_pickups(gpu, &mut map.pk3, &mut models, &map.pickups);
+    let mut items = build_procedural_pickups(gpu, &mut map.pk3, &mut models, &map.pickups);
+    if map.remote_players {
+        // A match or demo: the server says which are up (`startHidden`).
+        items.set_server_managed();
+    }
     println!("items: {} procedural pickups", items.len());
     if !items.missing_icons.is_empty() {
         println!("  no ammo icon: {}", items.missing_icons.join(", "));
@@ -2949,6 +3005,7 @@ pub fn build_renderer(gpu: &Gpu, map: &mut LoadedMap, output_format: wgpu::Textu
         weapon_pickup_spans,
         pickup_active: Vec::new(),
         item_time: 0.0,
+        dropped_weapons: DroppedWeaponRenderer::default(),
         frame_draws: Vec::new(),
         static_joints: joints.len(),
         joints,
@@ -3392,8 +3449,10 @@ pub fn start_prepared(o: &ViewOptions, prepared: Prepared) -> Result<i32, String
             renderer.set_live_players(&drawn, 1.0 / 60.0, 1.0 / 60.0);
             renderer.set_live_projectiles(&projectiles, 1.0 / 60.0, &camera);
             renderer.play_effects(&view.effects, &view.weapons, 1.0 / 60.0, &camera);
+            renderer.dropped_weapons.use_server_transforms = matches!(feed, Feed::Demo(_));
+            renderer.play_dropped_weapons(&view.effects, &view.dropped_weapons, 1.0 / 60.0);
             renderer.play_bomb_sites(feed.match_state(), 1.0 / 60.0);
-            renderer.pickup_active.clone_from(&view.pickup_active);
+            renderer.play_pickups(&view.pickup_active, 1.0 / 60.0);
             renderer.play_gibs(&view.effects, 1.0 / 60.0);
             renderer.play_hit_feedback(
                 &view.effects,

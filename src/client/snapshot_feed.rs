@@ -9,6 +9,7 @@ use std::collections::HashMap;
 use shagger::network::client::snapshot_buffer::{EntitySnapshot, InterpolatedEntity, SnapshotBuffer};
 use shagger::shared::net::game_state::{GameState, PlayerState};
 
+use crate::client::dropped_weapon_renderer::DroppedWeaponInfo;
 use crate::client::match_state_manager::MatchStateManager;
 use crate::client::remote_player_logic::{apply_roster, extract_entities};
 use crate::shared::net::snapshot_events::SnapshotEvent;
@@ -44,6 +45,9 @@ pub struct DemoView {
     /// Which map pickups are there to take, by pickup id: the server's
     /// `pickupActiveMask` as the snapshots so far tell it.
     pub pickup_active: Vec<bool>,
+    /// The weapons on the floor: the newest snapshot's `item_` entities
+    /// (`syncServerEntities`), by id.
+    pub dropped_weapons: HashMap<String, DroppedWeaponInfo>,
 }
 
 /// `PROJECTILE_FORGET_TICKS`: 11 seconds at `DEFAULT_PHYSICS_TICK_RATE` (125).
@@ -73,6 +77,8 @@ pub struct SnapshotFeed {
     snapshots: Vec<HashMap<String, EntitySnapshot>>,
     /// `FPSPickup.reconcileActiveSet`'s pickups, by id.
     pickup_active: Vec<bool>,
+    /// The newest snapshot's `item_` entities.
+    dropped_weapons: HashMap<String, DroppedWeaponInfo>,
 }
 
 /// `FPSPickup.reconcileActiveSet`: each pickup the mask names takes its
@@ -98,6 +104,7 @@ impl SnapshotFeed {
         // Every snapshot: the convergent source of truth for which pickups
         // are up, so a dropped snapshot heals on the next one.
         reconcile_active_set(&mut self.pickup_active, &state.pickup_active_mask);
+        self.dropped_weapons = extract_dropped_weapons(state);
         self.roster = state.players.iter().map(|(k, p)| (k.to_owned(), p.clone())).collect();
         let entities = extract_entities(state, local_entity_id);
         // The sounds hear every player, our own footsteps too
@@ -121,6 +128,7 @@ impl SnapshotFeed {
                 | SnapshotEvent::Death { .. }
                 | SnapshotEvent::PickupNotify { .. }
                 | SnapshotEvent::PowerupSpawn { .. }
+                | SnapshotEvent::WeaponDrop { .. }
                 | SnapshotEvent::PowerupState { .. }
                 | SnapshotEvent::CombatState { .. }
                 | SnapshotEvent::Chat { .. } => {
@@ -184,6 +192,7 @@ impl SnapshotFeed {
             teams: self.teams.clone(),
             snapshots: std::mem::take(&mut self.snapshots),
             pickup_active: self.pickup_active.clone(),
+            dropped_weapons: self.dropped_weapons.clone(),
         }
     }
 }
@@ -220,6 +229,30 @@ fn extract_projectiles(state: &GameState<SnapshotEvent>) -> HashMap<String, Enti
                 vy: velocity.y,
                 vz: velocity.z,
                 ..EntitySnapshot::default()
+            },
+        );
+    }
+    out
+}
+
+/// `GameEvents`' dropped weapon sync: each `item_` entity's position and
+/// `weaponMeta`.
+fn extract_dropped_weapons(state: &GameState<SnapshotEvent>) -> HashMap<String, DroppedWeaponInfo> {
+    let mut out = HashMap::new();
+    for (id, entity) in state.entities.iter() {
+        if !id.starts_with("item_") {
+            continue;
+        }
+        let Some(position) = entity.position else {
+            continue;
+        };
+        let meta = entity.weapon_meta.as_ref();
+        out.insert(
+            id.to_owned(),
+            DroppedWeaponInfo {
+                position: [position.x, position.y, position.z],
+                weapon_id: meta.map(|m| m.weapon_id.clone()),
+                settled: meta.is_some_and(|m| m.settled),
             },
         );
     }

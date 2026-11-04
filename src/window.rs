@@ -717,6 +717,9 @@ impl App {
                 .set_live_projectiles(&view.projectiles, effect_dt, &self.camera);
             s.renderer
                 .play_effects(&view.effects, &view.weapons, effect_dt, &self.camera);
+            s.renderer.dropped_weapons.use_server_transforms = matches!(feed, Feed::Demo(_));
+            s.renderer
+                .play_dropped_weapons(&view.effects, &view.dropped_weapons, effect_dt);
             s.renderer.play_bomb_sites(feed.match_state(), effect_dt);
             // `triggerCameraShake`: explosions near our own body.
             let spawned = std::mem::take(&mut s.renderer.spawned_explosions);
@@ -729,7 +732,7 @@ impl App {
                     self.first_person.explosion_at(look, at, body, screenshake);
                 }
             }
-            s.renderer.pickup_active.clone_from(&view.pickup_active);
+            s.renderer.play_pickups(&view.pickup_active, effect_dt);
             s.renderer.play_gibs(&view.effects, effect_dt);
             // Our own death: the camera follows the corpse or the burst
             // until we are back (`applyDeathCamera`).
