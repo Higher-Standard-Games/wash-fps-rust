@@ -2683,6 +2683,28 @@ profile, leaderboard, demos and welcome views, the egui settings screen and
 `washoi menu`) was removed: the webview lobby replaces it, and the log
 entries below that name those files are history (WEBVIEW_LOBBY.md 16).
 
+### 0.2.0: the goal (November 4, 2026)
+
+The second play-through, on the webview lobby build, found gaps across
+whole areas rather than single items. 0.2.0 closes them in two steps.
+
+1. **The fixes under way** (each its own thread): key defaults as the
+   browser sets them (F4 ready up and the rest), the blade's charge, the
+   view weapons' barrels and animations (the Electrobolt scope among
+   them), weapon normal maps, Search & Destroy's map models, debris and
+   blast, the HUD's smoothing, the match loading screen, and wdm5's
+   teleporter sky shader.
+2. **A review against the browser game**, area by area, listing every
+   difference and closing it:
+   - shader features (the Q3 shader keywords and stages the maps use);
+   - weapon animations (switch, holster, reload, charge, slash, ADS);
+   - weapon barrels and effects (barrels, muzzle flashes and lights,
+     tracers, beams, impacts);
+   - items (models, procedural visuals, their collect and respawn
+     effects, the server's active set).
+
+0.2.0 is released when both are done.
+
 ## 24. Progress log
 
 Newest first. Each entry names the commits and what proves them.
