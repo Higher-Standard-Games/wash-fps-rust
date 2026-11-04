@@ -142,6 +142,7 @@ struct App {
     report: Arc<Mutex<Report>>,
     pending_shots: Vec<(Instant, String)>,
     replies: Arc<Mutex<Vec<String>>>,
+    finished: bool,
 }
 
 impl App {
@@ -183,7 +184,20 @@ impl App {
                 println!("navigation: {url}");
                 true
             })
-            .with_bounds(bounds(window.inner_size()));
+            .with_bounds(bounds(window.inner_size()))
+            // The lobby must keep its timers while a match hides it. macOS
+            // honours this; Windows needs Chromium's own switches below.
+            .with_background_throttling(wry::BackgroundThrottlingPolicy::Disabled);
+        #[cfg(windows)]
+        {
+            use wry::WebViewBuilderExtWindows;
+            // wry's own defaults first: setting these replaces them.
+            builder = builder.with_additional_browser_args(
+                "--disable-features=msWebOOUI,msPdfOOUI,msSmartScreenProtection,IntensiveWakeUpThrottling \
+                 --disable-background-timer-throttling --disable-renderer-backgrounding \
+                 --autoplay-policy=no-user-gesture-required",
+            );
+        }
         builder = match &self.o.url {
             Some(url) => builder.with_url(url),
             None => builder.with_html(TEST_PAGE.replace("WS_URL", &self.o.ws)),
@@ -265,6 +279,10 @@ impl App {
     }
 
     fn finish(&mut self) {
+        // Windows runs `about_to_wait` again after `exit`: write once.
+        if std::mem::replace(&mut self.finished, true) {
+            return;
+        }
         let mut r = self.report.lock().unwrap();
         let mut json = serde_json::json!({
             "os": std::env::consts::OS,
@@ -519,6 +537,9 @@ impl ApplicationHandler for App {
                 r.rss_kb.push((t, own, kids));
             }
         }
+        if self.finished {
+            return;
+        }
         if t >= self.o.seconds {
             self.finish();
             el.exit();
@@ -553,6 +574,7 @@ fn main() {
         report: Arc::default(),
         pending_shots: Vec::new(),
         replies: Arc::default(),
+        finished: false,
     };
     event_loop.run_app(&mut app).expect("run");
     let mut s = String::new();

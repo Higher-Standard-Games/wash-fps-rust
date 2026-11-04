@@ -37,7 +37,7 @@ jobs:
           node-version: 22
       - name: Linux packages
         if: runner.os == 'Linux'
-        run: sudo apt-get update && sudo apt-get install -y libwebkit2gtk-4.1-dev xvfb imagemagick
+        run: sudo apt-get update && sudo apt-get install -y libwebkit2gtk-4.1-dev libxkbcommon-x11-0 xvfb imagemagick
       - name: Build
         working-directory: tools/webview_spike
         run: cargo build --release
