@@ -2701,7 +2701,10 @@ whole areas rather than single items. 0.2.0 closes them in two steps.
    - weapon barrels and effects (barrels, muzzle flashes and lights,
      tracers, beams, impacts);
    - items (models, procedural visuals, their collect and respawn
-     effects, the server's active set).
+     effects, the server's active set);
+   - movement animations and the camera's motion with them (crouch
+     slide and its camera tilt, wall jump, ledge grab, landing, swim,
+     jump pads), first person and on other players.
 
 0.2.0 is released when both are done.
 
