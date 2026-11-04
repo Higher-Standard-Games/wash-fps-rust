@@ -36,13 +36,14 @@ shot() {
 }
 
 status=1
+why="no hello from the page in ${limit}s"
 for _ in $(seq "$limit"); do
   if grep -q "lobby: the page said hello" "$log"; then
     status=0
     break
   fi
   if ! kill -0 "$pid" 2>/dev/null; then
-    echo "the client stopped before the page said hello"
+    why="the client stopped before the page said hello"
     break
   fi
   sleep 1
@@ -56,6 +57,6 @@ cat "$log"
 if [ $status = 0 ]; then
   echo "lobby smoke: ok"
 else
-  echo "lobby smoke: no hello from the page in ${limit}s"
+  echo "lobby smoke: $why"
 fi
 exit $status
