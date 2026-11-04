@@ -16,7 +16,9 @@ use std::cell::{Cell, RefCell};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use serde_json::{Value, json};
+use serde_json::{Map, Value, json};
+use shagger::core::cvar::with_cvars;
+use shagger::lobby::storage_mirror::StorageMirror;
 use shagger::rendering::gpu::Gpu;
 use shagger::rendering::wgpu;
 use shagger::ui::egui_layer::{EguiLayer, egui};
@@ -33,7 +35,7 @@ use crate::window::{OpenWindow, next_frame, open_window, present, run_on_event_l
 pub const BRIDGE_VERSION: u32 = 1;
 
 /// What the client offers the page, for `hello`.
-const CAPABILITIES: [&str; 4] = ["match", "external", "fullscreen", "quit"];
+const CAPABILITIES: [&str; 5] = ["match", "external", "fullscreen", "quit", "storage"];
 
 /// How long the page has to say hello before the screen gives up on it.
 const HELLO_TIMEOUT: Duration = Duration::from_secs(30);
@@ -54,6 +56,9 @@ thread_local! {
     static HOST: RefCell<Option<WebviewHost>> = const { RefCell::new(None) };
     /// The page said hello at least once.
     static GREETED: Cell<bool> = const { Cell::new(false) };
+    /// The mirrored keys as the last match started, to tell the page what
+    /// the match changed (`storage:changed`).
+    static BEFORE_MATCH: RefCell<Option<Map<String, Value>>> = const { RefCell::new(None) };
 }
 
 /// How the last match ended, for the page.
@@ -137,6 +142,8 @@ enum Action {
     Fullscreen,
     External(String),
     Match(Box<LobbyChoice>, Value),
+    /// `storage:set`: a mirrored key and its new value (`None`: removed).
+    Storage(String, Option<String>),
     Nothing,
 }
 
@@ -155,6 +162,11 @@ fn act(message: &Value) -> Action {
         "open:external" => text(message, "url").map_or(Action::Nothing, Action::External),
         "app:quit" => Action::Quit,
         "window:fullscreen" => Action::Fullscreen,
+        "storage:set" => match (text(message, "key"), message.get("value")) {
+            (Some(key), Some(Value::String(v))) => Action::Storage(key, Some(v.clone())),
+            (Some(key), Some(Value::Null) | None) => Action::Storage(key, None),
+            _ => Action::Nothing,
+        },
         "match:play" | "match:watch" => match match_choice(message) {
             Ok(choice) => Action::Match(Box::new(choice), reply(message, "ok", json!({}))),
             Err(why) => Action::Reply(reply(message, "error", json!({"code": "bad_request", "message": why}))),
@@ -178,6 +190,7 @@ struct Open {
 
 struct LobbyApp {
     url: String,
+    mirror: StorageMirror,
     after: Option<AfterMatch>,
     open: Option<Open>,
     outcome: Option<LobbyOutcome>,
@@ -200,7 +213,12 @@ impl LobbyApp {
                 "clientVersion": washoi::VERSION,
                 "platform": std::env::consts::OS,
                 "capabilities": CAPABILITIES,
-                "storage": {},
+                // The page applies these once per webview session; after
+                // that its own storage is current (WEBVIEW_LOBBY.md 8).
+                "storage": self.mirror.snapshot(),
+                // The client's cvars, for the page to register the ones
+                // only the renderer declares (the Video page's).
+                "cvars": with_cvars(|c| c.declarations()),
             }),
             extra_script: String::new(),
             data_dir: washoi::cache_dir().map(|d| d.join("webview")),
@@ -235,7 +253,13 @@ impl LobbyApp {
                                 eprintln!("lobby: not opening {url}");
                             }
                         }
+                        Action::Storage(key, value) => {
+                            if !self.mirror.apply(&key, value.as_deref()) {
+                                eprintln!("lobby: not keeping {key}");
+                            }
+                        }
                         Action::Match(choice, answer) => {
+                            BEFORE_MATCH.with(|b| *b.borrow_mut() = Some(self.mirror.snapshot()));
                             Self::with_host(|h| {
                                 h.send(&answer);
                                 h.send(&json!({"v": BRIDGE_VERSION, "type": "match:started"}));
@@ -404,6 +428,16 @@ impl ApplicationHandler for LobbyApp {
             self.problem = Some(format!("This computer has no web view for the lobby: {why}"));
         }
         if let Some(after) = self.after.take() {
+            // What the match changed (the in-game settings, the console)
+            // reaches the page's storage before it reloads.
+            if let Some(before) = BEFORE_MATCH.with(|b| b.borrow_mut().take()) {
+                let entries = self.mirror.changed_since(&before);
+                if !entries.is_empty() {
+                    Self::with_host(|h| {
+                        h.send(&json!({"v": BRIDGE_VERSION, "type": "storage:changed", "entries": entries}))
+                    });
+                }
+            }
             let mut ended = json!({"v": BRIDGE_VERSION, "type": "match:ended", "reason": "returned"});
             if let Some(why) = after.error {
                 ended["reason"] = "disconnected".into();
@@ -457,9 +491,10 @@ impl ApplicationHandler for LobbyApp {
 ///
 /// # Errors
 /// The event loop or the window failed.
-pub fn run(url: &str, after: Option<AfterMatch>) -> Result<LobbyOutcome, String> {
+pub fn run(url: &str, mirror: &StorageMirror, after: Option<AfterMatch>) -> Result<LobbyOutcome, String> {
     let mut app = LobbyApp {
         url: url.to_owned(),
+        mirror: mirror.clone(),
         after,
         open: None,
         outcome: None,
@@ -539,10 +574,22 @@ mod tests {
             panic!("played without a ticket");
         };
         assert_eq!(no["code"], "bad_request");
-        let Action::Reply(unknown) = act(&json!({"v": 1, "type": "storage:set", "id": "r6"})) else {
+        let Action::Reply(unknown) = act(&json!({"v": 1, "type": "demo:play", "id": "r6"})) else {
             panic!("unknown accepted");
         };
         assert_eq!(unknown["code"], "unknown_type");
         assert!(matches!(act(&json!({"v": 1, "type": "noise"})), Action::Nothing));
+        assert!(matches!(
+            act(&json!({"v": 1, "type": "storage:set", "value": "x"})),
+            Action::Nothing
+        ));
+    }
+
+    #[test]
+    fn storage_writes_name_their_key() {
+        let set = act(&json!({"v": 1, "type": "storage:set", "key": "engine_binds", "value": "{}"}));
+        assert!(matches!(set, Action::Storage(k, Some(v)) if k == "engine_binds" && v == "{}"));
+        let removed = act(&json!({"v": 1, "type": "storage:set", "key": "shag_player_key", "value": null}));
+        assert!(matches!(removed, Action::Storage(k, None) if k == "shag_player_key"));
     }
 }

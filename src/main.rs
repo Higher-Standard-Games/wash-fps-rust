@@ -614,9 +614,17 @@ fn lobby_mode(lobby: &str, o: &Options) -> i32 {
     if !o.offline {
         washoi::update_check::start();
     }
+    // The page's account key and settings live in the config dir
+    // (WEBVIEW_LOBBY.md 7 and 8).
+    let Some(dir) = config_dir() else {
+        return fatal("no config directory for the lobby's settings");
+    };
+    let _ = std::fs::create_dir_all(&dir);
+    let key_file = o.key_file.clone().or_else(default_key_file);
+    let mirror = shagger::lobby::storage_mirror::StorageMirror::new(dir, key_file);
     let mut after = None;
     loop {
-        match lobby_webview::run(&page, after.take()) {
+        match lobby_webview::run(&page, &mirror, after.take()) {
             Ok(lobby_webview::LobbyOutcome::Quit) => return 0,
             Ok(lobby_webview::LobbyOutcome::Match(c)) => {
                 let how = if c.play { "play" } else { "watch" };

@@ -378,7 +378,7 @@ keeps working without a single change.
 | `engine_cvars` | `cvars.json` | the same JSON object; native-only cvars are kept by the web side because `Cvar.loadFromStorage` preloads unknown names and `saveToStorage` writes them back |
 | `engine_binds`, `shag_keybindings`, `hud-user-prefs`, `ui_theme_mode`, `shag.loadout.*` | `synced-storage.json` (one entry per key, as shagger `lobby/settings_sync.rs` already does) | bindings are W3C `KeyboardEvent.code` strings on both sides |
 | `shag_settings_sync`, `shag_settings_backup` | `settings-sync.json`, `settings-backup.json` | so the sync decision on login sees the native edits |
-| `shag_player_key`, `shag_player_key_unknown` | `lobby-key`, `lobby-key-unknown` | section 7 |
+| `shag_player_key`, `shag_player_key_unknown` | `lobby-key`, `lobby-key.unknown` | section 7 |
 
 Not mirrored, so they stay in the webview profile only:
 
@@ -787,6 +787,34 @@ Not covered yet:
   a Wayland desktop goes on the tester's checklist too.
 - **GitHub's Linux runner** has no Vulkan or GL adapter for wgpu. Linux is
   proven by the run here.
+
+### 18.3 W3 progress (November 4, 2026)
+
+Landed: shagger `lobby/storage_mirror.rs` and `Cvars::declarations`, the
+mirror in `lobby_webview.rs`, and wash-fps `client/native/NativeStorage.ts`.
+
+- **The snapshot is applied once per webview session** (a sessionStorage
+  flag). The init script is fixed when the webview is made, so on a later
+  reload it is stale. Local storage is then current through `storage:set`
+  and the `storage:changed` sent before `match:ended`.
+- **Adoption:** a mirrored key the page has and the files lack (an account
+  made in the webview) is sent to the client on that first load.
+- **The Video page needs no `cvars:describe`.** The native client already
+  registers the same `r_*` cvars as the web renderer (its settings are a
+  port of the web view). The lobby-only page lacks them only because no
+  renderer registers them there. The init script carries the client's
+  registered cvar declarations (`cvars`), and the page registers the ones it
+  does not declare itself. The shared Video page then works unchanged and
+  writes `engine_cvars`, which lands in `cvars.json` and the live registry.
+  `cvars:describe` and `cvar:set` are dropped from the message table's plan.
+- Run on Linux: the 0.1.x `lobby-key` was injected and used (the local
+  lobby did not know it, so the page set it aside as `lobby-key.unknown`
+  and made a new account, both mirrored), and choosing Smooth on the Video
+  page wrote `cvars.json`.
+- Left: the web presets name a few cvars the native client does not
+  register, so the page reads "your own mix" after a preset. The cvar
+  registry test (section 17) will list them. `Cvar.reloadFromStorage` is not
+  needed while the return reloads.
 
 ### 18.2 W1 and W2 progress (November 4, 2026)
 
