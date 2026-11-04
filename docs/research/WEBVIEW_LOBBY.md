@@ -144,11 +144,13 @@ Region → DataSync → Lobby (webview shown) ⇄ InGame (webview hidden)
   socket stays up, invites and chat keep arriving, and the room stays
   attached. This matches the browser, where the lobby page lives under the
   canvas for the whole match.
-  - WebView2 and WebKit throttle timers on hidden pages.
-  - The lobby's keep-alive must survive about 15 minutes hidden (W0 test,
-    section 18).
-  - If it does not, the native client nudges the page with a `tick` event
-    every 30 s.
+  - WebView2 and WebKit throttle timers on hidden pages. W0 measured it
+    (section 18.1): left alone, WebView2 slows a hidden page's timers to
+    once a minute after five minutes.
+  - So the webview is built with throttling off: Chromium's switches on
+    Windows, wry's `BackgroundThrottlingPolicy::Disabled` on macOS. With
+    that, the hidden page's timers and socket kept going for 10 minutes on
+    every platform, and the `tick` event is not needed.
 - **Linux.** On Linux, `build_as_child` works on X11 only and needs
   `gtk::init()`, with `gtk::main_iteration_do(false)` pumped in
   `about_to_wait`. On Wayland the choices are:
@@ -714,6 +716,69 @@ Steps in order. Each lands with its tests.
 
 The web changes go through pull requests on wash-fps and SHAG. washoi.net only
 gains `clientUrl` in `regions.json`.
+
+### 18.1 W0 results (November 4, 2026)
+
+`tools/webview_spike` in wash-fps-rust (its own workspace, not part of the
+game) is the spike: one winit window, a wgpu surface cleared to a moving
+colour as a stand-in for the match, and a wry 0.57.1 child webview over it.
+
+- It loads either a built-in lobby stand-in (bridge hello both ways, a
+  one-second timer, a WebSocket pinging a local echo server every five
+  seconds) or the live `https://eu.washoi.net/`.
+- It hides the webview on a schedule, with `focus_parent()`, and shows it
+  again.
+- It reports page visibility, timer gaps, the socket and memory to JSON.
+- `webview_spike.yml` runs it by hand on GitHub's Windows, macOS and Linux
+  runners.
+
+Runs: Linux X11 here (Xvfb, WebKitGTK 2.52, llvmpipe), and Windows Server
+and macOS 14 on GitHub's runners (runs 41831741557 and 41836513742).
+
+| | Windows (WebView2) | macOS 14 (WKWebView) | Linux X11 (WebKitGTK) |
+|---|---|---|---|
+| Child webview over the wgpu surface | works | works | works |
+| Hide and show, with the 3D view behind | works; `visibilitychange` fires both ways | works | works |
+| Bridge hello, page → native and back | works | works | works |
+| The live game page loads and reaches "click to start" | yes | yes | yes |
+| Timers while hidden, as wry sets them up | throttled to **once a minute** after 5 min (Chromium's intensive wake-up throttling) | about every 2 s | every 2 s |
+| Timers while hidden, throttling off | every 1 s for 10 min | about every 2 s | (not needed) |
+| WebSocket while hidden | stayed open; with throttling off, every 5 s ping answered for 10 min | stayed open, every ping answered for 15 min | stayed open, every ping answered |
+| Memory, lobby stand-in (webview processes) | about 105–140 MB hidden, 250 MB shown | about 80 MB | about 330 MB (software rendering) |
+| Memory, the full game page | about 850 MB | about 510 MB | about 1.6 GB (software WebGL) |
+| Spike binary, release | 7.3 MB | 6.2 MB | 11.5 MB (with wgpu) |
+| Window to first bridge message (stand-in page) | about 3–4 s (first WebView2 start) | about 2 s | about 0.2 s |
+
+What this settles:
+
+- **The design in section 3 holds on all three platforms.** One window, a
+  child webview, hidden during play.
+- **Throttling must be off.** WebView2's default would leave a hidden lobby
+  page running its timers once a minute. The socket survives that, but
+  request timeouts, settings uploads and presence would lag. The client
+  passes `--disable-background-timer-throttling
+  --disable-renderer-backgrounding
+  --disable-features=...,IntensiveWakeUpThrottling` on Windows (keeping
+  wry's own defaults in the same string), and
+  `with_background_throttling(Disabled)` on macOS.
+- **The lobby-only `/client` entry is needed for memory.** The full game
+  page costs 500 MB to 1.6 GB in the webview, against 80 to 330 MB for a
+  plain page.
+- **Origins.** A page loaded with `with_html` reports `about:blank` as its
+  origin. The real `/client` page will report its URL, which is what the
+  origin check reads. The spike did not exercise a bridge from the live site,
+  since it has none yet.
+
+Not covered yet:
+
+- **Keyboard focus by hand.** Typing in the page, then pressing keys in the
+  match after `focus_parent()`. The runners have no input device to script.
+  The window got focus back on hide on Windows (the `Focused(true)` event at
+  the hide), and this goes on the tester's checklist.
+- **Wayland through XWayland.** It is the same X11 path as tested. A run on
+  a Wayland desktop goes on the tester's checklist too.
+- **GitHub's Linux runner** has no Vulkan or GL adapter for wgpu. Linux is
+  proven by the run here.
 
 ## 19. Decisions (confirmed November 3, 2026)
 
