@@ -301,7 +301,9 @@ impl WeaponViewModel {
         let root = self.view.model_matrix(camera_world);
         self.draws.clear();
         let name = self.view.weapon.as_str();
-        for (i, primitive) in self.model.primitives.iter().enumerate() {
+        // `applyVisibility`: stowed for a climb, the weapon is not drawn.
+        let drawn = self.view.is_drawn();
+        for (i, primitive) in self.model.primitives.iter().enumerate().filter(|_| drawn) {
             let mode = primitive
                 .material
                 .and_then(|m| self.model.materials.get(m))
@@ -324,7 +326,7 @@ impl WeaponViewModel {
         }
         // The barrels, turned and slid as `WeaponBarrels.update` leaves
         // them, under the loader's handedness flip; no outline.
-        for (barrel, spin) in self.barrels.iter().zip(&self.view.barrels) {
+        for (barrel, spin) in self.barrels.iter().zip(&self.view.barrels).filter(|_| drawn) {
             let (position, rotation) = spin.pose(barrel.rest, barrel.rotation);
             let local = barrel.parent
                 * Mat4::from_scale_rotation_translation(Vec3::new(1.0, 1.0, -1.0), babylon_euler(rotation), position);
@@ -333,7 +335,7 @@ impl WeaponViewModel {
                     .push(ModelDraw::new(barrel.handle, i, root * local * primitive.node_matrix));
             }
         }
-        if let Some((counter, tag)) = &mut self.counter {
+        if let Some((counter, tag)) = self.counter.as_mut().filter(|_| drawn) {
             // `displayedAmmo | 0`.
             counter.set_ammo(gpu, &mut self.renderer, self.ammo as i64);
             let tuning = with_cvars(|c| AmmoCounterTuning::read(c));
@@ -342,7 +344,9 @@ impl WeaponViewModel {
         let mut lights = vec![weapon_light()];
         if self.view.weapon == "blade" {
             let (_, rotation, _) = camera_world.to_scale_rotation_translation();
-            lights.push(blade_light(rotation));
+            // `WeaponLighting`: the map's light at the camera tints it.
+            let [r, g, b] = self.view.lighting.color;
+            lights.push(blade_light(rotation, Vec3::new(r as f32, g as f32, b as f32)));
         }
         self.renderer.set_lights(lights);
         let weapon_camera = Camera {

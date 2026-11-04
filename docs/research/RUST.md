@@ -2712,6 +2712,46 @@ whole areas rather than single items. 0.2.0 closes them in two steps.
 
 Newest first. Each entry names the commits and what proves them.
 
+### Weapon animation review against the browser (November 4, 2026)
+
+0.2.0's weapon animation review, first person. Compared line by line with
+SHAG `engine/weapon` and wash-fps `FPSPlayer`, `FPSController` and
+`GameEvents`.
+
+- **Already the browser's.** `WeaponBob`, `WeaponRecoil`, `WeaponReloadAnim`,
+  `WeaponSwitchAnim`, `WeaponSlash` and `WeaponCharge` match their
+  TypeScript; the bob's inputs (walk bob cycle, speed, landings) came with
+  the movement review.
+- **Ladder holster** (shagger 3bbfc31): `WeaponHolsterAnim` ported; climbing
+  (`onLadder`) stows the gun, 90 down and rolled, and it stops drawing once
+  down (`setMovementHidden`).
+- **The map's light** (shagger 3bbfc31): `LightGridSampling` and
+  `WeaponLighting` ported. In the browser the tint lands on StandardMaterial
+  diffuse (unlit `_emit` layers, so invisible), the blade's light and the
+  blade's reflection fill, so here it colours the blade's light.
+- **Cvars**: `cg_handedness`, `cg_weaponfov`, `cl_gunbob*`, `cl_ads_time`,
+  `cl_ads_offset_y` and the `cl_wep_*` overrides were fixed at their
+  defaults; `ViewModelCvars` reads them each frame.
+- **A switch keeps the motion**: the browser has one `WeaponViewManager`, so
+  the aim, bob, recoil, swing and holster carry over to the new weapon; the
+  holster of views here hands them on (`WeaponView::carry_from`).
+- **The switch is predicted**: a number key or the wheel slides the weapon
+  in at once, as `FPSPlayer.switchWeapon` does, and the server's weapon is
+  put in hand when its `weapon_state` arrives and no switch runs
+  (`handleWeaponState`). Picks wait while the weapon slides
+  (`setWeaponSwitchBlockedCheck`), and the wheel wraps over the slots the
+  server's inventory fills, not a fixed three.
+- **Order**: recoil and barrels step after the weapon is placed, as
+  `updateMuzzleFlash` follows `updateWeaponBob`.
+- **Underwater**: the browser's drift (`submersionAmount`) moves only the
+  muzzle of a weapon without a `tag_flash`; ported there, so no gun shows it.
+- **Not yet**: the blade's reflection fill (`BladeEnvironment`); the
+  watched player's first-person weapon and its sway (`FollowedViewWeapon`,
+  `DemoPovState`), which waits for a first-person spectate camera (demos
+  and spectating follow in third person here); the reload predicted on
+  the reload key (`FPSPlayer.checkReload`), which waits for the server's
+  `weapon_state` here.
+
 ### Movement review: the camera's motion against the browser (November 4, 2026)
 
 0.2.0's movement review, first person. The view effects, the slide dip,

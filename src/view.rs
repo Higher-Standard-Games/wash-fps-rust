@@ -34,7 +34,8 @@ use shagger::babylon::post_processes::image_processing_post_process::{
     ImageProcessingConfiguration, ImageProcessingPostProcess, Vignette, VignetteBlendMode,
 };
 use shagger::lighting::sky_light_system::bsp_mode_lights;
-use shagger::loader::bsp::bsp_loader::{BspFile, load, load_collision};
+use shagger::loader::bsp::bsp_loader::{BspFile, BspLightVol, LightGrid, load, load_collision};
+use shagger::loader::bsp::light_grid_sampling::{LightSample, sample_light_vols};
 use shagger::loader::pk3::node_pk3::ingest_pk3_dir;
 use shagger::loader::pk3::pk3_loader::Pk3Loader;
 use shagger::loader::shader::q3_shader_registry::Q3ShaderRegistry;
@@ -84,7 +85,7 @@ use shagger::weapon::rail::rail_profiles::{RailEffectSample, RailImpactKind};
 use shagger::weapon::tracer::streak_tracer_renderer::StreakTracerShot;
 use shagger::weapon::weapon_slash::SlashTrailRenderer;
 use shagger::weapon::weapon_switch_anim::{SwitchAnimOffsets, WeaponSwitchAnim};
-use shagger::weapon::weapon_view_manager::ViewModelInput;
+use shagger::weapon::weapon_view_manager::{ViewModelCvars, ViewModelInput};
 use washoi::client::cinematic_demo_player::{
     CinematicDemoPlayer, REEL_TITLE_MS, ReelCamera, ReelWorld, look_at_rotation,
 };
@@ -963,6 +964,10 @@ pub struct MapRenderer {
     pub switch_anim: WeaponSwitchAnim,
     /// The switch's clock, seconds.
     switch_clock: f64,
+    /// The map's light grid and its sites (`BspManager.getLightingInto`),
+    /// which tint the view weapon.
+    light_grid: Option<LightGrid>,
+    light_vols: Vec<BspLightVol>,
 }
 
 /// `BombSiteMarkers`' blast: the rocket's, `BLAST_SCALE` times as big, and
@@ -1058,19 +1063,34 @@ impl MapRenderer {
         }
     }
 
-    /// Puts `id` in hand now.
+    /// The map's light at `position` (`getLightingInto`), `None` outside
+    /// its light grid.
+    #[must_use]
+    pub fn light_at(&self, position: Vec3) -> Option<LightSample> {
+        let p = position.as_dvec3();
+        // Quake axes: x, z, y up.
+        sample_light_vols(self.light_grid.as_ref()?, &self.light_vols, p.x, p.z, p.y)
+    }
+
+    /// Puts `id` in hand now. The one view in the browser keeps its bob,
+    /// aim, recoil, swing, holster and light across the swap, so the new
+    /// weapon takes them from the old (`WeaponView::carry_from`).
     fn hold_now(&mut self, id: Option<&str>) {
         let current = self.view_model.as_ref().map(|v| v.view.weapon.clone());
         if current.as_deref() == id {
             return;
         }
-        if let Some(mut old) = self.view_model.take() {
+        let old = self.view_model.take();
+        self.view_model = id.and_then(|id| self.holster.remove(id));
+        if let Some(mut old) = old {
+            if let Some(new) = &mut self.view_model {
+                new.view.carry_from(&old.view);
+            }
             old.view.cancel_reload();
             old.view.charge.reset();
             old.view.switch_offsets = SwitchAnimOffsets::default();
             self.holster.insert(old.view.weapon.clone(), old);
         }
-        self.view_model = id.and_then(|id| self.holster.remove(id));
     }
 
     /// Steps the switch by `dt` seconds: the swap when the slide down
@@ -2732,6 +2752,8 @@ pub fn build_renderer(gpu: &Gpu, map: &mut LoadedMap, output_format: wgpu::Textu
         holster,
         switch_anim: WeaponSwitchAnim::default(),
         switch_clock: 0.0,
+        light_grid: map.bsp.light_grid,
+        light_vols: map.bsp.light_vols.clone(),
     };
     // Held liquid rings (`--ring`).
     renderer.held_rings = map
@@ -3233,10 +3255,15 @@ pub fn start_prepared(o: &ViewOptions, prepared: Prepared) -> Result<i32, String
             println!("  {id} at {:.0},{:.0},{:.0} yaw {:.2}", p.x, p.z, p.y, p.yaw);
         }
     }
+    let light = renderer.light_at(camera.position);
     if let Some(view_model) = &mut renderer.view_model {
         view_model.powerup_outline = o.quad.then(|| quad_view_weapon_outline(0.0));
-        // Settle the aim (and the bob, standing still) over two seconds.
+        view_model
+            .view
+            .apply_cvars(&shagger::core::cvar::with_cvars(|c| ViewModelCvars::read(c)));
+        // Settle the aim, the light (and the bob, standing still) over two seconds.
         for _ in 0..120 {
+            view_model.view.update_lighting(1.0 / 60.0, light.as_ref());
             view_model.view.update(&ViewModelInput {
                 delta_time: 1.0 / 60.0,
                 grounded: true,

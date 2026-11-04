@@ -155,9 +155,6 @@ pub fn command_for(input: &PlayInput, tick: u32) -> Command {
     }
 }
 
-/// `InventoryManager.getSlotCount()`: the blade and two weapons.
-const WEAPON_SLOT_COUNT: u8 = 3;
-
 /// The 0-based slot a number key (1-based `slot`) or a wheel step picks:
 /// the wheel skips the blade in slot 0 and wraps (`FPSController`).
 #[must_use]
@@ -221,6 +218,10 @@ pub struct LivePlay {
     next_command: f64,
     /// The weapon in hand, from `weapon_state`.
     pub weapon: String,
+    /// The weapons in their slots, from `weapon_state`.
+    slots: Vec<String>,
+    /// A `weapon_state` for us arrived and was not yet taken.
+    weapon_state_arrived: bool,
     pub closed: Option<String>,
     // Shared with the predictor's callbacks; a `Mutex` so the connection
     // can be made on the loading screen's thread.
@@ -327,6 +328,8 @@ impl LivePlay {
                         tick: 0,
                         next_command: 0.0,
                         weapon: String::new(),
+                        slots: Vec::new(),
+                        weapon_state_arrived: false,
                         closed: None,
                         spawn_facing,
                         teleport,
@@ -497,6 +500,7 @@ impl LivePlay {
                         if let SnapshotEvent::WeaponState {
                             entity_id,
                             current_weapon,
+                            weapons,
                             ..
                         } = event
                             && *entity_id == self.entity_id
@@ -504,6 +508,14 @@ impl LivePlay {
                             // `canonicalWeaponId`: an old name for a weapon draws its model.
                             let weapon = canonical_weapon_id(current_weapon);
                             self.weapon = weapon.to_owned();
+                            // `syncFromServer`: the slots in the server's order.
+                            self.slots = weapons
+                                .as_array()
+                                .unwrap_or_default()
+                                .iter()
+                                .filter_map(|w| w.as_str().map(|w| canonical_weapon_id(w).to_owned()))
+                                .collect();
+                            self.weapon_state_arrived = true;
                             self.predictor.set_speed_bonus(weapon_speed_bonus(weapon));
                         }
                     }
@@ -557,11 +569,28 @@ impl LivePlay {
     /// `syncKeysFromInput`'s weapon select: a number key (1-based `slot`,
     /// 0 for none) or a wheel step picks the weapon the next command asks
     /// for.
-    pub fn select_weapon(&mut self, slot: u8, next: bool, prev: bool) {
-        if let Some(pick) = weapon_pick(self.current_weapon_slot, WEAPON_SLOT_COUNT, slot, next, prev) {
-            self.current_weapon_slot = pick;
-            self.pending_weapon_slot = pick + 1;
+    ///
+    /// `blocked` while a switch animation runs (`setWeaponSwitchBlockedCheck`):
+    /// no pick then. Returns the weapon to slide into the hand at once
+    /// (`FPSPlayer.switchWeapon`, the client's prediction), when the slot
+    /// holds one that is not in hand already.
+    pub fn select_weapon(&mut self, slot: u8, next: bool, prev: bool, blocked: bool) -> Option<String> {
+        if blocked {
+            return None;
         }
+        // `getSlotCount()`: the slots the server's inventory fills.
+        let count = u8::try_from(self.slots.len()).unwrap_or(u8::MAX);
+        let pick = weapon_pick(self.current_weapon_slot, count, slot, next, prev)?;
+        self.current_weapon_slot = pick;
+        self.pending_weapon_slot = pick + 1;
+        let id = self.slots.get(usize::from(pick))?;
+        (self.alive && *id != self.weapon).then(|| id.clone())
+    }
+
+    /// A `weapon_state` for us arrived since the last call: the view model
+    /// reconciles with it (`handleWeaponState`).
+    pub fn take_weapon_state(&mut self) -> bool {
+        std::mem::take(&mut self.weapon_state_arrived)
     }
 
     fn send_commands(&mut self, input: &PlayInput, now: f64) {

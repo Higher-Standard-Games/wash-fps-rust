@@ -27,7 +27,7 @@ use shagger::input::key_codes::{dom_code, dom_mouse_button};
 use shagger::movement::movement_vars::movement_var;
 use shagger::rendering::wgpu;
 use shagger::viewport::ViewCvars;
-use shagger::weapon::weapon_view_manager::ViewModelInput;
+use shagger::weapon::weapon_view_manager::{ViewModelCvars, ViewModelInput};
 use std::cell::Cell;
 use washoi::client::fps_actions::{fps, weapon_slot_pressed};
 use washoi::client::fps_hud::FpsHud;
@@ -140,6 +140,11 @@ struct App {
     view_charging: bool,
     /// This frame's: put on the camera for drawing only.
     view_offset: Option<ViewOffset>,
+    /// Climbing a ladder this frame: the weapon is stowed.
+    on_ladder: bool,
+    /// A weapon picked this frame, slid into the hand before the server
+    /// confirms it (`FPSPlayer.switchWeapon`).
+    predicted_weapon: Option<String>,
     death_follow: Option<DeathFollow>,
     /// The match's sound, when there is a sound card.
     audio: Option<GameAudio>,
@@ -454,9 +459,16 @@ impl App {
             };
             // `FPSController.syncKeysFromInput`: the ready key, pressed this frame.
             let ready = self.captured && with_input(|i| i.was_pressed(fps::READY));
+            // No pick while the weapon slides (`setWeaponSwitchBlockedCheck`).
+            let switching = self
+                .surface
+                .as_ref()
+                .is_some_and(|s| s.renderer.switch_anim.is_switching());
             if let Some(Feed::Play(play, held)) = &mut self.feed {
                 *held = input;
-                play.select_weapon(pick.0, pick.1, pick.2);
+                if let Some(id) = play.select_weapon(pick.0, pick.1, pick.2, switching) {
+                    self.predicted_weapon = Some(id);
+                }
                 if ready {
                     play.send_ready();
                 }
@@ -545,6 +557,7 @@ impl App {
                 }
             }
             self.view_offset = None;
+            self.on_ladder = false;
             if let Feed::Play(p, held) = feed {
                 // First person: the eye where prediction puts it.
                 if let Some(yaw) = p.take_spawn_facing() {
@@ -610,6 +623,7 @@ impl App {
                             step_height,
                             smooth_factor,
                         ));
+                        self.on_ladder = m.on_ladder;
                     }
                     None => self.first_person.reset(),
                 }
@@ -617,7 +631,21 @@ impl App {
                 self.velocity = Vec3::new(v.x as f32, v.y as f32, v.z as f32);
                 self.grounded = p.grounded();
                 self.follow = None;
-                s.renderer.hold(p.weapon_in_hand());
+                // `switchWeapon` slides a picked weapon in at once; the
+                // server's weapon is put in hand when its `weapon_state`
+                // arrives and no switch is under way (`handleWeaponState`),
+                // which heals a pick the server did not take.
+                let arrived = p.take_weapon_state();
+                let predicted = self.predicted_weapon.take();
+                match p.weapon_in_hand() {
+                    None => s.renderer.hold(None),
+                    Some(_) if predicted.is_some() => s.renderer.hold(predicted.as_deref()),
+                    Some(server) => {
+                        if s.renderer.view_model.is_none() || (arrived && !s.renderer.switch_anim.is_switching()) {
+                            s.renderer.hold(Some(server));
+                        }
+                    }
+                }
                 if let Some(at) = p.take_jumppad_launch()
                     && let Some(audio) = &mut self.audio
                 {
@@ -866,7 +894,14 @@ impl App {
             }
         }
         s.renderer.advance_switch(f64::from(dt));
+        let light = s.renderer.light_at(self.camera.position);
+        let submersion = s.renderer.underwater.submersion_amount();
         if let Some(view_model) = &mut s.renderer.view_model {
+            view_model.view.apply_cvars(&with_cvars(|c| ViewModelCvars::read(c)));
+            // `setMovementHidden(onLadder)`: a climb takes both hands.
+            view_model.view.set_movement_hidden(self.on_ladder);
+            view_model.view.update_lighting(f64::from(dt), light.as_ref());
+            view_model.view.submersion_amount = submersion;
             let mut horizontal = f64::from(self.velocity.x.hypot(self.velocity.z));
             // Our own eyes: the weapon bob follows the view's walk bob and
             // feels the landings it does (`updateWeaponBob`). Anyone else's:
@@ -1812,6 +1847,8 @@ pub fn run(
         view_reloading: false,
         view_charging: false,
         view_offset: None,
+        on_ladder: false,
+        predicted_weapon: None,
         death_follow: None,
         audio,
         leave: false,
