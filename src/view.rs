@@ -2473,7 +2473,7 @@ pub fn build_renderer(gpu: &Gpu, map: &mut LoadedMap, output_format: wgpu::Textu
         }
     }
     let mut view_model = map.weapon.as_deref().and_then(|id| {
-        WeaponViewModel::load(gpu, &mut map.pk3, id, format)
+        WeaponViewModel::load(gpu, &mut map.pk3, id, output_format)
             .inspect(|_| println!("view model: {id}"))
             .inspect_err(|why| eprintln!("view model: {why}"))
             .ok()
@@ -2481,7 +2481,7 @@ pub fn build_renderer(gpu: &Gpu, map: &mut LoadedMap, output_format: wgpu::Textu
     let mut holster = HashMap::new();
     if map.hands {
         for id in HELD_WEAPONS {
-            match WeaponViewModel::load(gpu, &mut map.pk3, id, format) {
+            match WeaponViewModel::load(gpu, &mut map.pk3, id, output_format) {
                 Ok(model) => {
                     holster.insert(id.to_owned(), model);
                 }

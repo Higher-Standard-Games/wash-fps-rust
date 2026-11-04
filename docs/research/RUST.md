@@ -2712,6 +2712,27 @@ whole areas rather than single items. 0.2.0 closes them in two steps.
 
 Newest first. Each entry names the commits and what proves them.
 
+### The weapon draws after image processing (November 4, 2026)
+
+- **Found.** Weapon skins looked washed out next to the browser, as if the
+  normal maps were missing. They were applied; the difference was where
+  the gun is drawn. SHAG's `DefaultRenderingPipeline` runs on the world
+  camera only, so the weapon camera draws after it, straight to the canvas,
+  and its PBR materials (built with `IMAGEPROCESSINGPOSTPROCESS`) write
+  linear colour: no tone mapping, gamma, bloom or vignette. The native
+  client drew the gun into the HDR target before the resolve, which lifted
+  its dark tones and flattened the normal-mapped detail.
+- **shagger 566012e.** `rendering::offscreen`'s overlay pass draws over
+  the processed output with the HDR depth cleared. wash-fps-rust draws the
+  view model there in the window too, and builds its pipelines for the
+  output format.
+- **Proof.** `tools/parity` with `WEAPON=rlauncher` and `plasmagun` on
+  washoi_amphi1, the browser held to the weapon's WebGPU lights
+  (`weaponLight` and the parked muzzle flash; WebGL2's larger light budget
+  also lets the map's `sunLight` and `ambientLight` reach the gun): patches
+  of the gun now differ by under one level in 255, where they were about
+  50 levels (four times) brighter before.
+
 ### Teleporter voids: authored cubemaps on world surfaces (November 4, 2026)
 
 - **shagger c099827** ports `Q3EnvironmentPlugin`: a world pass whose

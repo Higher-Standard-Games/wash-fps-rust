@@ -918,11 +918,6 @@ impl App {
             s.renderer.draw_transparent(&mut pass);
         }
         stamp(&mut encoder, "transparent");
-        {
-            let mut pass = begin_overlay_pass(&mut encoder, &s.hdr.color, &s.hdr.depth);
-            s.renderer.draw_overlay(&mut pass);
-        }
-        stamp(&mut encoder, "overlay");
         s.hdr.resolve(
             &s.gpu,
             &mut encoder,
@@ -931,6 +926,13 @@ impl App {
             &target,
         );
         stamp(&mut encoder, "post");
+        {
+            // The weapon camera draws after the world camera's image
+            // processing, straight to the output (`begin_overlay_pass`).
+            let mut pass = begin_overlay_pass(&mut encoder, &target, &s.hdr.depth);
+            s.renderer.draw_overlay(&mut pass);
+        }
+        stamp(&mut encoder, "overlay");
         if let (Some(hud), None) = (&s.hud, &self.reel) {
             let mut pass = begin_ui_pass(&mut encoder, &target);
             hud.draw(&mut pass);
