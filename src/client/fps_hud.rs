@@ -41,6 +41,9 @@ use shagger::shared::net::game_state::PlayerState;
 /// `FPSHud`.
 pub struct FpsHud {
     pub hud: Hud2d,
+    /// CSS pixels to the target's pixels: the window's scale factor, as
+    /// the browser's `devicePixelRatio` sizes its HUD.
+    pub scale: f32,
     fonts: Fonts,
     renderer: Hud2dRenderer,
     timer: Timer,
@@ -99,6 +102,7 @@ impl FpsHud {
         let renderer = Hud2dRenderer::new(gpu, color_format, hud.atlas.size);
         Ok(Self {
             hud,
+            scale: 1.0,
             fonts,
             renderer,
             timer: Timer::default(),
@@ -280,7 +284,7 @@ impl FpsHud {
         for widget in self.widgets_mut() {
             widget.update(frame);
         }
-        self.hud.begin(width, height, 1.0);
+        self.hud.begin(width, height, self.scale);
         let fonts = self.fonts;
         let s = UI_SCALE;
         let [vw, vh] = self.hud.size();

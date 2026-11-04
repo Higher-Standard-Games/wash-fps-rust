@@ -209,39 +209,46 @@ impl Slab<'_> {
     pub fn draw(&self, hud: &mut Hud2d, x: f32, y: f32, w: f32, h: f32) {
         let skew = self.skew_deg.to_radians().tan();
         let place = |p: &[f32; 2], dx: f32, dy: f32| [x + dx + p[0] + skew * p[1], y + dy + p[1]];
-        let outline = |clip: &[[f32; 2]]| -> Vec<[f32; 2]> {
+        // A piece's edge points (several to an edge, for the gradient),
+        // their centre, and which edges stay hard (a cut between pieces).
+        let outline = |clip: &[[f32; 2]], cut: &dyn Fn([f32; 2], [f32; 2]) -> bool| {
             let mut points: Vec<[f32; 2]> = Vec::new();
+            let mut hard: Vec<bool> = Vec::new();
             let n = clip.len();
             for i in 0..n {
                 let (a, b) = (clip[i], clip[(i + 1) % n]);
+                let on_cut = cut(a, b);
                 for k in 0..EDGE_STEPS {
                     let f = k as f32 / EDGE_STEPS as f32;
                     points.push([(a[0] + (b[0] - a[0]) * f) * w, (a[1] + (b[1] - a[1]) * f) * h]);
+                    hard.push(on_cut);
                 }
             }
             let centre = points
                 .iter()
                 .fold([0.0, 0.0], |c, p| [c[0] + p[0], c[1] + p[1]])
                 .map(|v| v / points.len() as f32);
-            let mut fan = vec![centre];
-            fan.extend_from_slice(&points);
-            fan.push(points[0]);
-            fan
+            (centre, points, hard)
         };
         if let Some((offset, color)) = self.shadow {
-            let points: Vec<_> = outline(self.clip)
-                .iter()
-                .map(|p| place(p, offset[0] * UI_SCALE, offset[1] * UI_SCALE))
-                .collect();
-            hud.polygon(&points, &vec![color; points.len()]);
+            let (centre, local, _) = outline(self.clip, &|_, _| false);
+            let shift = |p: &[f32; 2]| place(p, offset[0] * UI_SCALE, offset[1] * UI_SCALE);
+            let points: Vec<_> = local.iter().map(shift).collect();
+            hud.shape(
+                Some((shift(&centre), color)),
+                &points,
+                &vec![color; points.len()],
+                &|_| true,
+            );
         }
         // Cut at each hard stop, so the edge stays sharp; each piece takes
         // its colours from its own side of the cut.
         let g = &self.background;
         let t_of = |p: [f32; 2]| g.t(w, h, p[0] * w, p[1] * h);
+        let stops = g.hard_stops();
+        let cuts: Vec<f32> = stops.iter().map(|&(lo, hi)| f32::midpoint(lo, hi)).collect();
         let mut pieces = vec![(self.clip.to_vec(), f32::NEG_INFINITY, f32::INFINITY)];
-        for (lo, hi) in g.hard_stops() {
-            let cut = f32::midpoint(lo, hi);
+        for (&(lo, hi), &cut) in stops.iter().zip(&cuts) {
             let mut next = Vec::new();
             for (piece, from, to) in pieces {
                 let below = clip_half(&piece, |p| cut - t_of(p));
@@ -255,14 +262,23 @@ impl Slab<'_> {
             }
             pieces = next;
         }
+        // An edge along a cut meets the next piece: no soft edge there, or
+        // the scene would show through the seam.
+        let on_cut = |a: [f32; 2], b: [f32; 2]| {
+            cuts.iter()
+                .any(|&c| (t_of(a) - c).abs() < 1e-4 && (t_of(b) - c).abs() < 1e-4)
+        };
         for (piece, from, to) in pieces {
-            let local = outline(&piece);
+            let (centre, local, hard) = outline(&piece, &on_cut);
+            let color_at = |p: &[f32; 2]| g.color(g.t(w, h, p[0], p[1]).clamp(from, to));
             let points: Vec<_> = local.iter().map(|p| place(p, 0.0, 0.0)).collect();
-            let colors: Vec<_> = local
-                .iter()
-                .map(|p| g.color(g.t(w, h, p[0], p[1]).clamp(from, to)))
-                .collect();
-            hud.polygon(&points, &colors);
+            let colors: Vec<_> = local.iter().map(color_at).collect();
+            hud.shape(
+                Some((place(&centre, 0.0, 0.0), color_at(&centre))),
+                &points,
+                &colors,
+                &|i| !hard[i],
+            );
         }
     }
 }

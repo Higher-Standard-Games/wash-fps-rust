@@ -788,6 +788,7 @@ impl App {
             }
             if let (Some(hud), None) = (&mut s.hud, &self.reel) {
                 hud.scoreboard.held = self.held.contains(&KeyCode::Tab);
+                hud.scale = s.window.scale_factor() as f32;
                 update_watch_hud(
                     hud,
                     feed,
@@ -1284,7 +1285,7 @@ impl ApplicationHandler for App {
                     && !self.captured
                     && self.surface.as_ref().and_then(|s| s.hud.as_ref()).is_some_and(|h| {
                         self.cursor
-                            .is_some_and(|(x, y)| h.scoreboard.return_hit(x as f32, y as f32))
+                            .is_some_and(|(x, y)| h.scoreboard.return_hit(x as f32 / h.scale, y as f32 / h.scale))
                     });
                 if home {
                     println!("lobby: back to the lobby");

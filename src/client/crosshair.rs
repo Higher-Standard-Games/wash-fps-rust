@@ -191,7 +191,10 @@ fn ring(hud: &mut Hud2d, cx: f32, cy: f32, radius: f32, width: f32, color: [f32;
         let a0 = i as f32 / SEGMENTS as f32 * std::f32::consts::TAU;
         let a1 = (i + 1) as f32 / SEGMENTS as f32 * std::f32::consts::TAU;
         let p = |r: f32, a: f32| [cx + r * a.cos(), cy + r * a.sin()];
-        hud.polygon(&[p(r0, a0), p(r1, a0), p(r1, a1), p(r0, a1)], &[color; 4]);
+        // Soft along the circles, hard where the segments meet.
+        hud.shape(None, &[p(r0, a0), p(r1, a0), p(r1, a1), p(r0, a1)], &[color; 4], &|i| {
+            i % 2 == 1
+        });
     }
 }
 
