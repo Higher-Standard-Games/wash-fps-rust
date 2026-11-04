@@ -788,6 +788,21 @@ Not covered yet:
 - **GitHub's Linux runner** has no Vulkan or GL adapter for wgpu. Linux is
   proven by the run here.
 
+### 18.5 W5 progress (November 4, 2026)
+
+- **Smoke test:** `.github/workflows/lobby_smoke.yml` builds the client on
+  Ubuntu 24.04 (Xvfb), macOS 14 and Windows and runs
+  `tools/lobby_smoke/run.sh`: the client starts `--offline` on a stand-in
+  package, opens the live `/client` page (or the `page` input) and passes
+  when the page says hello over the bridge (`lobby: the page said hello`
+  in the log). The log and a screenshot are artifacts. It runs on pushes to
+  main that touch the lobby and by hand. A full match stays a local test
+  (the steps in 17): it needs the lobby, game and bot servers and the
+  game data.
+- **The egui lobby** (`menu.rs`'s lobby tabs, `lobby_panel.rs`, the lobby
+  views and `washoi menu`) is no longer reached from `washoi` and is
+  removed once the webview lobby has been tried on Windows and macOS.
+
 ### 18.4 W4 progress (November 4, 2026)
 
 - **Demos** go through `demo:play` (`filename`, `base`, `reel`). The client

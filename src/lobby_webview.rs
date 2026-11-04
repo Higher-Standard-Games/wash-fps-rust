@@ -305,6 +305,10 @@ impl LobbyApp {
             match event {
                 HostEvent::Message(message) => {
                     if text(&message, "type").as_deref() == Some("hello") {
+                        if !GREETED.with(Cell::get) {
+                            let web = text(&message, "webVersion").unwrap_or_default();
+                            println!("lobby: the page said hello (web {web})");
+                        }
                         GREETED.with(|g| g.set(true));
                         // A new page load: it has not seen the update notice.
                         UPDATE_TOLD.with(|t| t.set(false));
