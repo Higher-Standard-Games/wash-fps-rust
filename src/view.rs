@@ -8,9 +8,12 @@ use shagger::lighting::map_emissive_surfaces::{SurfaceEmission, extract_emissive
 use shagger::physics::physics_system::world_triangles;
 use shagger::physics::sweep_backend_adapter::to_shared_contents;
 use shagger::rendering::water::water_surface_lighting::{water_map_lights, water_surface_lights};
+use shagger::shared::bsp::brush_model_state::{BrushModelState, extract_brush_models};
 use shagger::shared::js::js_hypot;
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
+use washoi::client::bomb_site_debris::BombSiteDebris;
+use washoi::client::bomb_site_markers::{BLAST_SCALE, BombSiteMarkers, MarkerPose};
 use washoi::client::cartoon_hit_effect::{CartoonHitEffect, CartoonHitRenderer};
 use washoi::client::damage_numbers::{DamageNumberRenderer, DamageNumbers};
 use washoi::client::fps_liquid_audio::play_liquid_crossing;
@@ -26,7 +29,7 @@ use washoi::liquid::client::underwater_view::{UnderwaterFog, UnderwaterView};
 use washoi::liquid::liquid_types::LiquidKind;
 
 use shagger::animation::player_model_manager::PlayerModelVisualStyle;
-use shagger::audio::audio_v2_sfx::AudioV2Sfx;
+use shagger::audio::audio_v2_sfx::{AudioV2Sfx, SfxPlayOptions};
 use shagger::babylon::post_processes::image_processing_post_process::{
     ImageProcessingConfiguration, ImageProcessingPostProcess, Vignette, VignetteBlendMode,
 };
@@ -49,6 +52,7 @@ use shagger::rendering::hdr_target::HDR_FORMAT;
 use shagger::rendering::hdr_target::HdrTarget;
 use shagger::rendering::model_renderer::{ModelDraw, ModelRenderer};
 use shagger::rendering::offscreen::{OFFSCREEN_FORMAT, render_hdr_scene_with_ui_to_rgba};
+use washoi::client::fps_bomb_audio::BOMB_BLAST_SOUND;
 
 use shagger::effects::color_correction_post_process::active_color_matrix;
 use shagger::loader::bsp::liquid_classifier::{classify_liquids, liquid_kind_from_surface_parms};
@@ -68,7 +72,7 @@ use shagger::shared::net::game_state::PlayerState;
 use shagger::shared::spread_utils::mulberry32;
 use shagger::ui::egui_layer::egui;
 use shagger::weapon::explosion::explosion_batch_renderer::{ExplosionBatchRenderer, ExplosionLook};
-use shagger::weapon::explosion_effect::{explosion_flash, explosion_for};
+use shagger::weapon::explosion_effect::{ROCKET_EXPLOSION, explosion_flash, explosion_for};
 use shagger::weapon::hitscan_effects::{HitscanEffects, ShotWorld};
 use shagger::weapon::impact::impact_spark_renderer::ImpactSparkBurst;
 use shagger::weapon::muzzle::muzzle_flash_renderer::{MuzzleFlashSpawn, MuzzleFlashStyle};
@@ -372,6 +376,17 @@ pub fn play_view_sounds(
     }
     for sound in renderer.liquid.take_sounds() {
         play_liquid_crossing(&mut audio.sfx, &sound);
+    }
+    // The detonation, 2D: everyone hears the round end wherever they are.
+    for _ in 0..renderer.take_blast_sounds() {
+        audio.sfx.play_2d(
+            BOMB_BLAST_SOUND,
+            &SfxPlayOptions {
+                volume: Some(1.0),
+                max_instances: Some(4),
+                ..SfxPlayOptions::default()
+            },
+        );
     }
     audio.play_movement_sounds(view.snapshots, view_entity, teams, &mut |at| {
         renderer.ground_surface_flags(at)
@@ -879,6 +894,18 @@ pub struct MapRenderer {
     /// Bodies breaking into shards on a gib death.
     pub gibs: GibSystem,
     gib_renderer: GibRenderer,
+    /// The map's `func_explosive` brush models and which are up
+    /// (`BrushModelState`), and the disabled list last applied.
+    brush_models: BrushModelState,
+    applied_disabled: Option<Vec<usize>>,
+    /// The bomb sites' beacons and detonation (`BombSiteMarkers`).
+    pub bomb_sites: BombSiteMarkers,
+    /// Fragments thrown from a destroyed brush model (`BombSiteDebris`),
+    /// and their models by path.
+    bomb_debris: BombSiteDebris,
+    debris_models: HashMap<String, ProjectileModel>,
+    /// Blast sounds the detonation asked for, not yet played.
+    blast_sounds: usize,
     /// Each live player's tint, for the colour their shards take.
     live_tints: HashMap<String, Vec3>,
     /// Non-gib deaths fall as ragdolls (`RagdollSystem`); none without the
@@ -934,6 +961,12 @@ pub struct MapRenderer {
     /// The switch's clock, seconds.
     switch_clock: f64,
 }
+
+/// `BombSiteMarkers`' blast: the rocket's, `BLAST_SCALE` times as big.
+static BOMB_BLAST_LOOK: ExplosionLook = ExplosionLook {
+    scale: ROCKET_EXPLOSION.scale * BLAST_SCALE,
+    ..ROCKET_EXPLOSION
+};
 
 /// SHAG's image processing: PostProcessingManager's default settings
 /// (`colorGrading` and `vignette`), on DefaultRenderingPipeline's
@@ -1058,6 +1091,108 @@ impl MapRenderer {
     pub fn drop_sounds(&mut self) {
         drop(self.teleports.take_sounds());
         drop(self.liquid.take_sounds());
+        self.blast_sounds = 0;
+    }
+
+    /// The blast sounds the detonation asked for since the last call.
+    pub fn take_blast_sounds(&mut self) -> usize {
+        std::mem::take(&mut self.blast_sounds)
+    }
+
+    /// `BombSiteMarkers.update` (with `BombSiteDebris.update`): the
+    /// brushes the bomb destroyed leave the world and the shots' map, their
+    /// fragments fly, and the server's blast schedule plays out. Call after
+    /// [`Self::play_effects`], which runs the effects' clock.
+    pub fn play_bomb_sites(&mut self, match_state: &MatchStateManager, dt: f64) {
+        let disabled: Vec<usize> = match_state
+            .bomb()
+            .and_then(|b| b.get("disabledModels"))
+            .and_then(shagger::shared::json::Value::as_array)
+            .map(|list| {
+                list.iter()
+                    .filter_map(shagger::shared::json::Value::as_f64)
+                    .filter(|i| *i >= 0.0 && i.fract() == 0.0)
+                    .map(|i| i as usize)
+                    .collect()
+            })
+            .unwrap_or_default();
+        if self.applied_disabled.as_ref() != Some(&disabled) {
+            // `restore`: the round's reset, then the server's list.
+            self.brush_models.restore(&disabled);
+            let gone: Vec<usize> = self
+                .brush_models
+                .definitions
+                .iter()
+                .map(|d| d.model_index)
+                .filter(|&m| !self.brush_models.is_enabled(m))
+                .collect();
+            self.world.set_disabled_brush_models(&gone);
+            if let Some(models) = self.shot_world.as_mut().and_then(|w| w.brush_models.as_mut()) {
+                models.restore(&disabled);
+            }
+            self.applied_disabled = Some(disabled.clone());
+        }
+        {
+            use shagger::physics::collision_backend::TraceOptions;
+            use shagger::physics::content_flags::content;
+            let models = &self.debris_models;
+            let available = |path: &str| models.contains_key(path);
+            let mut trace = self.shot_world.as_mut().map(|w| {
+                move |from: DVec3, to: DVec3| -> Option<(DVec3, Option<DVec3>)> {
+                    let v = |p: DVec3| shagger::babylon::maths::math_vector::Vector3::new(p.x, p.y, p.z);
+                    let hit = w.trace(
+                        v(from),
+                        v(to),
+                        TraceOptions {
+                            radius: Some(0.0),
+                            height: Some(0.0),
+                            content_mask: Some(content::SOLID),
+                        },
+                    );
+                    (hit.fraction < 1.0).then(|| {
+                        (
+                            DVec3::new(hit.end_pos.x, hit.end_pos.y, hit.end_pos.z),
+                            hit.normal.map(|n| DVec3::new(n.x, n.y, n.z)),
+                        )
+                    })
+                }
+            });
+            self.bomb_debris.update(
+                dt,
+                match_state.round(),
+                &disabled,
+                &self.brush_models.definitions,
+                &available,
+                trace
+                    .as_mut()
+                    .map(|t| t as &mut dyn FnMut(DVec3, DVec3) -> Option<(DVec3, Option<DVec3>)>),
+            );
+        }
+        let now = self.effect_time;
+        for blast in self.bomb_sites.update(dt, match_state) {
+            if blast.sound {
+                self.blast_sounds += 1;
+            }
+            let mut random = mulberry32(self.live_flashes.len() as u32 + blast.position.x.to_bits() as u32);
+            self.explosions
+                .spawn(now, blast.position, &BOMB_BLAST_LOOK, DVec3::Y, &mut random);
+            if let Some((intensity, range)) = explosion_flash(&BOMB_BLAST_LOOK, 0.0) {
+                let light = self.lights.acquire(
+                    self.live_light_clock,
+                    blast.position.as_vec3(),
+                    BOMB_BLAST_LOOK.outer_color,
+                    intensity,
+                    range,
+                );
+                self.live_flashes.push((light, &BOMB_BLAST_LOOK, now));
+            }
+        }
+    }
+
+    /// The bomb sites' beacons this frame, for the HUD.
+    #[must_use]
+    pub fn bomb_site_poses(&self) -> Vec<MarkerPose> {
+        self.bomb_sites.poses()
     }
 
     /// `effect_dt` is the demo clock's step in a demo (the teleport effects run
@@ -1209,6 +1344,7 @@ impl MapRenderer {
             }
         }
         self.gibs.clear();
+        self.bomb_debris.clear();
         self.damage_numbers.clear();
     }
 
@@ -1741,6 +1877,11 @@ impl MapRenderer {
         self.frame_draws.extend_from_slice(&self.model_draws[next..]);
         self.frame_draws.extend_from_slice(&self.live_draws);
         self.gib_renderer.draws(&self.gibs, &mut self.frame_draws);
+        for fragment in self.bomb_debris.fragments() {
+            if let Some(model) = self.debris_models.get(&fragment.path) {
+                model.draws(fragment.world(), self.item_time, &mut self.frame_draws);
+            }
+        }
         // The ragdolls' palettes go after the frame's, and leave with it.
         let joints_base = self.joints.len();
         if let (Some(ragdolls), Some(renderer)) = (&self.ragdolls, &self.remote_players) {
@@ -2218,14 +2359,45 @@ pub fn build_renderer(gpu: &Gpu, map: &mut LoadedMap, output_format: wgpu::Textu
         }
     }
     let gib_renderer = GibRenderer::new(gpu, &mut models);
+    // The `func_explosive` brush models (`BrushModelState`), and in a demo
+    // or a match the debris models they throw (`BombSiteDebris.preload`).
+    let brush_models = BrushModelState::new(extract_brush_models(&map.bsp.entities, &map.bsp.models));
+    let mut debris_models = HashMap::new();
+    if map.remote_players {
+        for path in brush_models.definitions.iter().flat_map(|d| &d.debris) {
+            if debris_models.contains_key(path) {
+                continue;
+            }
+            match load_projectile_model(gpu, &mut models, &mut map.pk3, &map.shaders, "debris", path, None) {
+                Ok(model) => {
+                    debris_models.insert(path.clone(), model);
+                }
+                Err(why) => eprintln!("debris model: {why}"),
+            }
+        }
+    }
+    if !brush_models.definitions.is_empty() {
+        println!(
+            "brush models: {} explosive, {} debris model(s)",
+            brush_models.definitions.len(),
+            debris_models.len()
+        );
+    }
     // The ragdolls' world: the drawn map, liquid surfaces left out
     // (`createBspCollision`).
     let ragdolls = remote_players.as_ref().map(|_| {
         let gravity =
             shagger::core::cvar::with_cvars(|c| shagger::movement::movement_vars::movement_var(c, "sv_gravity"));
         let mut ragdolls = RagdollSystem::new(gravity as f32);
-        let hidden = water.as_ref().map_or(&[][..], |w| w.hidden_batches());
-        let (positions, triangles) = world_triangles(&geometry, hidden);
+        // Nor the `func_explosive` brushes, which the bomb can take away.
+        let water_hidden = water.as_ref().map_or(&[][..], |w| w.hidden_batches());
+        let hidden: Vec<bool> = geometry
+            .brush_model_batches()
+            .iter()
+            .enumerate()
+            .map(|(i, &brush)| brush || water_hidden.get(i).copied().unwrap_or(false))
+            .collect();
+        let (positions, triangles) = world_triangles(&geometry, &hidden);
         ragdolls.physics.create_bsp_collision(&positions, &triangles);
         println!("ragdolls: {} collision triangles", triangles.len());
         ragdolls
@@ -2517,6 +2689,12 @@ pub fn build_renderer(gpu: &Gpu, map: &mut LoadedMap, output_format: wgpu::Textu
         teleport_last: HashMap::new(),
         gibs: GibSystem::default(),
         gib_renderer,
+        brush_models,
+        applied_disabled: None,
+        bomb_sites: BombSiteMarkers::default(),
+        bomb_debris: BombSiteDebris::default(),
+        debris_models,
+        blast_sounds: 0,
         live_tints: HashMap::new(),
         ragdolls,
         ragdoll_trails: RagdollTrails::default(),
@@ -2912,6 +3090,7 @@ pub fn start_prepared(o: &ViewOptions, prepared: Prepared) -> Result<i32, String
             renderer.set_live_players(&drawn, 1.0 / 60.0, 1.0 / 60.0);
             renderer.set_live_projectiles(&projectiles, 1.0 / 60.0);
             renderer.play_effects(&view.effects, &view.weapons, 1.0 / 60.0);
+            renderer.play_bomb_sites(feed.match_state(), 1.0 / 60.0);
             renderer.pickup_active.clone_from(&view.pickup_active);
             renderer.play_gibs(&view.effects, 1.0 / 60.0);
             renderer.play_hit_feedback(
@@ -2921,6 +3100,11 @@ pub fn start_prepared(o: &ViewOptions, prepared: Prepared) -> Result<i32, String
             );
             if let Some(hud) = &mut hud {
                 hud.scoreboard.held = o.scoreboard;
+                hud.set_markers(
+                    renderer.bomb_site_poses(),
+                    &camera,
+                    o.width as f32 / o.height.max(1) as f32,
+                );
                 update_watch_hud(
                     hud,
                     feed,

@@ -6,6 +6,8 @@
 //! vitals at the left and the ammo at the right, for the player on screen;
 //! the crosshair sits over it all.
 
+use shagger::rendering::camera::Camera;
+use shagger::rendering::glam::Mat4;
 use shagger::rendering::gpu::Gpu;
 use shagger::rendering::hud_2d_renderer::Hud2dRenderer;
 use shagger::rendering::wgpu;
@@ -13,6 +15,7 @@ use shagger::ui::hud::damage_overlay::DamageOverlay;
 use shagger::ui::hud_2d::Hud2d;
 
 use crate::client::ammo_status::get_ammo_status;
+use crate::client::bomb_site_markers::{MarkerPose, draw_markers};
 use crate::client::crosshair::{Crosshair, CrosshairFrame};
 use crate::client::hud::frame_rate_display::FrameRateDisplay;
 use crate::client::hud::hud_widget::{FpsHudWidget, HudFrame};
@@ -70,6 +73,10 @@ pub struct FpsHud {
     reticle: Option<(String, f64, bool)>,
     /// What the widgets read, kept across frames (the kill feed).
     pub state: HudState,
+    /// The bomb sites' beacons, and the camera's view-projection and
+    /// vertical field of view to place them with.
+    markers: Vec<MarkerPose>,
+    marker_camera: Option<(Mat4, f32)>,
 }
 
 /// A frame of a demo or a match being watched.
@@ -126,7 +133,17 @@ impl FpsHud {
             chat: Chat::default(),
             reticle: None,
             state: HudState::default(),
+            markers: Vec::new(),
+            marker_camera: None,
         })
+    }
+
+    /// The bomb sites' beacons for the next frame (`BombSiteMarkers`),
+    /// seen through `camera`. They are drawn under every widget, as the
+    /// browser's sit in the scene under its HUD.
+    pub fn set_markers(&mut self, markers: Vec<MarkerPose>, camera: &Camera, aspect: f32) {
+        self.markers = markers;
+        self.marker_camera = Some((camera.view_projection(aspect), camera.fov_y));
     }
 
     /// A spectator's frame (`GameEvents.ts`'s state and death handling,
@@ -288,6 +305,19 @@ impl FpsHud {
         let fonts = self.fonts;
         let s = UI_SCALE;
         let [vw, vh] = self.hud.size();
+        if let Some((view_proj, fov_y)) = self.marker_camera
+            && !self.markers.is_empty()
+        {
+            let pixels_per_unit = vh / 2.0 / (fov_y / 2.0).tan();
+            draw_markers(
+                &mut self.hud,
+                &fonts,
+                &self.markers,
+                view_proj,
+                [vw, vh],
+                pixels_per_unit,
+            );
+        }
         // `FPSHud`'s post-game: the result owns the screen; the gameplay
         // HUD is hidden, the board and the chat stay.
         if self.scoreboard.post_game() {

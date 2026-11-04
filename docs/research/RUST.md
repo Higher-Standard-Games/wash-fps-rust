@@ -3125,6 +3125,35 @@ Deferred, with the reason:
 - A backward demo seek replays from the start. It is fast on today's demos.
 - The loadout picker (Milestone 12's HUD list) replaces the default kit.
 
+### Milestone 8, seventh slice: the bomb sites' props, beacons and detonation (November 4, 2026)
+
+- **shagger `cf6e1c7`.** `build_world_geometry` builds the `func_explosive`
+  inline models after model 0 (`handleExplosive`'s `buildBrushModel` at the
+  entity's origin), in batches tagged with their model index;
+  `WorldRenderer::set_disabled_brush_models` leaves out the ones
+  `BrushModelState` says are gone. Search and Destroy maps bake their site
+  props (the md3s) into these models, so washoi_snd1's were missing. They
+  are drawn with the world's material passes rather than `buildBrushModel`'s
+  first-stage StandardMaterial. The water's occluders and the ragdolls'
+  collision leave them out, as geometry that can disappear.
+- **wash-fps-rust.** `client/bomb_site_markers.rs` ports
+  `BombSiteMarkers.ts`: the blast schedule played once per signature, the
+  blasts (the rocket's look at 2.2 times, with its flash) and the 2D blast
+  sound throttled to one per 0.09 s, and the A/B beacons. The beacons are
+  projected and drawn on the HUD layer under the widgets (the hexagon
+  plate, the letter and the tilted, turning ring) instead of as scene
+  meshes with depth off; the result is the same, through walls.
+  `client/bomb_site_debris.rs` ports `BombSiteDebris.ts`: twelve fragments
+  per newly disabled model (36 at most) from its debris1/debris2 md3s,
+  traced and bounced through the shots' map, gone after 4 s; the first
+  snapshot of a round only establishes state. `MapRenderer::play_bomb_sites`
+  restores `BrushModelState` (and the shots' map) from `disabledModels`.
+- **Not yet.** The detonation's camera shake (no camera shake exists yet).
+- **Proof.** Unit tests for the signature, the schedule, the sound throttle,
+  the sites, and the debris' emission, cap and bounce. Offscreen renders of
+  washoi_snd1: the B site's props drawn and gone when disabled, and the B
+  beacon, blast and debris on the recorded snd1 demo.
+
 ### Milestone 13, first slice: a game a player can start (November 3, 2026)
 
 - **shagger `8778b2f`.** `loader/pk3/published_index.rs` gains

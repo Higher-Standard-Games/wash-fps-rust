@@ -2,6 +2,8 @@
 //! local first-person weapon so far).
 
 pub mod ammo_status;
+pub mod bomb_site_debris;
+pub mod bomb_site_markers;
 pub mod cartoon_hit_effect;
 pub mod cinematic_demo_player;
 pub mod crosshair;

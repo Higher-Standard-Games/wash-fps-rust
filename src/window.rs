@@ -678,6 +678,7 @@ impl App {
             }
             s.renderer.set_live_projectiles(&view.projectiles, effect_dt);
             s.renderer.play_effects(&view.effects, &view.weapons, effect_dt);
+            s.renderer.play_bomb_sites(feed.match_state(), effect_dt);
             s.renderer.pickup_active.clone_from(&view.pickup_active);
             let local = match feed {
                 Feed::Play(..) => feed.local_entity(),
@@ -799,6 +800,11 @@ impl App {
             if let (Some(hud), None) = (&mut s.hud, &self.reel) {
                 hud.scoreboard.held = self.held.contains(&KeyCode::Tab);
                 hud.scale = s.window.scale_factor() as f32;
+                hud.set_markers(
+                    s.renderer.bomb_site_poses(),
+                    &self.camera,
+                    s.config.width as f32 / s.config.height.max(1) as f32,
+                );
                 update_watch_hud(
                     hud,
                     feed,
