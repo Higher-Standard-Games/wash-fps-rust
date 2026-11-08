@@ -2819,6 +2819,27 @@ blade's two flashes. Unit tests on the flash light's fade, the jittered
 socket ray, the beam truth's angle, the remote muzzle choice and the flash
 table.
 
+### Weapon review follow-ups: watched eyes, blade reflection, reload (November 8, 2026)
+
+- **Through the watched player's eyes**: a demo or a watch that follows
+  someone now puts the camera at their eyes (`DemoPovState`,
+  `watchedEyePose`, client/demo_pov_state.rs): step easing, the slide dip
+  and ledge lift, and their screen's view effects run on the demo's clock
+  (still while paused, over again after a seek). Their model is hidden,
+  their weapon is in hand (a cut for the first, a switch after,
+  `FollowedViewWeapon.showWeapon`) and sways with their stride and aim.
+  This replaces the third-person chase camera.
+- **The blade's reflection** (shagger 800d73c): `BladeEnvironment`'s grey
+  cube, as specular along the reflected view ray, blurred by roughness,
+  through an analytic environment BRDF (Babylon uses a lookup texture), at
+  `environmentIntensity` 1.5 in `WeaponLighting`'s colour.
+- **The predicted reload stays out**: `FPSPlayer.checkReload` starts the
+  animation on the key, but every snapshot carries `weapon_state` with
+  `reloading: false` until the server starts it, and `setServerReloadState`
+  cancels the animation on the first one, then restarts it from the
+  beginning when the server's reload arrives. Waiting for the server, as
+  here, is what the browser shows minus that flicker.
+
 ### Weapon animation review against the browser (November 4, 2026)
 
 0.2.0's weapon animation review, first person. Compared line by line with
@@ -2852,12 +2873,8 @@ SHAG `engine/weapon` and wash-fps `FPSPlayer`, `FPSController` and
   `updateMuzzleFlash` follows `updateWeaponBob`.
 - **Underwater**: the browser's drift (`submersionAmount`) moves only the
   muzzle of a weapon without a `tag_flash`; ported there, so no gun shows it.
-- **Not yet**: the blade's reflection fill (`BladeEnvironment`); the
-  watched player's first-person weapon and its sway (`FollowedViewWeapon`,
-  `DemoPovState`), which waits for a first-person spectate camera (demos
-  and spectating follow in third person here); the reload predicted on
-  the reload key (`FPSPlayer.checkReload`), which waits for the server's
-  `weapon_state` here.
+- **Not yet** (done November 8, above): the blade's reflection fill, the
+  watched player's first-person weapon, the reload on the key.
 
 ### Movement review: the camera's motion against the browser (November 4, 2026)
 

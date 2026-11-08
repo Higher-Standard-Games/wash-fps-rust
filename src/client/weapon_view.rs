@@ -22,7 +22,7 @@ use shagger::weapon::muzzle::muzzle_flash_renderer::{MuzzleFlashSpawn, MuzzleFla
 use shagger::weapon::weapon_barrels::{BarrelSpin, babylon_euler, barrel_material_mode};
 use shagger::weapon::weapon_view_manager::{
     FlashLight, ShotStyle, ViewModelDef, WEAPON_CAMERA_MAX_Z, WEAPON_CAMERA_MIN_Z, WEAPON_OUTLINE_WIDTH, WeaponView,
-    blade_light, view_material_mode, weapon_light, weapon_outline,
+    blade_light, blade_reflection, view_material_mode, weapon_light, weapon_outline,
 };
 
 use crate::client::quad_damage_visual::{
@@ -362,6 +362,9 @@ impl WeaponViewModel {
         let name = self.view.weapon.as_str();
         // `applyVisibility`: stowed for a climb, the weapon is not drawn.
         let drawn = self.view.is_drawn();
+        // The blade's `BladeEnvironment`, in `WeaponLighting`'s colour.
+        let [r, g, b] = self.view.lighting.color;
+        let reflection = blade_reflection(name, Vec3::new(r as f32, g as f32, b as f32));
         for (i, primitive) in self.model.primitives.iter().enumerate().filter(|_| drawn) {
             let mode = primitive
                 .material
@@ -380,6 +383,7 @@ impl WeaponViewModel {
             });
             self.draws.push(ModelDraw {
                 outline,
+                reflection,
                 ..ModelDraw::new(self.handle, i, root * primitive.node_matrix)
             });
         }

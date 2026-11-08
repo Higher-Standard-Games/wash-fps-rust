@@ -50,7 +50,7 @@ use crate::demo_overlay::{DemoOverlay, DemoOverlayAction};
 use crate::reel_overlay::ReelOverlay;
 use crate::view::{
     CLEAR, DeathFollow, DemoViewSounds, Feed, LoadedMap, MapRenderer, SceneReelWorld, apply_reel_camera,
-    build_renderer, chase_camera, play_view_sounds, styled_players, update_watch_hud, view_entity,
+    build_renderer, play_view_sounds, styled_players, update_watch_hud, view_entity,
 };
 use shagger::animation::player_model_manager::PlayerModelVisualStyle;
 use shagger::debug::debug_console::LogType;
@@ -61,6 +61,7 @@ use shagger::ui::egui_layer::EguiLayer;
 use washoi::client::cinematic_demo_player::{CinematicDemoPlayer, REEL_TITLE_MS, analyze_demo};
 use washoi::client::death_camera::{DeathCamera, look_angles};
 use washoi::client::demo_playback_keys::{DemoKeyAction, DemoKeyContext, Modifiers, demo_key_action, frag_seek_tick};
+use washoi::client::demo_pov_state::{DemoPovState, watched_eye_pose};
 use washoi::client::demo_service::analysis_report;
 use washoi::client::first_person_view::{BodyFrame, FirstPersonView, ViewKeys, ViewOffset};
 use washoi::client::game_events::GameAudio;
@@ -145,6 +146,12 @@ struct App {
     view_offset: Option<ViewOffset>,
     /// Climbing a ladder this frame: the weapon is stowed.
     on_ladder: bool,
+    /// The player whose eyes we look through in a demo or a watch, and
+    /// their reconstructed view (`DemoPovState`).
+    pov_entity: Option<String>,
+    pov: DemoPovState,
+    /// The watched player's aim this frame, for their weapon.
+    followed_aiming: Option<bool>,
     /// A weapon picked this frame, slid into the hand before the server
     /// confirms it (`FPSPlayer.switchWeapon`).
     predicted_weapon: Option<String>,
@@ -543,9 +550,11 @@ impl App {
             // HUD's timed entries run on the demo clock (still while paused,
             // slow at a quarter speed), and a seek drops them.
             let mut effect_dt = f64::from(dt);
+            let mut seeked = false;
             if let (Feed::Demo(d), Some(before)) = (&*feed, playhead) {
                 effect_dt = ((d.playhead_tick() - before) / d.tick_rate()).clamp(0.0, 0.25);
                 if d.discontinuity() != self.demo_discontinuity {
+                    seeked = true;
                     self.demo_discontinuity = d.discontinuity();
                     effect_dt = 0.0;
                     s.renderer.discontinuity();
@@ -675,13 +684,6 @@ impl App {
                 self.follow = None;
                 apply_reel_camera(&mut self.camera, r, &players, base_fov)
             });
-            let drawn: Vec<_> = players
-                .iter()
-                .filter(|(id, _, _)| Some(id) != eyes.as_ref())
-                .cloned()
-                .collect();
-            s.renderer.set_live_weapons(&view.weapons);
-            s.renderer.set_live_players(&drawn, f64::from(dt), effect_dt);
             // Our own camera in play; a frame without players keeps
             // `--follow N` for the first frame that has them.
             if self.reel.is_none() && !matches!(feed, Feed::Play(..)) && !players.is_empty() {
@@ -703,11 +705,78 @@ impl App {
                     .as_ref()
                     .and_then(|id| players.iter().position(|(p, _, _)| p == id));
             }
-            if let Some(i) = self.follow
-                && let Some((_, p, _)) = players.get(i)
-            {
-                chase_camera(&mut self.camera, p);
+            // `FollowedViewWeapon` and `SpectateEyeCamera`: the watched
+            // player's eyes, their screen's view effects, and their weapon
+            // in hand, swaying with their stride.
+            self.followed_aiming = None;
+            let followed = self
+                .follow
+                .and_then(|i| players.get(i))
+                .map(|(id, p, _)| (id.clone(), *p));
+            match followed {
+                Some((id, p)) => {
+                    let cut = self.pov_entity.as_deref() != Some(id.as_str());
+                    if cut {
+                        self.pov.reset();
+                        self.pov_entity = Some(id.clone());
+                    }
+                    let aiming = p.aiming.unwrap_or(false);
+                    self.pov.set_aiming(aiming);
+                    self.followed_aiming = Some(aiming);
+                    let (cvars, step_height, smooth_factor) = with_cvars(|c| {
+                        (
+                            ViewCvars::read(c),
+                            movement_var(c, "sv_stepheight"),
+                            movement_var(c, "cl_smoothfactor"),
+                        )
+                    });
+                    let pose = self
+                        .pov
+                        .update(&id, &p, effect_dt, seeked, &cvars, step_height, smooth_factor);
+                    let eye = watched_eye_pose(&p, Some(&pose));
+                    self.camera.position = eye.position.as_vec3();
+                    self.camera.yaw = eye.yaw as f32;
+                    self.camera.pitch = eye.pitch as f32;
+                    self.camera.roll = 0.0;
+                    let r = pose.effects.rotation_offset * (std::f64::consts::PI / 180.0);
+                    self.view_offset = Some(ViewOffset {
+                        eye: eye.position,
+                        pitch: r.x,
+                        yaw: r.y,
+                        roll: r.z,
+                        fov_multiplier: pose.effects.fov_multiplier,
+                        local_offset: pose.effects.position_offset,
+                        horizontal_speed: pose.horizontal_speed,
+                        bob_cycle: pose.bob_cycle,
+                        landing_velocity: pose.landing_velocity,
+                    });
+                    self.velocity = Vec3::new(p.vx as f32, p.vy as f32, p.vz as f32);
+                    self.grounded = p.grounded;
+                    // `showWeapon`: the first weapon shown is a cut, later
+                    // ones switch.
+                    if let Some(weapon) = view.weapons.get(&id) {
+                        let weapon = canonical_weapon_id(weapon);
+                        if cut {
+                            s.renderer.hold_cut(Some(weapon));
+                        } else {
+                            s.renderer.hold(Some(weapon));
+                        }
+                    }
+                }
+                None => {
+                    if self.pov_entity.take().is_some() {
+                        s.renderer.hold_cut(None);
+                    }
+                }
             }
+            // Their own model would fill the screen from inside their head.
+            let drawn: Vec<_> = players
+                .iter()
+                .filter(|(id, _, _)| Some(id) != eyes.as_ref() && Some(id) != self.pov_entity.as_ref())
+                .cloned()
+                .collect();
+            s.renderer.set_live_weapons(&view.weapons);
+            s.renderer.set_live_players(&drawn, f64::from(dt), effect_dt);
             let local = match feed {
                 Feed::Play(..) => feed.local_entity(),
                 _ => None,
@@ -940,7 +1009,7 @@ impl App {
                 velocity_y: f64::from(self.velocity.y),
                 landing_velocity,
                 bob_cycle,
-                aiming: self.aiming,
+                aiming: self.followed_aiming.unwrap_or(self.aiming),
                 reloading: false,
             });
         }
@@ -1871,6 +1940,9 @@ pub fn run(
         view_charging: false,
         view_offset: None,
         on_ladder: false,
+        pov_entity: None,
+        pov: DemoPovState::default(),
+        followed_aiming: None,
         predicted_weapon: None,
         death_follow: None,
         audio,

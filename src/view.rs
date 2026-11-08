@@ -1284,6 +1284,14 @@ impl MapRenderer {
         );
     }
 
+    /// `loadWeapon` with `cancelSwitch`: `id` in hand at once, no slide
+    /// (the first weapon of a player we start watching).
+    pub fn hold_cut(&mut self, id: Option<&str>) {
+        let id = id.map(|id| if id == "lasergun" { "voltaic" } else { id });
+        self.switch_anim.reset();
+        self.hold_now(id);
+    }
+
     /// Puts `id` in hand now. The one view in the browser keeps its bob,
     /// aim, recoil, swing, holster and light across the swap, so the new
     /// weapon takes them from the old (`WeaponView::carry_from`).
