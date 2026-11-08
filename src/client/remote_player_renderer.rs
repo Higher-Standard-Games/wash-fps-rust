@@ -29,11 +29,15 @@ use shagger::weapon::weapon_barrels::{
 };
 use shagger::world::pickup::{flattened_pickup_matrices, pickup_scale};
 
+use super::player_model_visual_settings::{
+    FfaColors, PlayerTeamSlot, get_ffa_player_model_visual_style, get_player_model_visual_style, get_player_team_slot,
+};
 use super::quad_damage_visual::{
     QUAD_DAMAGE_COLOR, QUAD_EMISSIVE_MIN, QUAD_EMISSIVE_RANGE, QUAD_PLAYER_OUTLINE_MIN, QUAD_PLAYER_OUTLINE_RANGE,
     QUAD_WORLD_WEAPON_OUTLINE_MIN, QUAD_WORLD_WEAPON_OUTLINE_RANGE, get_quad_damage_pulse, mask_has_quad,
 };
 use super::remote_player_logic::{IDLE_SPEED_THRESHOLD, derive_animation};
+use crate::client::settings::settings_model::TeamColor;
 use crate::shared::entities::definitions::weapons::weapons_table::{WEAPON_MODELS, WeaponModel, weapon_model};
 use crate::world::fps_pickup::{directory, package_path};
 
@@ -146,6 +150,79 @@ pub fn animation_speed_ratio(anim: &str, interp: &InterpolatedEntity, time_scale
         _ => 1.0,
     };
     ratio * time_scale
+}
+
+/// The colour half of `RemotePlayerRenderer`: who each player is from the
+/// current view (`resolvePlayerTeamSlot`), their own colour in a
+/// free-for-all (`ffaColor`), and the style they are drawn with
+/// (`visualStyle`).
+#[derive(Default)]
+pub struct PlayerColors {
+    /// `teams`: entity id to server team, from the roster.
+    teams: HashMap<String, String>,
+    /// `localTeam`.
+    local_team: Option<String>,
+    /// `perspectiveEntityId`: whose eyes a demo borrows.
+    perspective: Option<String>,
+    /// `MatchStateManager.teamBased`.
+    team_based: bool,
+    ffa_colors: FfaColors,
+}
+
+impl PlayerColors {
+    /// The roster and the view, once a frame: `applyRoster`'s teams and
+    /// local team, `setPerspectiveEntity`, and the gametype.
+    pub fn update(
+        &mut self,
+        teams: &HashMap<String, String>,
+        local_entity: Option<&str>,
+        perspective: Option<&str>,
+        team_based: bool,
+    ) {
+        self.teams.clone_from(teams);
+        if let Some(team) = local_entity.and_then(|id| teams.get(id)) {
+            self.local_team = Some(team.clone());
+        }
+        self.perspective = perspective.map(str::to_owned);
+        self.team_based = team_based;
+    }
+
+    /// `resolvePlayerTeamSlot`.
+    #[must_use]
+    pub fn team_slot(&self, entity_id: &str) -> PlayerTeamSlot {
+        let team = |id: &str| self.teams.get(id).map(String::as_str);
+        if let Some(viewer) = &self.perspective {
+            if entity_id == viewer {
+                return PlayerTeamSlot::Ally;
+            }
+            return get_player_team_slot(team(entity_id), team(viewer));
+        }
+        get_player_team_slot(team(entity_id), self.local_team.as_deref())
+    }
+
+    /// `ffaColor`: a free-for-all opponent's own colour; none in a team
+    /// gametype (Duel included), where the slot colours apply even to a
+    /// spectator's view.
+    fn ffa_color(&mut self, entity_id: &str, slot: PlayerTeamSlot) -> Option<&'static TeamColor> {
+        (slot == PlayerTeamSlot::Ffa && !self.team_based).then(|| self.ffa_colors.color_for(entity_id))
+    }
+
+    /// `visualStyle`.
+    pub fn visual_style(&mut self, entity_id: &str) -> PlayerModelVisualStyle {
+        let slot = self.team_slot(entity_id);
+        match self.ffa_color(entity_id, slot) {
+            Some(color) => get_ffa_player_model_visual_style(color, MODEL_SCALE),
+            None => get_player_model_visual_style(slot, MODEL_SCALE),
+        }
+    }
+
+    /// `resetSession`'s colour part: a new server hands the same ids to
+    /// different people.
+    pub fn reset_session(&mut self) {
+        self.teams.clear();
+        self.ffa_colors.clear();
+        self.local_team = None;
+    }
 }
 
 /// The player model, uploaded once, and every remote player's pose.
@@ -523,5 +600,42 @@ mod tests {
         assert_eq!(feet_y(&p), 66.0);
         p.sliding = true;
         assert_eq!(feet_y(&p), 56.0);
+    }
+
+    fn teams(entries: &[(&str, &str)]) -> HashMap<String, String> {
+        entries
+            .iter()
+            .map(|(id, t)| ((*id).to_owned(), (*t).to_owned()))
+            .collect()
+    }
+
+    #[test]
+    fn colours_by_gametype_ffa_players_but_no_team_mode() {
+        let ffa = teams(&[("me", "ffa"), ("bot", "ffa"), ("other", "spectator")]);
+        let mut colors = PlayerColors::default();
+        colors.update(&ffa, Some("me"), None, false);
+        let bot = colors.visual_style("bot");
+        let other = colors.visual_style("other");
+        // Each FFA opponent their own colour, not the shared enemy one.
+        assert_ne!(bot.tint_color, other.tint_color);
+        assert_eq!(colors.visual_style("bot"), bot);
+        // Duel and the team modes keep the side colours, spectated or not.
+        colors.update(&ffa, Some("me"), None, true);
+        assert_eq!(
+            colors.visual_style("bot"),
+            get_player_model_visual_style(PlayerTeamSlot::Ffa, MODEL_SCALE)
+        );
+    }
+
+    #[test]
+    fn sides_from_our_team_or_the_eyes_a_demo_borrows() {
+        let sides = teams(&[("me", "udon"), ("mate", "udon"), ("foe", "soba")]);
+        let mut colors = PlayerColors::default();
+        colors.update(&sides, Some("me"), None, true);
+        assert_eq!(colors.team_slot("mate"), PlayerTeamSlot::Ally);
+        assert_eq!(colors.team_slot("foe"), PlayerTeamSlot::Enemy);
+        colors.update(&sides, None, Some("foe"), true);
+        assert_eq!(colors.team_slot("foe"), PlayerTeamSlot::Ally);
+        assert_eq!(colors.team_slot("mate"), PlayerTeamSlot::Enemy);
     }
 }

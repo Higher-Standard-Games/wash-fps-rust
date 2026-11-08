@@ -12,6 +12,7 @@
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use washoi::client::fps_liquid_audio::{play_drown_gasp, play_drown_tick};
+use washoi::client::remote_player_renderer::PlayerColors;
 use washoi::liquid::client::local_air_tracker::AirEvent;
 
 use shagger::rendering::camera::Camera;
@@ -168,6 +169,8 @@ struct App {
     demo_hud: Option<DemoOverlay>,
     /// The players as drawn last frame, for the reel to aim at.
     drawn: Vec<(String, InterpolatedEntity, PlayerModelVisualStyle)>,
+    /// Who each player is from our view, and their colour.
+    player_colors: PlayerColors,
     /// `washoi bench`: the frame's stages timed, no vsync, a fixed step.
     bench: Option<Bench>,
     /// The drawing size the bench reports.
@@ -669,7 +672,19 @@ impl App {
                     }
                 }
             }
-            let players = styled_players(view.players);
+            // `setPerspectiveEntity`: a demo is seen through whoever it
+            // follows (last frame's choice), a match through our own side.
+            let perspective = match feed {
+                Feed::Demo(_) if !self.free_camera => self.follow_id.as_deref(),
+                _ => None,
+            };
+            self.player_colors.update(
+                &view.teams,
+                feed.local_entity(),
+                perspective,
+                feed.match_state().team_based(),
+            );
+            let players = styled_players(view.players, &mut self.player_colors);
             let base_fov = self.camera.fov_y;
             let eyes = self.reel.as_ref().and_then(|r| {
                 self.follow = None;
@@ -713,6 +728,8 @@ impl App {
                 _ => None,
             };
             s.renderer.set_local_player(local, f64::from(self.camera.yaw));
+            s.renderer
+                .set_local_style(local.map(|id| self.player_colors.visual_style(id)));
             s.renderer
                 .set_live_projectiles(&view.projectiles, effect_dt, &self.camera);
             s.renderer
@@ -1882,6 +1899,7 @@ pub fn run(
         overlay: ReelOverlay::default(),
         demo_hud: None,
         drawn: Vec::new(),
+        player_colors: PlayerColors::default(),
         bench,
         surface_size: [0, 0],
     };

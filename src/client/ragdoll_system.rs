@@ -12,14 +12,14 @@
 //! `TrailMesh` (shagger's port) behind the hips box, one uploaded mesh per
 //! ragdoll slot, its vertices streamed each frame.
 
-use shagger::animation::player_model_manager::{PlayerModel, PlayerModelInstance};
+use shagger::animation::player_model_manager::{PlayerModel, PlayerModelInstance, PlayerModelVisualStyle};
 use shagger::babylon::materials::standard_material::StandardMaterialParams;
 use shagger::babylon::meshes::trail_mesh::TrailMesh;
 use shagger::babylon::physics::v2::ragdoll::{PhysicsConstraintType, Ragdoll, RagdollBoneProperties};
 use shagger::physics::physics_system::{PhysicsSystem, from_rapier, quat_from_rapier, to_rapier};
 use shagger::rendering::glam::{DMat4, DVec3, Mat4, Vec3};
 use shagger::rendering::gpu::Gpu;
-use shagger::rendering::model_renderer::{ModelDraw, ModelHandle, ModelRenderer};
+use shagger::rendering::model_renderer::{ModelDraw, ModelHandle, ModelRenderer, Outline};
 use shagger::weapon::projectile_manager::{update_standard_mesh, upload_standard_mesh};
 
 /// Longest a ragdoll simulates before gib-exploding, resting or not
@@ -227,6 +227,9 @@ pub struct ActiveRagdoll {
     pub age: f64,
     /// The colour the body was drawn with; its gibs take it.
     pub color: Option<Vec3>,
+    /// The outline it was drawn with: the body keeps its meshes, and with
+    /// them `renderOutline`.
+    pub outline: Option<Outline>,
     rest_anchor: Option<DVec3>,
     rest_seconds: f64,
     pub fade_start: Option<f64>,
@@ -277,7 +280,8 @@ impl RagdollSystem {
     }
 
     /// `spawn`: hands `instance`, posed under `world`, to physics and
-    /// launches it along `dir`. Returns its serial for the follow handle
+    /// launches it along `dir`, drawn on in `style` (its tint and outline;
+    /// none for an untinted body). Returns its serial for the follow handle
     /// ([`Self::position_of`]); none when the skeleton lacks a bone.
     pub fn spawn(
         &mut self,
@@ -285,8 +289,13 @@ impl RagdollSystem {
         mut instance: PlayerModelInstance,
         world: Mat4,
         dir: DVec3,
-        color: Option<Vec3>,
+        style: Option<&PlayerModelVisualStyle>,
     ) -> Option<u64> {
+        let color = style.and_then(|s| s.tint_color);
+        let outline = style.filter(|s| s.outline_enabled).map(|s| Outline {
+            color: s.outline_color,
+            width: s.outline_width,
+        });
         while self.ragdolls.len() >= MAX_RAGDOLLS {
             let mut oldest = self.ragdolls.remove(0);
             oldest.ragdoll.dispose(&mut self.physics);
@@ -317,6 +326,7 @@ impl RagdollSystem {
             ragdoll,
             age: 0.0,
             color,
+            outline,
             rest_anchor: None,
             rest_seconds: 0.0,
             fade_start: None,
@@ -418,6 +428,8 @@ impl RagdollSystem {
                 draws.push(ModelDraw {
                     tint: active.color,
                     skin: Some(offset),
+                    // A blended (fading) draw has no outline pass.
+                    outline: active.outline,
                     alpha: fading.then_some(active.fade() as f32),
                     ..ModelDraw::new(if fading { fade_handle } else { handle }, index, active.world)
                 });

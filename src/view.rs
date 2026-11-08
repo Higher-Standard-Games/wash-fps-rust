@@ -101,7 +101,7 @@ use washoi::shared::entities::definitions::projectiles::{PROJECTILES, projectile
 use washoi::shared::net::snapshot_events::SnapshotEvent;
 
 use washoi::client::player_model_visual_settings::{PlayerTeamSlot, get_player_model_visual_style};
-use washoi::client::remote_player_renderer::{MODEL_SCALE, RemotePlayerRenderer};
+use washoi::client::remote_player_renderer::{MODEL_SCALE, PlayerColors, RemotePlayerRenderer};
 use washoi::shared::bsp::pickup_table::{PickupEntry, extract_pickups};
 use washoi::shared::items::item_throw::land_map_pickups;
 use washoi::world::fps_pickup::build_weapon_pickups;
@@ -1048,8 +1048,9 @@ pub struct MapRenderer {
     debris_models: HashMap<String, ProjectileModel>,
     /// Blast sounds the detonation asked for, not yet played.
     blast_sounds: usize,
-    /// Each live player's tint, for the colour their shards take.
-    live_tints: HashMap<String, Vec3>,
+    /// Each live player's style, which their corpse keeps and whose tint
+    /// their shards take (`modelTint`).
+    live_styles: HashMap<String, PlayerModelVisualStyle>,
     /// Non-gib deaths fall as ragdolls (`RagdollSystem`); none without the
     /// player model.
     pub ragdolls: Option<RagdollSystem>,
@@ -1069,6 +1070,9 @@ pub struct MapRenderer {
     /// The local player (whose own body is not drawn) and their view yaw,
     /// for their corpse (`startLocalRagdollDeathCamera`).
     local_player: Option<(String, f64)>,
+    /// The style the local player's corpse is drawn in
+    /// (`createDetachedModelAt` styles it as any body).
+    local_style: Option<PlayerModelVisualStyle>,
     /// Where each drawn player's shots leave from this frame
     /// (`getWeaponMuzzleWorldPosition`).
     remote_muzzles: HashMap<String, RemoteMuzzle>,
@@ -1459,18 +1463,14 @@ impl MapRenderer {
         let departed = &self.departed;
         self.live_worlds
             .retain(|id, _| departed.contains_key(id) || players.iter().any(|(p, _, _)| p == id));
-        self.live_tints
+        self.live_styles
             .retain(|id, _| departed.contains_key(id) || players.iter().any(|(p, _, _)| p == id));
         self.remote_muzzles.clear();
         for (id, interp, style) in players {
             if self.ragdolled.contains(id) {
                 continue;
             }
-            if let Some(tint) = style.tint_color {
-                self.live_tints.insert(id.clone(), tint);
-            } else {
-                self.live_tints.remove(id);
-            }
+            self.live_styles.insert(id.clone(), *style);
             self.live_worlds.insert(id.clone(), body_matrix(interp));
             renderer.update(id, interp, dt, 1.0, None);
             let first = self.live_draws.len();
@@ -1843,12 +1843,17 @@ impl MapRenderer {
             {
                 let kind = if damage_type.is_empty() { weapon_id } else { damage_type };
                 let gib = kind == "rail" || kind == "bomb" || (kind == "explosion" && *final_damage >= 50);
-                let color = self.live_tints.get(entity_id).copied();
                 let local = self
                     .local_player
                     .as_ref()
                     .filter(|(id, _)| id == entity_id)
                     .map(|(_, yaw)| *yaw);
+                let style = if local.is_some() {
+                    self.local_style
+                } else {
+                    self.live_styles.get(entity_id).copied()
+                };
+                let color = style.and_then(|s| s.tint_color);
                 let death_pos = DVec3::new(at.x, at.y, at.z);
                 if gib {
                     let burst = self.gibs.spawn(death_pos, DVec3::new(vel.x, vel.y, vel.z), color);
@@ -1877,7 +1882,7 @@ impl MapRenderer {
                             instance,
                             body_matrix(&interp),
                             DVec3::new(kb_dir.x, kb_dir.y, kb_dir.z),
-                            color,
+                            style.as_ref(),
                         )
                     {
                         self.local_death = Some((DeathFollow::Ragdoll(serial), death_pos, yaw));
@@ -1900,7 +1905,7 @@ impl MapRenderer {
                             instance,
                             world,
                             DVec3::new(kb_dir.x, kb_dir.y, kb_dir.z),
-                            color,
+                            style.as_ref(),
                         );
                     }
                     // No ragdolls: the body breaks up instead.
@@ -1945,6 +1950,12 @@ impl MapRenderer {
 
     pub fn set_local_player(&mut self, id: Option<&str>, yaw: f64) {
         self.local_player = id.map(|id| (id.to_owned(), yaw));
+    }
+
+    /// The style the local player's corpse takes, before
+    /// [`Self::play_gibs`].
+    pub fn set_local_style(&mut self, style: Option<PlayerModelVisualStyle>) {
+        self.local_style = style;
     }
 
     /// The local player's death this frame: what to follow, where they died
@@ -3055,7 +3066,7 @@ pub fn build_renderer(gpu: &Gpu, map: &mut LoadedMap, output_format: wgpu::Textu
         bomb_debris: BombSiteDebris::default(),
         debris_models,
         blast_sounds: 0,
-        live_tints: HashMap::new(),
+        live_styles: HashMap::new(),
         ragdolls,
         ragdoll_trails: RagdollTrails::default(),
         slash_trails: SlashTrailRenderer::default(),
@@ -3065,6 +3076,7 @@ pub fn build_renderer(gpu: &Gpu, map: &mut LoadedMap, output_format: wgpu::Textu
         departed: HashMap::new(),
         live_worlds: HashMap::new(),
         local_player: None,
+        local_style: None,
         remote_muzzles: HashMap::new(),
         local_beam: false,
         blade_tip_flashes: Vec::new(),
@@ -3128,7 +3140,7 @@ pub fn build_renderer(gpu: &Gpu, map: &mut LoadedMap, output_format: wgpu::Textu
                     instance,
                     body_matrix(&interp),
                     babylon(held.dir),
-                    style.tint_color,
+                    Some(&style),
                 );
             }
         }
@@ -3144,15 +3156,20 @@ pub fn build_renderer(gpu: &Gpu, map: &mut LoadedMap, output_format: wgpu::Textu
     renderer
 }
 
-/// The players a demo or a match shows, styled as a spectator sees them:
-/// no perspective, so every player takes the FFA slot (wash-fps's per-player
-/// FFA colours are not ported yet).
+/// The players a demo or a match shows, each in the style `colors` gives
+/// them from the current view (`visualStyle`).
 #[must_use]
 pub fn styled_players(
     players: Vec<(String, InterpolatedEntity)>,
+    colors: &mut PlayerColors,
 ) -> Vec<(String, InterpolatedEntity, PlayerModelVisualStyle)> {
-    let style = get_player_model_visual_style(PlayerTeamSlot::Ffa, MODEL_SCALE);
-    players.into_iter().map(|(id, p)| (id, p, style)).collect()
+    players
+        .into_iter()
+        .map(|(id, p)| {
+            let style = colors.visual_style(&id);
+            (id, p, style)
+        })
+        .collect()
 }
 
 /// The view, demo or match until its window closes; the exit code.
@@ -3389,6 +3406,7 @@ pub fn start_prepared(o: &ViewOptions, prepared: Prepared) -> Result<i32, String
             // Movie mode: the reel draws its own cards.
             hud = None;
         }
+        let mut colors = PlayerColors::default();
         for step in 0..steps.max(1) {
             if live {
                 std::thread::sleep(std::time::Duration::from_micros(16_667));
@@ -3443,7 +3461,18 @@ pub fn start_prepared(o: &ViewOptions, prepared: Prepared) -> Result<i32, String
                     p.say(text, false);
                 }
             }
-            players = styled_players(view.players);
+            // `setPerspectiveEntity`: `--follow N` of the last frame's list.
+            let perspective = match feed {
+                Feed::Demo(_) => o.follow.and_then(|i| players.get(i)).map(|(id, _, _)| id.clone()),
+                _ => None,
+            };
+            colors.update(
+                &view.teams,
+                feed.local_entity(),
+                perspective.as_deref(),
+                feed.match_state().team_based(),
+            );
+            players = styled_players(view.players, &mut colors);
             projectiles = view.projectiles;
             let eyes = reel
                 .as_ref()

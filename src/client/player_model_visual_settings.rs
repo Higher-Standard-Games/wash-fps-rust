@@ -1,12 +1,16 @@
 //! wash-fps `client/PlayerModelVisualSettings.ts`: team tints and outlines
 //! for third-person player models, from the `cl_team_*` and `cl_player_*`
-//! cvars.
-//!
-//! Not yet: `FfaColors`, each free-for-all opponent in a colour of their own.
+//! cvars, and `FfaColors`: each free-for-all opponent in a colour of their
+//! own.
+
+use std::collections::HashMap;
 
 use shagger::animation::player_model_manager::PlayerModelVisualStyle;
 use shagger::core::cvar::{CvarOptions, CvarType, Cvars, with_cvars};
 use shagger::rendering::glam::Vec3;
+use shagger::shared::spread_utils::mulberry32;
+
+use crate::client::settings::settings_model::{TEAM_COLORS, TeamColor};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PlayerTeamSlot {
@@ -192,5 +196,145 @@ fn canonical_team(team_id: &str) -> Option<&'static str> {
         "soba" | "alpha" | "beta" => Some("soba"),
         "spectator" => Some("spectator"),
         _ => None,
+    }
+}
+
+/// `sameColor`.
+fn same_color(a: Vec3, b: Vec3) -> bool {
+    (a.x - b.x).abs() < 0.01 && (a.y - b.y).abs() < 0.01 && (a.z - b.z).abs() < 0.01
+}
+
+/// `FfaColors`: in a free-for-all each opponent wears a colour of their own
+/// from the team palette, so they can be told apart. A colour is kept for
+/// the session, the least-worn ones are handed out first, and your own
+/// side's colour is never used, so it still means you (the player whose
+/// eyes a demo borrows).
+pub struct FfaColors {
+    assigned: HashMap<String, &'static TeamColor>,
+    random: Box<dyn FnMut() -> f64>,
+}
+
+impl Default for FfaColors {
+    fn default() -> Self {
+        // `Math.random`: any seed will do, as long as each session differs.
+        let seed = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_or(0, |d| d.subsec_nanos() ^ d.as_secs() as u32);
+        Self::with_random(Box::new(mulberry32(seed)))
+    }
+}
+
+impl FfaColors {
+    /// Colours dealt by `random` (`Math.random`'s stand-in, in `[0, 1)`).
+    #[must_use]
+    pub fn with_random(random: Box<dyn FnMut() -> f64>) -> Self {
+        Self {
+            assigned: HashMap::new(),
+            random,
+        }
+    }
+
+    /// `colorFor`.
+    pub fn color_for(&mut self, entity_id: &str) -> &'static TeamColor {
+        if let Some(held) = self.assigned.get(entity_id) {
+            return held;
+        }
+        let ally = player_model_visual_default(PlayerTeamSlot::Ally);
+        let own = with_cvars(|c| {
+            let name = team_color_cvar(PlayerTeamSlot::Ally);
+            parse_rgb_cvar(
+                &if c.exists(name) {
+                    c.get_string(name)
+                } else {
+                    String::new()
+                },
+                ally,
+            )
+        });
+        let choices: Vec<&'static TeamColor> = TEAM_COLORS
+            .iter()
+            .filter(|color| !same_color(parse_rgb_cvar(color.fill, own), own))
+            .collect();
+        let worn = |color: &TeamColor| self.assigned.values().filter(|other| other.id == color.id).count();
+        let fewest = choices.iter().map(|c| worn(c)).min().unwrap_or(0);
+        let pool: Vec<&'static TeamColor> = choices.into_iter().filter(|c| worn(c) == fewest).collect();
+        let pick = pool[((self.random)() * pool.len() as f64).floor() as usize];
+        self.assigned.insert(entity_id.to_owned(), pick);
+        pick
+    }
+
+    /// `clear`.
+    pub fn clear(&mut self) {
+        self.assigned.clear();
+    }
+}
+
+/// `getFfaPlayerModelVisualStyle`: the FFA style with this opponent's own
+/// colour in place of the shared one.
+#[must_use]
+pub fn get_ffa_player_model_visual_style(color: &TeamColor, model_scale: f32) -> PlayerModelVisualStyle {
+    let base = get_player_model_visual_style(PlayerTeamSlot::Ffa, model_scale);
+    PlayerModelVisualStyle {
+        tint_color: Some(parse_rgb_cvar(
+            color.fill,
+            player_model_visual_default(PlayerTeamSlot::Ffa),
+        )),
+        outline_color: parse_rgb_cvar(color.outline, base.outline_color),
+        ..base
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// `vi.spyOn(Math, "random").mockReturnValue(0)`.
+    fn first() -> FfaColors {
+        FfaColors::with_random(Box::new(|| 0.0))
+    }
+
+    #[test]
+    fn each_opponent_a_different_colour_until_the_palette_runs_out_never_your_own() {
+        with_cvars(register_player_model_visual_cvars);
+        let mut colors = FfaColors::default();
+        let opponents = TEAM_COLORS.len() - 1;
+        let worn: Vec<&str> = (0..opponents).map(|i| colors.color_for(&format!("p{i}")).id).collect();
+        let distinct: std::collections::HashSet<_> = worn.iter().collect();
+        assert_eq!(distinct.len(), opponents);
+        assert!(!worn.contains(&"pink"));
+        // The next one has to share, and takes a colour worn only once.
+        assert!(worn.contains(&colors.color_for("one-more").id));
+    }
+
+    #[test]
+    fn keeps_a_colour_for_the_session_and_deals_afresh_after_a_clear() {
+        let mut colors = first();
+        let a = colors.color_for("a").id;
+        assert_ne!(colors.color_for("b").id, a);
+        assert_eq!(colors.color_for("a").id, a);
+        colors.clear();
+        assert_eq!(colors.color_for("b").id, a);
+    }
+
+    #[test]
+    fn follows_your_own_sides_colour_when_you_change_it() {
+        with_cvars(|c| {
+            register_player_model_visual_cvars(c);
+            c.set("cl_team_ally_color", "0.55 1.7 0.2");
+        });
+        let mut colors = FfaColors::default();
+        let worn: Vec<&str> = (0..TEAM_COLORS.len() - 1)
+            .map(|i| colors.color_for(&format!("p{i}")).id)
+            .collect();
+        assert!(!worn.contains(&"lime"));
+        assert!(worn.contains(&"pink"));
+    }
+
+    #[test]
+    fn an_ffa_style_wears_the_colour_and_its_outline() {
+        let lime = TEAM_COLORS.iter().find(|c| c.id == "lime").unwrap();
+        let style = get_ffa_player_model_visual_style(lime, 36.0);
+        assert_eq!(style.tint_color, Some(Vec3::new(0.55, 1.7, 0.2)));
+        assert_eq!(style.outline_color, Vec3::new(0.7, 2.0, 0.3));
     }
 }
