@@ -12,6 +12,7 @@ pub mod frag_message;
 pub mod gametype_badge;
 pub mod pause_menu;
 pub mod phase_message;
+pub mod pickup_prompt;
 pub mod pickup_toast;
 pub mod powerup_timer;
 pub mod ready_bar;

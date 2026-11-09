@@ -31,6 +31,7 @@ use crate::client::hud::widgets::frag_counter::FragCounter;
 use crate::client::hud::widgets::frag_message::FragMessage;
 use crate::client::hud::widgets::gametype_badge::GametypeBadge;
 use crate::client::hud::widgets::phase_message::PhaseMessage;
+use crate::client::hud::widgets::pickup_prompt::PickupPrompt;
 use crate::client::hud::widgets::pickup_toast::PickupToast;
 use crate::client::hud::widgets::powerup_timer::PowerupTimer;
 use crate::client::hud::widgets::ready_bar::ReadyBar;
@@ -70,6 +71,8 @@ pub struct FpsHud {
     pub frame_rate: FrameRateDisplay,
     ammo_warning: AmmoWarning,
     pickup: PickupToast,
+    /// `PickupPrompt`: "PRESS [F] TO SWAP TO ...", asked for by the window.
+    pub pickup_prompt: PickupPrompt,
     powerup_timer: PowerupTimer,
     air: AirMeter,
     ready: ReadyBar,
@@ -142,6 +145,7 @@ impl FpsHud {
             frame_rate: FrameRateDisplay::default(),
             ammo_warning: AmmoWarning::default(),
             pickup: PickupToast::default(),
+            pickup_prompt: PickupPrompt::default(),
             powerup_timer: PowerupTimer::default(),
             air: AirMeter::default(),
             ready: ReadyBar::default(),
@@ -441,6 +445,8 @@ impl FpsHud {
         self.bomb_status.draw_centre(&mut self.hud, &fonts, vw, vh);
         if subject {
             self.ammo_warning.draw(&mut self.hud, &fonts, vw / 2.0, vh * 0.83);
+            // `.fps-pickup-prompt` (z 900): centred, 340 px up.
+            self.pickup_prompt.draw(&mut self.hud, &fonts, vw / 2.0, vh - 340.0 * s);
         }
         // `.fps-frame-rate` (z 900).
         self.frame_rate.draw(&mut self.hud, &fonts, vw);

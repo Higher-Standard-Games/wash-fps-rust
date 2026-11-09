@@ -20,6 +20,7 @@ use washoi::client::dropped_weapon_renderer::{DropThrow, DroppedWeaponInfo, Drop
 use washoi::client::fps_liquid_audio::play_liquid_crossing;
 use washoi::client::fps_player_audio::{player_voice_for_entity, set_local_player_voice};
 use washoi::client::gib_system::{GibRenderer, GibSystem};
+use washoi::client::hud::widgets::pickup_prompt::{horizontal_distance_sq, in_pickup_range};
 use washoi::client::player_appearance::{AppearanceView, PlayerAppearance};
 use washoi::client::player_model_selection::{PlayerModelSide, player_model_choice};
 use washoi::client::quad_damage_visual::{get_quad_damage_pulse, mask_has_quad};
@@ -109,7 +110,7 @@ use washoi::shared::net::snapshot_events::SnapshotEvent;
 
 use washoi::client::player_model_visual_settings::{PlayerTeamSlot, get_player_model_visual_style};
 use washoi::client::remote_player_renderer::{MODEL_SCALE, RemotePlayerRenderer};
-use washoi::shared::bsp::pickup_table::{PickupEntry, extract_pickups};
+use washoi::shared::bsp::pickup_table::{PickupEntry, PickupType, extract_pickups};
 use washoi::shared::items::item_throw::land_map_pickups;
 use washoi::world::fps_pickup::{ItemModels, build_item_models, build_weapon_pickups};
 use washoi::world::pickups::procedural::procedural_pickup_factory::{ProceduralPickups, build_procedural_pickups};
@@ -986,6 +987,8 @@ pub struct MapRenderer {
     /// The server's word on which pickups are up, by id
     /// (`reconcileActiveSet`); a pickup it has not named is drawn.
     pub pickup_active: Vec<bool>,
+    /// Each map weapon's id, weapon and resting spot, for the swap prompt.
+    weapon_pickup_spots: Vec<(u32, &'static str, DVec3)>,
     /// Seconds since the items were built (`visualElapsed`).
     pub item_time: f64,
     /// Weapons on the floor (`DroppedWeaponRenderer`), drawn with
@@ -2121,6 +2124,38 @@ impl MapRenderer {
             .reconcile(self.item_time, dt, |id| mask.get(id as usize).copied());
     }
 
+    /// The weapons a player at `at` (the physics origin) stands at, for the
+    /// swap prompt: the nearest map weapon that is up
+    /// (`FPSPickup.onProximity`) and the nearest weapon on the floor
+    /// (`checkPickupProximity`).
+    #[must_use]
+    pub fn weapons_in_reach(&self, at: DVec3) -> (Option<&'static str>, Option<&str>) {
+        let nearest = |spots: &mut dyn Iterator<Item = (DVec3, usize)>| {
+            spots
+                .filter(|(p, _)| in_pickup_range(at, *p))
+                .min_by(|(a, _), (b, _)| horizontal_distance_sq(at, *a).total_cmp(&horizontal_distance_sq(at, *b)))
+                .map(|(_, i)| i)
+        };
+        let map = nearest(
+            &mut self
+                .weapon_pickup_spots
+                .iter()
+                .enumerate()
+                .filter(|(_, (id, _, _))| pickup_shown(&self.pickup_active, *id))
+                .map(|(i, (_, _, p))| (*p, i)),
+        )
+        .map(|i| self.weapon_pickup_spots[i].1);
+        let dropped: Vec<_> = self.dropped_weapons.visuals().map(|(_, w)| w).collect();
+        let floor = nearest(
+            &mut dropped
+                .iter()
+                .enumerate()
+                .map(|(i, w)| (DVec3::from_array(w.position), i)),
+        )
+        .map(|i| dropped[i].weapon_id.as_str());
+        (map, floor)
+    }
+
     /// `GameEvents`' dropped weapons, after [`Self::play_effects`] this
     /// frame: the throws `weapon_drop` starts, the snapshot's weapons on the
     /// floor, and `dt` seconds of their motion through the map.
@@ -2825,6 +2860,12 @@ pub fn build_renderer(gpu: &Gpu, map: &mut LoadedMap, output_format: wgpu::Textu
     }
     let mut model_draws = pickups.draws;
     let weapon_pickup_spans = pickups.spans;
+    let weapon_pickup_spots = map
+        .pickups
+        .iter()
+        .filter(|e| e.kind_type == PickupType::Weapon)
+        .map(|e| (e.id, e.kind, DVec3::new(e.position.x, e.position.y, e.position.z)))
+        .collect();
     let item_models = build_item_models(gpu, &mut map.pk3, &mut models, &map.pickups);
     if !item_models.is_empty() || item_models.failures.is_empty() {
         println!("items: {} packaged models", item_models.len());
@@ -3186,6 +3227,7 @@ pub fn build_renderer(gpu: &Gpu, map: &mut LoadedMap, output_format: wgpu::Textu
         items,
         item_models,
         weapon_pickup_spans,
+        weapon_pickup_spots,
         pickup_active: Vec::new(),
         item_time: 0.0,
         dropped_weapons: DroppedWeaponRenderer::default(),
