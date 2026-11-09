@@ -12,7 +12,8 @@
 //! What this keeps is where each weapon is and how it is turned; the
 //! renderer draws them with the world weapon models. Not ported: the PVS
 //! check (the depth test hides what is behind walls), parked models (there
-//! are no per-drop models to keep), the far-detail cut and the swap prompt.
+//! are no per-drop models to keep) and the far-detail cut. The swap prompt
+//! is `hud::widgets::pickup_prompt`.
 
 use std::collections::HashMap;
 

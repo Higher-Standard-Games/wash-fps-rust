@@ -2740,9 +2740,16 @@ Map items, dropped weapons and their effects, compared with wash-fps
   first mask in a match or demo (`startHidden`), first word silent, the
   burst on collection, the 0.35-to-1 scale-in on respawn. Checked on screen
   in the dm14 golden demo (two health pickups taken at 2.9 and 3.0 s).
-- **Not yet.** The weapon pickup and swap prompt (`PickupPrompt.ts`, "PRESS
-  [F] TO SWAP TO ..."), PVS culling of items (the depth test hides them
-  behind walls), the far-detail cut on dropped weapons.
+- **The swap prompt** (November 9): `client/hud/widgets/pickup_prompt.rs`
+  ports `PickupPrompt.ts` and the `.fps-pickup-prompt` styles (the gold
+  WEAPON cell, the dark slab, the key cap, the weapon in cyan), with when
+  it asks (`FPSPickup.onProximity`, `checkPickupProximity`): standing within
+  the pickup cylinder of a map weapon that is up or a weapon on the floor,
+  with a full inventory and a gun (not the blade) in hand, in play with
+  the mouse ours. Each owner asks under its own name, the newest shown.
+  Unit tests on the rules; `tests/hud_render.rs` draws it.
+- **Not yet.** PVS culling of items (the depth test hides them behind
+  walls), the far-detail cut on dropped weapons.
 
 ### 0.2.0 review: world shader features against the browser (November 4, 2026)
 

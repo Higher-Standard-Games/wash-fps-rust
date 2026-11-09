@@ -29,7 +29,7 @@ use shagger::rendering::wgpu;
 use shagger::viewport::ViewCvars;
 use shagger::weapon::weapon_view_manager::{ViewModelCvars, ViewModelInput};
 use std::cell::Cell;
-use washoi::client::fps_actions::{fps, weapon_slot_pressed};
+use washoi::client::fps_actions::{action_key_label, fps, weapon_slot_pressed};
 use washoi::client::fps_hud::FpsHud;
 use washoi::client::fps_movement_audio::play_jumppad_launch;
 use washoi::client::game_events::canonical_weapon_id;
@@ -66,6 +66,7 @@ use washoi::client::demo_service::analysis_report;
 use washoi::client::first_person_view::{BodyFrame, FirstPersonView, ViewKeys, ViewOffset};
 use washoi::client::game_events::GameAudio;
 use washoi::client::hud::widgets::pause_menu::{PauseMenu, PauseMenuAction};
+use washoi::client::hud::widgets::pickup_prompt::{asks_to_swap, swap_text};
 use washoi::client::match_state_manager::MatchPhase;
 use washoi::client::teleport_effect::TeamColor;
 use washoi::client::washoi_style::install_style;
@@ -916,6 +917,28 @@ impl App {
                     let now = h.state.now;
                     h.state.powerups.is_active("quad", now)
                 });
+            // `FPSPickup`'s and `DroppedWeaponRenderer`'s swap prompts: in
+            // play, alive, with the mouse ours; asked for under each owner.
+            if let Some(hud) = &mut s.hud {
+                let at = match &*feed {
+                    Feed::Play(p, _) if !self.pause_menu.open && !self.settings_open => p.feet(),
+                    _ => None,
+                };
+                let (map, floor) = match at {
+                    Some(at) => s.renderer.weapons_in_reach(DVec3::new(at.x, at.y, at.z)),
+                    None => (None, None),
+                };
+                let key = with_input(|i| action_key_label(i, fps::USE));
+                let state = &hud.state;
+                let ask = |weapon: Option<&str>| {
+                    weapon
+                        .filter(|w| asks_to_swap(w, &state.weapons, &state.current_weapon))
+                        .map(|w| swap_text(&key, w))
+                };
+                let (pickup, dropped) = (ask(map), ask(floor));
+                hud.pickup_prompt.set("pickup", pickup);
+                hud.pickup_prompt.set("dropped", dropped);
+            }
             let outline = quad.then(|| quad_view_weapon_outline(s.renderer.item_time));
             if let Some(view_model) = &mut s.renderer.view_model {
                 view_model.powerup_outline = outline;
