@@ -38,6 +38,7 @@ use shagger::babylon::post_processes::image_processing_post_process::{
 use shagger::lighting::sky_light_system::bsp_mode_lights;
 use shagger::loader::bsp::bsp_loader::{BspFile, BspLightVol, LightGrid, load, load_collision};
 use shagger::loader::bsp::light_grid_sampling::{LightSample, sample_light_vols};
+use shagger::loader::bsp::pvs_culler::{PvsCuller, create_pvs_culler};
 use shagger::loader::pk3::node_pk3::ingest_pk3_dir;
 use shagger::loader::pk3::pk3_loader::Pk3Loader;
 use shagger::loader::shader::q3_shader_registry::Q3ShaderRegistry;
@@ -954,6 +955,9 @@ pub struct MapRenderer {
     /// Weapons on the floor (`DroppedWeaponRenderer`), drawn with
     /// `hand_weapons`' models.
     pub dropped_weapons: DroppedWeaponRenderer,
+    /// The map's PVS from the camera, for things that are not world batches:
+    /// pickups and weapons on the floor (`BspManager.getPvsCuller`).
+    item_pvs: Option<PvsCuller>,
     /// This frame's draws.
     frame_draws: Vec<ModelDraw>,
     /// Projectile models and where they are held.
@@ -1152,6 +1156,12 @@ pub fn shag_image_processing() -> ImageProcessingConfiguration {
 /// A pickup the server has not named is there (the map's own state).
 fn pickup_shown(active: &[bool], id: u32) -> bool {
     active.get(id as usize).copied().unwrap_or(true)
+}
+
+/// `PVSCuller.isPositionVisible` from the last frame's camera; with no vis
+/// data, or culling off, everything is in view.
+fn in_pvs(pvs: Option<&PvsCuller>, at: DVec3) -> bool {
+    pvs.is_none_or(|p| p.is_position_visible(at.as_vec3()))
 }
 
 /// The weapons a player can hold (`WeaponsTable`'s ids).
@@ -2187,6 +2197,9 @@ impl MapRenderer {
         let aspect = size[0] / size[1];
         self.frame_height = f64::from(size[1]);
         self.culling.update(camera, aspect);
+        if let Some(pvs) = &mut self.item_pvs {
+            pvs.update(Some(camera.position));
+        }
         let lights: Vec<DynamicLight> = if self.dynamic_lights {
             self.lights.lights().chain(self.charge_glows.iter().copied()).collect()
         } else {
@@ -2239,15 +2252,22 @@ impl MapRenderer {
         // The weapon pickups lead `model_draws`; the taken ones stay out.
         self.frame_draws.clear();
         let mut next = 0;
+        let pvs = self.cull.then_some(self.item_pvs.as_ref()).flatten();
         for (id, span) in &self.weapon_pickup_spans {
-            if !pickup_shown(&self.pickup_active, *id) {
+            let spot = self.weapon_pickup_spots.iter().find(|(i, _, _)| i == id).map(|s| s.2);
+            if !pickup_shown(&self.pickup_active, *id) || spot.is_some_and(|at| !in_pvs(pvs, at)) {
                 self.frame_draws.extend_from_slice(&self.model_draws[next..span.start]);
                 next = span.end;
             }
         }
         self.frame_draws.extend_from_slice(&self.model_draws[next..]);
         self.frame_draws.extend_from_slice(&self.live_draws);
-        for (_, weapon) in self.dropped_weapons.visuals() {
+        // `DroppedWeaponRenderer.update` step 3: PVS decides what is drawn.
+        for (_, weapon) in self
+            .dropped_weapons
+            .visuals()
+            .filter(|(_, w)| in_pvs(pvs, DVec3::from(w.position)))
+        {
             self.hand_weapons.world_draws(
                 &weapon.weapon_id,
                 weapon.position,
@@ -2272,6 +2292,7 @@ impl MapRenderer {
         self.items.draws(
             self.item_time,
             camera_rotation(camera.view().as_dmat4()),
+            |at| in_pvs(pvs, at),
             &mut self.frame_draws,
         );
         for (model, world) in &self.projectiles {
@@ -2700,6 +2721,7 @@ pub fn build_renderer(gpu: &Gpu, map: &mut LoadedMap, output_format: wgpu::Textu
         );
     }
     let culling = WorldCulling::new(&map.bsp, &geometry);
+    let item_pvs = create_pvs_culler(&map.bsp);
     let mut models = ModelRenderer::new(gpu, format);
     // SHAG's lights for a BSP map, with r_bsp_pbr at its default.
     models.set_lights(bsp_mode_lights(true));
@@ -3061,6 +3083,7 @@ pub fn build_renderer(gpu: &Gpu, map: &mut LoadedMap, output_format: wgpu::Textu
         items,
         weapon_pickup_spans,
         weapon_pickup_spots,
+        item_pvs,
         pickup_active: Vec::new(),
         item_time: 0.0,
         dropped_weapons: DroppedWeaponRenderer::default(),
