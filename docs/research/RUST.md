@@ -3141,8 +3141,19 @@ Map items, dropped weapons and their effects, compared with wash-fps
   with a full inventory and a gun (not the blade) in hand, in play with
   the mouse ours. Each owner asks under its own name, the newest shown.
   Unit tests on the rules; `tests/hud_render.rs` draws it.
-- **Not yet.** PVS culling of items (the depth test hides them behind
-  walls), the far-detail cut on dropped weapons.
+- **PVS culling** (November 9): map pickups (`FPSPickup.isInView`, the
+  procedural ones' `setInView`, the weapon models' `applyModelInView`) and
+  weapons on the floor (`DroppedWeaponRenderer.update` step 3) are left
+  out when their spot's cluster is not in the camera's PVS; a collect burst
+  still plays, as `setInView` hides only the cosmetic meshes. `view.rs`
+  keeps its own `PvsCuller` for this, as shagger's `WorldCulling` does not
+  expose its culler; moving the position test into `WorldCulling` would
+  share one. Off with `--no-cull`.
+- **Golden vectors for the shipped maps** (November 9): regenerated at the
+  same SHAG and wash-fps commits after dm5 and dm7 were republished and
+  amphi2, dm1, dm3, dm12, snd4 and snd6 went up; the ports pass on all 15.
+- **Not yet.** The far-detail cut on dropped weapons; PVS culling of remote
+  players (`RemotePlayerRenderer.isInView`).
 
 ### 0.2.0 review: world shader features against the browser (November 4, 2026)
 
