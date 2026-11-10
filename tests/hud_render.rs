@@ -83,6 +83,8 @@ fn a_fragged_player_sees_the_death_screen() {
             at: ZERO,
             vel: ZERO,
             kb_dir: ZERO,
+            kill_weapon: None,
+            hit_location: None,
         },
     ];
     let mut frame = WatchFrame {

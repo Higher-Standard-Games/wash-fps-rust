@@ -1,7 +1,11 @@
 //! Port of wash-fps `client/RagdollSystem.ts`: a body that dies without
 //! gibbing falls as a ragdoll, one box per major bone, launched along the
 //! killing push; once it lies still (or after [`RAGDOLL_LIFETIME`] at the
-//! latest) it fades out and bursts into gibs in its colour.
+//! latest) it fades out and bursts into gibs in its colour. A death with a
+//! clip (`chooseDeathClip`) is thrown first: the body turns to the shot,
+//! one sphere flies the launch arc with the clip posed on the body, until
+//! the sphere touches the map or the clip ends, and the ragdoll takes over
+//! at the sphere's velocity.
 //!
 //! Havok becomes shagger's rapier [`PhysicsSystem`] and Babylon's `Ragdoll`
 //! its port in `shagger::babylon::physics::v2::ragdoll`. The ragdoll owns
@@ -12,15 +16,22 @@
 //! `TrailMesh` (shagger's port) behind the hips box, one uploaded mesh per
 //! ragdoll slot, its vertices streamed each frame.
 
-use shagger::animation::player_model_manager::{PlayerModel, PlayerModelInstance};
+use shagger::animation::player_model_manager::PlayerModelInstance;
 use shagger::babylon::materials::standard_material::StandardMaterialParams;
 use shagger::babylon::meshes::trail_mesh::TrailMesh;
 use shagger::babylon::physics::v2::ragdoll::{PhysicsConstraintType, Ragdoll, RagdollBoneProperties};
-use shagger::physics::physics_system::{PhysicsSystem, from_rapier, quat_from_rapier, to_rapier};
-use shagger::rendering::glam::{DMat4, DVec3, Mat4, Vec3};
+use shagger::loader::model::gltf_animation::GLTF_TARGET_FPS;
+use shagger::physics::physics_system::rapier3d::prelude::{
+    ColliderBuilder, ColliderHandle, LockedAxes, RigidBodyBuilder, RigidBodyHandle,
+};
+use shagger::physics::physics_system::{PhysicsSystem, debris_groups, from_rapier, quat_from_rapier, to_rapier};
+use shagger::rendering::glam::{DMat4, DQuat, DVec3, Mat4, Quat, Vec3};
 use shagger::rendering::gpu::Gpu;
 use shagger::rendering::model_renderer::{ModelDraw, ModelHandle, ModelRenderer};
 use shagger::weapon::projectile_manager::{update_standard_mesh, upload_standard_mesh};
+
+use super::ragdoll::death_clip::{DeathFacts, choose_death_clip, death_clip_yaw};
+use super::remote_player_renderer::PlayerBody;
 
 /// Longest a ragdoll simulates before gib-exploding, resting or not
 /// (`RAGDOLL_LIFETIME`, seconds).
@@ -46,6 +57,13 @@ pub const TRAIL_DIAMETER: f64 = 8.0;
 pub const TRAIL_LENGTH: usize = 30;
 /// `MODEL_SCALE`: the boxes are sized in world units.
 pub const MODEL_SCALE: f32 = 36.0;
+/// The sphere a thrown body flies as, centred on the hips (`THROW_RADIUS`).
+pub const THROW_RADIUS: f32 = 34.0;
+/// Contacts this early do not end the throw (`THROW_CONTACT_GRACE`).
+pub const THROW_CONTACT_GRACE: f64 = 0.1;
+/// Hips height above the anchor when the body has none to measure
+/// (`THROW_HIPS_HEIGHT`).
+pub const THROW_HIPS_HEIGHT: f64 = 34.0;
 
 /// `createBoneConfig`: the Mixamo Vanguard's major bones as boxes.
 #[must_use]
@@ -216,14 +234,39 @@ pub fn launch_velocity(dir: DVec3) -> DVec3 {
     }
 }
 
+/// `DeathThrow`: a body playing its death clip while one sphere flies the
+/// launch arc.
+struct DeathThrow {
+    body: RigidBodyHandle,
+    collider: ColliderHandle,
+    hips_height: f64,
+    /// The yaw the body turned to (`deathClipYaw`).
+    yaw: f64,
+    clip: usize,
+    from_frame: f64,
+    clip_length: f64,
+    clip_time: f64,
+    /// Set by the sphere's contacts once past the grace time.
+    touched: bool,
+    /// The normal of the surface it touched.
+    surface: Option<Vec3>,
+}
+
 /// `ActiveRagdoll`.
 pub struct ActiveRagdoll {
     /// Its number, for the follow handle.
     pub serial: u64,
+    /// The body it wears, for its clips and its draws.
+    pub body: PlayerBody,
     pub instance: PlayerModelInstance,
-    /// The body matrix it died with (anchor, yaw, scale).
+    /// The body matrix (anchor, yaw, fit and scale): the one it died with,
+    /// or the throw's last.
     pub world: Mat4,
-    ragdoll: Ragdoll,
+    /// None while the body is still thrown.
+    ragdoll: Option<Ragdoll>,
+    throw: Option<DeathThrow>,
+    /// The trail rides a node at the hips that never turns, after a throw.
+    trail_follower: bool,
     pub age: f64,
     /// The colour the body was drawn with; its gibs take it.
     pub color: Option<Vec3>,
@@ -277,92 +320,291 @@ impl RagdollSystem {
     }
 
     /// `spawn`: hands `instance`, posed under `world`, to physics and
-    /// launches it along `dir`. Returns its serial for the follow handle
-    /// ([`Self::position_of`]); none when the skeleton lacks a bone.
+    /// launches it along `dir`; with `facts` from its death event it may be
+    /// thrown playing a death clip first. Returns its serial for the follow
+    /// handle ([`Self::position_of`]); none when the skeleton lacks a bone.
     pub fn spawn(
         &mut self,
-        model: &PlayerModel,
+        body: PlayerBody,
         mut instance: PlayerModelInstance,
         world: Mat4,
         dir: DVec3,
         color: Option<Vec3>,
+        facts: Option<&DeathFacts<'_>>,
     ) -> Option<u64> {
         while self.ragdolls.len() >= MAX_RAGDOLLS {
             let mut oldest = self.ragdolls.remove(0);
-            oldest.ragdoll.dispose(&mut self.physics);
+            oldest.release(&mut self.physics);
         }
-        // The clips stop: physics owns the bones now.
-        instance.clip = None;
-        let config = create_bone_config();
+        let model = &body.model;
+        // The clips stop: physics, or the throw, owns the bones now.
+        model.release(&mut instance);
         let skeleton = &model.model.skeleton;
-        let Some(mut ragdoll) = Ragdoll::new(&mut self.physics, skeleton, &instance.locals, world, &config) else {
+        if create_bone_config()
+            .iter()
+            .any(|cfg| skeleton.find(&cfg.bone).is_none())
+        {
             eprintln!("[RagdollSystem] Missing bones; no ragdoll");
             return None;
+        }
+        // The clip is chosen against the way the body faced when it died.
+        let anchor = world * model.root_matrix(MODEL_SCALE).inverse();
+        let facing = anchor.transform_vector3(Vec3::Z);
+        let yaw = f64::from(facing.x).atan2(f64::from(facing.z));
+        let clip = facts
+            .and_then(|f| choose_death_clip(f, yaw))
+            .and_then(|c| model.anim_index(c.name()).map(|i| (c, i)));
+        let v = launch_velocity(dir);
+        let mut active = ActiveRagdoll {
+            serial: self.next_serial + 1,
+            body: body.clone(),
+            instance,
+            world,
+            ragdoll: None,
+            throw: None,
+            trail_follower: false,
+            age: 0.0,
+            color,
+            rest_anchor: None,
+            rest_seconds: 0.0,
+            fade_start: None,
+            trail: None,
+        };
+        if let Some((clip, index)) = clip {
+            let turn = death_clip_yaw(clip, dir.x, dir.z);
+            active.throw = Some(self.start_throw(&mut active, anchor, index, turn, v));
+        } else if !self.activate_ragdoll(&mut active, v.as_vec3()) {
+            return None;
+        }
+        active.trail = self
+            .trail_pose(&active)
+            .map(|pose| TrailMesh::new(pose, TRAIL_DIAMETER, TRAIL_LENGTH));
+        self.next_serial += 1;
+        self.ragdolls.push(active);
+        Some(self.next_serial)
+    }
+
+    /// `startThrow`: turns the body to the shot and flies it as one sphere,
+    /// with the death clip posed frame by frame from `update`.
+    fn start_throw(
+        &mut self,
+        active: &mut ActiveRagdoll,
+        anchor: Mat4,
+        clip: usize,
+        yaw: f64,
+        velocity: DVec3,
+    ) -> DeathThrow {
+        let model = &active.body.model;
+        // Measured before the turn.
+        let anchor_pos = anchor.w_axis.truncate().as_dvec3();
+        let skeleton = &model.model.skeleton;
+        let measured = active.instance.hips_bind.map_or(f64::NAN, |(hips, _)| {
+            let globals = skeleton.global_matrices(&active.instance.locals);
+            f64::from((active.world * globals[hips]).w_axis.y) - anchor_pos.y
+        });
+        let hips_height = if measured > 5.0 && measured < 80.0 {
+            measured
+        } else {
+            THROW_HIPS_HEIGHT
+        };
+        let anim = &model.anims[clip];
+        let from_frame = anim.from;
+        model.pose_clip(&mut active.instance, clip, from_frame);
+        let at = anchor_pos + DVec3::new(0.0, hips_height, 0.0);
+        let (body, collider) = self.physics.world.insert(
+            // The sphere only carries the body's position: it never tumbles.
+            RigidBodyBuilder::dynamic()
+                .translation(to_rapier(at.as_vec3()))
+                .linvel(to_rapier(velocity.as_vec3()))
+                .gravity_scale(RAGDOLL_GRAVITY_FACTOR)
+                .locked_axes(LockedAxes::ROTATION_LOCKED)
+                .ccd_enabled(true),
+            ColliderBuilder::ball(THROW_RADIUS)
+                .mass(1.0)
+                .restitution(0.0)
+                .collision_groups(debris_groups()),
+        );
+        let thrown = DeathThrow {
+            body,
+            collider,
+            hips_height,
+            yaw,
+            clip,
+            from_frame,
+            clip_length: (anim.to - anim.from) / GLTF_TARGET_FPS,
+            clip_time: 0.0,
+            touched: false,
+            surface: None,
+        };
+        active.world = throw_world(&active.body, &thrown, at);
+        thrown
+    }
+
+    /// `activateRagdoll`: the per-bone ragdoll from the body's current pose,
+    /// every bone launched at `velocity`. False when a bone is missing.
+    fn activate_ragdoll(&mut self, active: &mut ActiveRagdoll, velocity: Vec3) -> bool {
+        let config = create_bone_config();
+        let skeleton = &active.body.model.model.skeleton;
+        let Some(mut ragdoll) = Ragdoll::new(
+            &mut self.physics,
+            skeleton,
+            &active.instance.locals,
+            active.world,
+            &config,
+        ) else {
+            eprintln!("[RagdollSystem] Missing bones; no ragdoll");
+            return false;
         };
         ragdoll.ragdoll(&mut self.physics);
-        let v = launch_velocity(dir);
-        let velocity = to_rapier(Vec3::new(v.x as f32, v.y as f32, v.z as f32));
+        let velocity = to_rapier(velocity);
         for &handle in ragdoll.bodies() {
             if let Some(body) = self.physics.world.bodies.get_mut(handle) {
                 body.set_linvel(velocity, true);
                 body.set_gravity_scale(RAGDOLL_GRAVITY_FACTOR, true);
             }
         }
-        let trail = hips_pose(&self.physics, &ragdoll).map(|pose| TrailMesh::new(pose, TRAIL_DIAMETER, TRAIL_LENGTH));
-        self.next_serial += 1;
-        self.ragdolls.push(ActiveRagdoll {
-            serial: self.next_serial,
-            instance,
-            world,
-            ragdoll,
-            age: 0.0,
-            color,
-            rest_anchor: None,
-            rest_seconds: 0.0,
-            fade_start: None,
-            trail,
-        });
-        Some(self.next_serial)
+        active.ragdoll = Some(ragdoll);
+        true
+    }
+
+    /// `advanceThrow`: the clip moves on and the body rides its sphere; a
+    /// touch or the clip's end hands it to the ragdoll.
+    fn advance_throw(&mut self, index: usize, dt: f64) {
+        let active = &mut self.ragdolls[index];
+        let Some(thrown) = active.throw.as_mut() else { return };
+        // The pose drawn last frame is the one the ragdoll starts from.
+        if thrown.touched || thrown.clip_time >= thrown.clip_length {
+            self.end_throw(index);
+            return;
+        }
+        thrown.clip_time = (thrown.clip_time + dt.max(0.0)).min(thrown.clip_length);
+        let frame = thrown.from_frame + thrown.clip_time * GLTF_TARGET_FPS;
+        active.body.model.pose_clip(&mut active.instance, thrown.clip, frame);
+        if let Some(body) = self.physics.world.bodies.get(thrown.body) {
+            let at = from_rapier(body.translation()).as_dvec3();
+            active.world = throw_world(&active.body, thrown, at);
+        }
+    }
+
+    /// `endThrow`: the body goes limp, moving as its sphere was, less what
+    /// carried it into the surface it landed on.
+    fn end_throw(&mut self, index: usize) {
+        let Some(thrown) = self.ragdolls[index].throw.take() else {
+            return;
+        };
+        let mut velocity = self
+            .physics
+            .world
+            .bodies
+            .get(thrown.body)
+            .map_or(Vec3::ZERO, |b| from_rapier(b.linvel()));
+        if let Some(normal) = thrown.surface.filter(|n| n.length_squared() > 1e-6) {
+            let normal = normal.normalize();
+            velocity -= normal * velocity.dot(normal);
+        }
+        self.physics.world.remove_body(thrown.body);
+        let mut active = self.ragdolls.remove(index);
+        active.trail_follower = active.trail.is_some();
+        if self.activate_ragdoll(&mut active, velocity) {
+            self.ragdolls.insert(index, active);
+        } else {
+            // A body that cannot go limp bursts where it is.
+            let at = active.world.w_axis.truncate().as_dvec3();
+            self.gibs.push((at, active.color));
+        }
+    }
+
+    /// The trail's generator: the hips box, or a node at the hips (the
+    /// sphere's while thrown) that never turns.
+    fn trail_pose(&self, active: &ActiveRagdoll) -> Option<DMat4> {
+        if active.throw.is_some() || active.trail_follower {
+            return self
+                .body_position(active)
+                .map(|p| DMat4::from_rotation_translation(DQuat::IDENTITY, p));
+        }
+        hips_pose(&self.physics, active.ragdoll.as_ref()?)
+    }
+
+    /// `bodyPosition`: the hips, or the sphere while thrown.
+    fn body_position(&self, active: &ActiveRagdoll) -> Option<DVec3> {
+        if let Some(thrown) = &active.throw {
+            return self
+                .physics
+                .world
+                .bodies
+                .get(thrown.body)
+                .map(|b| from_rapier(b.translation()).as_dvec3());
+        }
+        active
+            .ragdoll
+            .as_ref()?
+            .root_position(&self.physics)
+            .map(|p| p.as_dvec3())
     }
 
     /// The handle's `getPosition`: a ragdoll's hips, none once it is gone.
     #[must_use]
     pub fn position_of(&self, serial: u64) -> Option<DVec3> {
         let r = self.ragdolls.iter().find(|r| r.serial == serial)?;
-        r.ragdoll.root_position(&self.physics).map(|p| p.as_dvec3())
+        self.body_position(r)
     }
 
-    /// The hips' world position.
+    /// The hips' world position (the sphere's while thrown).
     #[must_use]
     pub fn position(&self, index: usize) -> Option<DVec3> {
-        let r = self.ragdolls.get(index)?;
-        r.ragdoll.root_position(&self.physics).map(|p| p.as_dvec3())
+        self.body_position(self.ragdolls.get(index)?)
     }
 
-    /// `update`: physics steps, the bones follow, and each ragdoll ages,
-    /// fades once still, and bursts when faded.
-    pub fn update(&mut self, model: &PlayerModel, dt: f64) {
+    /// `update`: physics steps, thrown bodies ride their spheres and the
+    /// bones follow, and each ragdoll ages, fades once still, and bursts
+    /// when faded.
+    pub fn update(&mut self, dt: f64) {
         let dt = dt.max(0.0);
         if !self.ragdolls.is_empty() {
             self.physics.step(dt);
         }
-        let skeleton = &model.model.skeleton;
+        // The spheres' contacts, once past the grace time.
+        for active in &mut self.ragdolls {
+            let Some(thrown) = active.throw.as_mut() else { continue };
+            if thrown.clip_time < THROW_CONTACT_GRACE {
+                continue;
+            }
+            for pair in self.physics.world.contact_pairs_with(thrown.collider) {
+                if !pair.has_any_active_contact() {
+                    continue;
+                }
+                thrown.touched = true;
+                if let Some(m) = pair.manifolds().first() {
+                    thrown.surface = Some(from_rapier(m.data.normal));
+                }
+            }
+        }
         let mut i = self.ragdolls.len();
         while i > 0 {
             i -= 1;
+            self.ragdolls[i].age += dt;
+            if self.ragdolls[i].throw.is_some() {
+                let before = self.ragdolls.len();
+                self.advance_throw(i, dt);
+                if self.ragdolls.len() < before {
+                    continue;
+                }
+            }
+            let pose = self.trail_pose(&self.ragdolls[i]);
+            let hips = self.body_position(&self.ragdolls[i]);
             let physics = &self.physics;
             let active = &mut self.ragdolls[i];
-            active
-                .ragdoll
-                .sync(physics, skeleton, &mut active.instance.locals, active.world);
-            active.age += dt;
+            if let Some(ragdoll) = &active.ragdoll {
+                let skeleton = &active.body.model.model.skeleton;
+                ragdoll.sync(physics, skeleton, &mut active.instance.locals, active.world);
+            }
             // The trail follows the hips each frame, then goes.
             if active.age >= TRAIL_LIFETIME {
                 active.trail = None;
-            } else if let (Some(trail), Some(pose)) = (&mut active.trail, hips_pose(physics, &active.ragdoll)) {
+                active.trail_follower = false;
+            } else if let (Some(trail), Some(pose)) = (&mut active.trail, pose) {
                 trail.update(pose);
             }
-            let hips = active.ragdoll.root_position(physics).map(|p| p.as_dvec3());
             if active.fade_start.is_none() {
                 if came_to_rest(active, hips, dt) {
                     active.fade_start = Some(active.age);
@@ -374,7 +616,7 @@ impl RagdollSystem {
                 let mut gone = self.ragdolls.remove(i);
                 let at = hips.unwrap_or_else(|| gone.world.w_axis.truncate().as_dvec3());
                 self.gibs.push((at, gone.color));
-                gone.ragdoll.dispose(&mut self.physics);
+                gone.release(&mut self.physics);
             }
         }
     }
@@ -387,22 +629,17 @@ impl RagdollSystem {
     /// `disposeAll`: every ragdoll goes, without gibs.
     pub fn dispose_all(&mut self) {
         for mut r in self.ragdolls.drain(..) {
-            r.ragdoll.dispose(&mut self.physics);
+            r.release(&mut self.physics);
         }
     }
 
     /// Each ragdoll's draws, its joint palettes appended to `joints`: lit
-    /// while whole, through `fade_handle` (the model uploaded to blend) at
-    /// its fade once fading.
-    pub fn draws(
-        &self,
-        model: &PlayerModel,
-        handle: ModelHandle,
-        fade_handle: ModelHandle,
-        joints: &mut Vec<Mat4>,
-        draws: &mut Vec<ModelDraw>,
-    ) {
+    /// while whole, through its body's model uploaded to blend at its fade
+    /// once fading.
+    pub fn draws(&self, joints: &mut Vec<Mat4>, draws: &mut Vec<ModelDraw>) {
         for active in &self.ragdolls {
+            let model = &active.body.model;
+            let (handle, fade_handle) = (active.body.handle, active.body.fade_handle);
             let fading = active.fade_start.is_some();
             let mut palettes: Vec<(usize, u32)> = Vec::new();
             for (index, primitive) in model.model.primitives.iter().enumerate() {
@@ -424,6 +661,27 @@ impl RagdollSystem {
             }
         }
     }
+}
+
+impl ActiveRagdoll {
+    /// `releaseBody`: the throw's sphere and the ragdoll's bodies go.
+    fn release(&mut self, physics: &mut PhysicsSystem) {
+        if let Some(thrown) = self.throw.take() {
+            physics.world.remove_body(thrown.body);
+        }
+        if let Some(ragdoll) = &mut self.ragdoll {
+            ragdoll.dispose(physics);
+        }
+    }
+}
+
+/// A thrown body's matrix: the anchor `hips_height` below the sphere at
+/// `at`, turned to the throw's yaw, then the mesh's fit and scale.
+fn throw_world(body: &PlayerBody, thrown: &DeathThrow, at: DVec3) -> Mat4 {
+    let anchor = (at - DVec3::new(0.0, thrown.hips_height, 0.0)).as_vec3();
+    Mat4::from_translation(anchor)
+        * Mat4::from_quat(Quat::from_rotation_y(thrown.yaw as f32))
+        * body.model.root_matrix(MODEL_SCALE)
 }
 
 /// The hips box's world matrix (the trail's generator).
@@ -488,7 +746,8 @@ impl RagdollTrails {
 /// `cameToRest`: whether the hips have stayed within [`REST_RADIUS`] for
 /// [`REST_SECONDS`], advancing that check by `dt`.
 fn came_to_rest(active: &mut ActiveRagdoll, hips: Option<DVec3>, dt: f64) -> bool {
-    if active.age < REST_MIN_AGE {
+    // A thrown body is still flying.
+    if active.age < REST_MIN_AGE || active.ragdoll.is_none() {
         return false;
     }
     let Some(hips) = hips else { return false };

@@ -114,6 +114,14 @@ pub fn register_player_model_visual_cvars(cvars: &mut Cvars) {
         int("Third-person player model outline size, 0-100.", 100.0),
     );
     cvars.register(
+        "cl_player_tint",
+        1,
+        int(
+            "Apply the selected team tint to player textures; outlines keep their own colour.",
+            1.0,
+        ),
+    );
+    cvars.register(
         "cl_player_fullbright",
         0,
         int("Enable a gentle emissive boost for third-person player models.", 1.0),
@@ -154,10 +162,8 @@ pub fn get_player_model_visual_style(slot: PlayerTeamSlot, model_scale: f32) -> 
         let number = |name: &str, d: f64| if c.exists(name) { c.get_number(name) } else { d };
         let outline_size = number("cl_player_outline_size", 25.0).max(0.0) as f32;
         PlayerModelVisualStyle {
-            tint_color: Some(parse_rgb_cvar(
-                &text(team_color_cvar(slot)),
-                player_model_visual_default(slot),
-            )),
+            tint_color: (number("cl_player_tint", 1.0) != 0.0)
+                .then(|| parse_rgb_cvar(&text(team_color_cvar(slot)), player_model_visual_default(slot))),
             fullbright_enabled: number("cl_player_fullbright", 0.0) != 0.0,
             fullbright_intensity: number("cl_player_fullbright_intensity", 0.25).clamp(0.0, 1.0) as f32,
             outline_enabled: number("cl_player_outline", 1.0) != 0.0 && outline_size > 0.0,

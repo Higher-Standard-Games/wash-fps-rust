@@ -2712,6 +2712,62 @@ whole areas rather than single items. 0.2.0 closes them in two steps.
 
 Newest first. Each entry names the commits and what proves them.
 
+### Staging review: player models, layered animation, items (November 10, 2026)
+
+SHAG and wash-fps `staging` against main, ported in full except what is
+listed under "Not ported".
+
+- **Player models (shagger `3a49f2b`).** `animation::player_model_manager`
+  follows staging's `PlayerModelManager`: packaged bodies (Police and the
+  female, cartel, riotkitty and robot variants) with the shared clips of
+  `washoi_player_animations.pk3`, retargeted onto each rest pose by
+  `babylon::animations::animator_avatar` (Babylon's `AnimatorAvatar`);
+  `player_model_fit` (standing fit, weapon-hand basis, gun support, blade
+  stance) and `player_aim_pose` (the spine bend). The renderer falls back
+  to Vanguard with its own clips while Police is not published.
+- **Layered playback.** Upper-body share, the held blade stance, the blade
+  swing over running legs, full-body one-shots, the aim bend. It follows
+  Babylon's `Animatable` clock exactly: a new animatable shows its `from`
+  frame first; a mask pauses the upper joints' animatables; unmasking jumps
+  them with `goToFrame`, which a reversed clip mirrors about the paused frame
+  (a Babylon quirk the browser shows, kept); a one-shot ends on the frame its
+  first channel passes its last key, which writes that key while the rest
+  keep last frame's pose (`onAnimationEndObservable` fires per animation),
+  and locomotion restarted then joins the same pass at its first frame.
+- **Proof.** `tools/golden/player_model.mts` runs Babylon's loader and
+  retargeting on Vanguard and on a skewed rest pose (retargeted keys to
+  2e-5, fit and hand frames to 1e-4). `tools/golden/player_model_layers.mts`
+  runs staging's `PlayerModelManager` itself in a `NullEngine` for 260
+  frames of a scenario that covers every layer change; every watched joint
+  matches within 2e-3 rad (the rest is f32 sampling), where the first port
+  was off by up to 1.4 rad at the transitions. Both read
+  `SHAGGER_PLAYER_DATA`.
+- **wash-fps-rust.** `client/player_model_selection.rs` (ally and enemy
+  model cvars, the voice that goes with each), `attached_gun.rs` and
+  `attached_blade.rs` (held frames measured on the body),
+  `ragdoll/death_clip.rs` and the death throw in `ragdoll_system.rs`,
+  `cl_player_tint`, the kill weapon and hit location on `player_killed`.
+- **Items.** `shared/entities/definitions/items.rs` gives the armors and
+  the megahealth their packaged models (`washoi_models.pk3`) and scales;
+  `world/fps_pickup.rs` `ItemModels` floats, bobs and turns them (shagger
+  `world::pickup` `float_height`, `item_bob`); `world/pickups/blue_glow.rs`
+  draws the megahealth's blue core as an added-light copy whose images are
+  the blue masks, breathing; `world/pickups/item_sparkles.rs` raises its
+  sparkles. **Decision:** while `washoi_models.pk3` is not published, those
+  pickups keep their procedural recipes, where the browser would show
+  nothing; the Rust recipes stay for that.
+- **Beam.** The Voltaic's beam stops in every movement freeze, not only
+  the post-game (`FPSPlayer.updateFiring`).
+- **Not ported.** Video export from the demo browser (not wanted); the
+  settings page's 3D team preview (`PlayerTeamPreview.ts`, a browser page:
+  a UI change, for a PR); SHAG's WebGPU snapshot fixes, `RagdollFrame` and
+  LOD stepping (browser renderer internals with no native counterpart);
+  the crowd benchmark and animation test pages, and the demo browser's
+  animation timeline (browser tools); `ensureBspCollision` (rebuilds Havok's map
+  bodies after the browser merges map meshes; native ragdolls collide with
+  the map built once at load); server-side changes (the client only decodes
+  `killWeapon`).
+
 ### 0.2.0 review: items (November 4, 2026)
 
 Map items, dropped weapons and their effects, compared with wash-fps

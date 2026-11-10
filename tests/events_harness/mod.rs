@@ -207,16 +207,26 @@ pub fn to_js(event: &SnapshotEvent) -> Value {
             at,
             vel,
             kb_dir,
-        } => o
-            .s("entityId", &entity_id)
-            .s("killerId", &killer_id)
-            .s("weaponId", &weapon_id)
-            .s("damageType", &damage_type)
-            .n("finalDamage", final_damage)
-            .p("", at)
-            .p("vel", vel)
-            .p("kbDir", kb_dir)
-            .done(),
+            kill_weapon,
+            hit_location,
+        } => {
+            let mut o = o
+                .s("entityId", &entity_id)
+                .s("killerId", &killer_id)
+                .s("weaponId", &weapon_id)
+                .s("damageType", &damage_type)
+                .n("finalDamage", final_damage)
+                .p("", at)
+                .p("vel", vel)
+                .p("kbDir", kb_dir);
+            if let Some(l) = hit_location {
+                o = o.s("hitLocation", l);
+            }
+            if let Some(w) = kill_weapon {
+                o = o.s("killWeapon", &w);
+            }
+            o.done()
+        }
         E::Award {
             award_type,
             player_id,

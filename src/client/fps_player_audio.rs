@@ -1,9 +1,14 @@
 //! wash-fps `client/FPSPlayerAudio.ts`: which voice a player speaks with,
-//! by side (`cl_team_ally_sounds`, `cl_team_enemy_sounds`).
+//! by side: the voice of the body they wear (`cl_team_ally_model`,
+//! `cl_team_enemy_model`).
 
 use std::collections::HashMap;
 
-use shagger::core::cvar::{CvarOptions, CvarType, Cvars, with_cvars};
+use shagger::core::cvar::Cvars;
+
+use crate::client::player_model_selection::{
+    PlayerModelSide, player_model_choice, player_model_voice, register_player_model_selection, set_player_model_choice,
+};
 
 use crate::client::player_model_visual_settings::{PlayerTeamSlot, get_player_team_slot};
 
@@ -21,53 +26,32 @@ pub enum PlayerVoiceSide {
     Enemy,
 }
 
-/// `VOICE_CVARS`.
-#[must_use]
-pub const fn voice_cvar(side: PlayerVoiceSide) -> &'static str {
-    match side {
-        PlayerVoiceSide::Ally => "cl_team_ally_sounds",
-        PlayerVoiceSide::Enemy => "cl_team_enemy_sounds",
-    }
-}
-
-/// `DEFAULTS`.
-const fn default_voice(side: PlayerVoiceSide) -> &'static str {
-    match side {
-        PlayerVoiceSide::Ally => "male",
-        PlayerVoiceSide::Enemy => "bobot",
-    }
-}
-
-/// `registerPlayerAudioCvars`.
+/// `registerPlayerAudioCvars`: the voices follow the bodies.
 pub fn register_player_audio_cvars(cvars: &mut Cvars) {
-    for (side, who) in [(PlayerVoiceSide::Ally, "Your side"), (PlayerVoiceSide::Enemy, "Enemy")] {
-        cvars.register(
-            voice_cvar(side),
-            default_voice(side),
-            CvarOptions::describe(&format!("{who} player sounds: male, female, bobot")).kind(CvarType::String),
-        );
+    register_player_model_selection(cvars);
+}
+
+const fn model_side(side: PlayerVoiceSide) -> PlayerModelSide {
+    match side {
+        PlayerVoiceSide::Ally => PlayerModelSide::Ally,
+        PlayerVoiceSide::Enemy => PlayerModelSide::Enemy,
     }
 }
 
-/// `playerVoiceSet(side)`: the cvar's voice, or the default for anything else.
+/// `playerVoiceSet(side)`: the side's body's voice.
 #[must_use]
 pub fn player_voice_set(side: PlayerVoiceSide) -> &'static str {
-    let value = with_cvars(|c| c.get(voice_cvar(side)).map(|_| c.get_string(voice_cvar(side))))
-        .unwrap_or_default()
-        .trim()
-        .to_lowercase();
-    PLAYER_VOICE_SETS
-        .iter()
-        .find(|v| **v == value)
-        .copied()
-        .unwrap_or(default_voice(side))
+    player_model_voice(player_model_choice(model_side(side)))
 }
 
-/// `setPlayerVoiceSet`.
+/// `setPlayerVoiceSet`: the body that speaks with `voice`.
 pub fn set_player_voice_set(side: PlayerVoiceSide, voice: &str) {
-    with_cvars(|c| {
-        c.set(voice_cvar(side), voice);
-    });
+    let choice = match voice {
+        "female" => "female",
+        "bobot" => "robot",
+        _ => "police",
+    };
+    set_player_model_choice(model_side(side), choice);
 }
 
 /// `playerVoiceForEntity`: the viewed player speaks as an ally; others by
@@ -112,7 +96,8 @@ mod tests {
     fn the_viewed_player_is_an_ally() {
         let teams: HashMap<String, String> = [("a".into(), "ffa".into()), ("b".into(), "ffa".into())].into();
         assert_eq!(player_voice_for_entity(&teams, "a", Some("a")), "male");
-        assert_eq!(player_voice_for_entity(&teams, "b", Some("a")), "bobot");
+        // Both sides wear Police by default, which speaks male.
+        assert_eq!(player_voice_for_entity(&teams, "b", Some("a")), "male");
         assert_eq!(fps_player_sound_paths().len(), 24);
     }
 }

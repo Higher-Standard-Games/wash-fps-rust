@@ -415,7 +415,7 @@ impl TeleportRenderer {
                 (at.y + GHOST_ANCHOR_Y_OFFSET) as f32,
                 at.z as f32,
             )) * Mat4::from_quat(Quat::from_rotation_y(yaw as f32))
-                * Mat4::from_scale(Vec3::splat(GHOST_MODEL_SCALE));
+                * p.root_matrix(GHOST_MODEL_SCALE);
             let mut palettes: HashMap<usize, u32> = HashMap::new();
             for (index, primitive) in p.model.primitives.iter().enumerate() {
                 let Some(skin) = &primitive.skin else { continue };

@@ -2,6 +2,8 @@
 //! local first-person weapon so far).
 
 pub mod ammo_status;
+pub mod attached_blade;
+pub mod attached_gun;
 pub mod bomb_site_debris;
 pub mod bomb_site_markers;
 pub mod cartoon_hit_effect;
@@ -35,9 +37,11 @@ pub mod live_play;
 pub mod live_watch;
 pub mod local_powerup_state;
 pub mod match_state_manager;
+pub mod player_model_selection;
 pub mod player_model_visual_settings;
 pub mod prediction;
 pub mod quad_damage_visual;
+pub mod ragdoll;
 pub mod ragdoll_system;
 pub mod reel_cards;
 pub mod remote_player_logic;

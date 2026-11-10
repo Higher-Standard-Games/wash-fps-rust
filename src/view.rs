@@ -3,7 +3,6 @@
 //! writes a PNG; otherwise it opens a window with a free camera. Players
 //! given with `--player` stand on the map as the Vanguard model.
 
-use shagger::animation::player_model_manager::PlayerModelInstance;
 use shagger::lighting::map_emissive_surfaces::{SurfaceEmission, extract_emissive_surfaces};
 use shagger::physics::physics_system::world_triangles;
 use shagger::physics::sweep_backend_adapter::to_shared_contents;
@@ -19,9 +18,11 @@ use washoi::client::damage_numbers::{DamageNumberRenderer, DamageNumbers};
 use washoi::client::dropped_weapon_renderer::{DropThrow, DroppedWeaponInfo, DroppedWeaponRenderer};
 use washoi::client::fps_liquid_audio::play_liquid_crossing;
 use washoi::client::gib_system::{GibRenderer, GibSystem};
+use washoi::client::player_model_selection::{PlayerModelSide, player_model_choice};
 use washoi::client::quad_damage_visual::{get_quad_damage_pulse, mask_has_quad};
+use washoi::client::ragdoll::death_clip::DeathFacts;
 use washoi::client::ragdoll_system::{RagdollSystem, RagdollTrails};
-use washoi::client::remote_player_renderer::{HandWeapons, body_matrix, update_powerup_glow};
+use washoi::client::remote_player_renderer::{DetachedBody, HandWeapons, update_powerup_glow};
 use washoi::client::teleport_effect::{TeamColor, TeleportEffect, TeleportRenderer, legacy_team_color, play_tele_in};
 use washoi::liquid::client::liquid_interaction_system::{LiquidInteractionSystem, Ring, WaterRipples};
 use washoi::liquid::client::liquid_ring_renderer::LiquidRingRenderer;
@@ -104,7 +105,7 @@ use washoi::client::player_model_visual_settings::{PlayerTeamSlot, get_player_mo
 use washoi::client::remote_player_renderer::{MODEL_SCALE, RemotePlayerRenderer};
 use washoi::shared::bsp::pickup_table::{PickupEntry, extract_pickups};
 use washoi::shared::items::item_throw::land_map_pickups;
-use washoi::world::fps_pickup::build_weapon_pickups;
+use washoi::world::fps_pickup::{ItemModels, build_item_models, build_weapon_pickups};
 use washoi::world::pickups::procedural::procedural_pickup_factory::{ProceduralPickups, build_procedural_pickups};
 use washoi::world::pickups::procedural::procedural_pickup_visual::camera_rotation;
 
@@ -941,6 +942,8 @@ pub struct MapRenderer {
     pub model_draws: Vec<ModelDraw>,
     /// Health, armour, ammo and the quad, posed each frame.
     pub items: ProceduralPickups,
+    /// The armors and megahealth from their packaged models, bobbing.
+    pub item_models: ItemModels,
     /// Each weapon pickup's id and its draws, at the head of `model_draws`.
     weapon_pickup_spans: Vec<(u32, std::ops::Range<usize>)>,
     /// The server's word on which pickups are up, by id
@@ -1063,7 +1066,7 @@ pub struct MapRenderer {
     ragdolled: HashSet<String>,
     /// Poses of players who left the list this frame, for a death that
     /// arrives with their leaving.
-    departed: HashMap<String, PlayerModelInstance>,
+    departed: HashMap<String, DetachedBody>,
     /// Each live player's body matrix, kept a frame past their leaving.
     live_worlds: HashMap<String, Mat4>,
     /// The local player (whose own body is not drawn) and their view yaw,
@@ -1479,14 +1482,28 @@ impl MapRenderer {
             } else {
                 self.live_tints.remove(id);
             }
-            self.live_worlds.insert(id.clone(), body_matrix(interp));
-            renderer.update(id, interp, dt, 1.0, None);
+            // Every player takes the FFA slot here (`styled_players`), so the
+            // enemy side's body (`modelChoiceFor`).
+            renderer.update_live(
+                id,
+                interp,
+                dt,
+                1.0,
+                self.live_weapons.get(id).map(String::as_str),
+                self.effect_time,
+                player_model_choice(PlayerModelSide::Enemy),
+            );
+            if let Some(world) = renderer.world_of(id, interp) {
+                self.live_worlds.insert(id.clone(), world);
+            }
             let first = self.live_draws.len();
             renderer.draws(id, interp, style, &mut self.joints, &mut self.live_draws);
+            let scale_factor = renderer.body_of(id).map_or(1.0, |b| b.model.scale_factor());
             update_powerup_glow(
                 &mut self.live_draws[first..],
                 interp.powerup_mask.unwrap_or(0),
                 self.item_time,
+                scale_factor,
             );
             let mut muzzle = RemoteMuzzle {
                 tag: None,
@@ -1496,8 +1513,8 @@ impl MapRenderer {
             if let (Some(weapon), Some(hand)) = (self.live_weapons.get(id), renderer.hand_world(id, interp)) {
                 let quad =
                     mask_has_quad(interp.powerup_mask.unwrap_or(0)).then(|| get_quad_damage_pulse(self.item_time));
-                self.hand_weapons.draws(weapon, hand, quad, &mut self.live_draws);
-                if let Some((tag, root)) = self.hand_weapons.muzzle(weapon, hand) {
+                self.hand_weapons.draws(weapon, &hand, quad, &mut self.live_draws);
+                if let Some((tag, root)) = self.hand_weapons.muzzle(weapon, &hand) {
                     muzzle.tag = tag.map(Vec3::as_dvec3);
                     muzzle.root = Some(root.as_dvec3());
                 }
@@ -1831,8 +1848,8 @@ impl MapRenderer {
             );
         }
         // RagdollSystem.update: a ragdoll that has faded bursts here.
-        if let (Some(ragdolls), Some(renderer)) = (&mut self.ragdolls, &self.remote_players) {
-            ragdolls.update(&renderer.model, dt);
+        if let Some(ragdolls) = &mut self.ragdolls {
+            ragdolls.update(dt);
             for (at, color) in ragdolls.take_gibs() {
                 self.gibs.spawn(at, DVec3::ZERO, color);
             }
@@ -1846,9 +1863,18 @@ impl MapRenderer {
                 at,
                 vel,
                 kb_dir,
+                kill_weapon,
+                hit_location,
                 ..
             } = event
             {
+                let facts = DeathFacts {
+                    damage_type,
+                    kill_weapon: kill_weapon.as_deref(),
+                    hit_location: *hit_location,
+                    kb_dir_x: kb_dir.x,
+                    kb_dir_z: kb_dir.z,
+                };
                 let kind = if damage_type.is_empty() { weapon_id } else { damage_type };
                 let gib = kind == "rail" || kind == "bomb" || (kind == "explosion" && *final_damage >= 50);
                 let color = self.live_tints.get(entity_id).copied();
@@ -1879,13 +1905,15 @@ impl MapRenderer {
                     };
                     let id = format!("{entity_id}#corpse");
                     renderer.update(&id, &interp, 0.0, 1.0, Some("idle"));
-                    if let Some(instance) = renderer.take(&id)
+                    let world = renderer.world_of(&id, &interp);
+                    if let (Some(DetachedBody { body, instance }), Some(world)) = (renderer.take(&id), world)
                         && let Some(serial) = ragdolls.spawn(
-                            &renderer.model,
+                            body,
                             instance,
-                            body_matrix(&interp),
+                            world,
                             DVec3::new(kb_dir.x, kb_dir.y, kb_dir.z),
                             color,
+                            Some(&facts),
                         )
                     {
                         self.local_death = Some((DeathFollow::Ragdoll(serial), death_pos, yaw));
@@ -1896,7 +1924,9 @@ impl MapRenderer {
                 let Some(renderer) = &mut self.remote_players else {
                     continue;
                 };
-                let Some(instance) = renderer.take(entity_id).or_else(|| self.departed.remove(entity_id)) else {
+                let Some(DetachedBody { body, instance }) =
+                    renderer.take(entity_id).or_else(|| self.departed.remove(entity_id))
+                else {
                     continue;
                 };
                 self.ragdolled.insert(entity_id.clone());
@@ -1904,11 +1934,12 @@ impl MapRenderer {
                 match (&mut self.ragdolls, world) {
                     (Some(ragdolls), Some(world)) => {
                         ragdolls.spawn(
-                            &renderer.model,
+                            body,
                             instance,
                             world,
                             DVec3::new(kb_dir.x, kb_dir.y, kb_dir.z),
                             color,
+                            Some(&facts),
                         );
                     }
                     // No ragdolls: the body breaks up instead.
@@ -2052,6 +2083,19 @@ impl MapRenderer {
                 self.charging.retain(|id| id != entity_id);
                 if *charging {
                     self.charging.push(entity_id.clone());
+                }
+            }
+            // `handleRemoteWeaponFire`: another player's gun stays raised a
+            // moment, and their blade swings.
+            if let SnapshotEvent::WeaponFire {
+                entity_id, weapon_id, ..
+            } = event
+                && self.local_player.as_ref().is_none_or(|(id, _)| id != entity_id)
+                && let Some(renderer) = &mut self.remote_players
+            {
+                renderer.note_weapon_fire(entity_id, now);
+                if washoi::client::game_events::canonical_weapon_id(weapon_id) == "blade" {
+                    renderer.play_attack_anim(entity_id, "blade_slash", 2.0);
                 }
             }
             if let SnapshotEvent::ProjectileImpact { def_id, at, normal } = event {
@@ -2228,15 +2272,21 @@ impl MapRenderer {
         }
         // The ragdolls' palettes go after the frame's, and leave with it.
         let joints_base = self.joints.len();
-        if let (Some(ragdolls), Some(renderer)) = (&self.ragdolls, &self.remote_players) {
-            let (lit, fade) = renderer.handles();
-            ragdolls.draws(&renderer.model, lit, fade, &mut self.joints, &mut self.frame_draws);
+        if let Some(ragdolls) = &self.ragdolls {
+            ragdolls.draws(&mut self.joints, &mut self.frame_draws);
             self.ragdoll_trails
                 .draws(gpu, &mut self.models, ragdolls, &mut self.frame_draws);
         }
         self.items.draws(
             self.item_time,
             camera_rotation(camera.view().as_dmat4()),
+            &mut self.frame_draws,
+        );
+        let active = &self.pickup_active;
+        self.item_models.draws(
+            self.item_time,
+            camera_rotation(camera.view().as_dmat4()),
+            |id| pickup_shown(active, id),
             &mut self.frame_draws,
         );
         for (model, world) in &self.projectiles {
@@ -2674,7 +2724,15 @@ pub fn build_renderer(gpu: &Gpu, map: &mut LoadedMap, output_format: wgpu::Textu
     }
     let mut model_draws = pickups.draws;
     let weapon_pickup_spans = pickups.spans;
-    let mut items = build_procedural_pickups(gpu, &mut map.pk3, &mut models, &map.pickups);
+    let item_models = build_item_models(gpu, &mut map.pk3, &mut models, &map.pickups);
+    if !item_models.is_empty() || item_models.failures.is_empty() {
+        println!("items: {} packaged models", item_models.len());
+    } else {
+        // `washoi_models.pk3` is not published yet: their recipes stand in.
+        println!("items: no packaged models ({})", item_models.failures.join(", "));
+    }
+    let recipe_entries: Vec<_> = map.pickups.iter().filter(|e| !item_models.has(e.id)).cloned().collect();
+    let mut items = build_procedural_pickups(gpu, &mut map.pk3, &mut models, &recipe_entries);
     if map.remote_players {
         // A match or demo: the server says which are up (`startHidden`).
         items.set_server_managed();
@@ -2701,10 +2759,15 @@ pub fn build_renderer(gpu: &Gpu, map: &mut LoadedMap, output_format: wgpu::Textu
                     players.go_to_frame(&id, player.frame);
                     let first = model_draws.len();
                     players.draws(&id, &interp, &style, &mut joints, &mut model_draws);
-                    update_powerup_glow(&mut model_draws[first..], interp.powerup_mask.unwrap_or(0), 0.0);
+                    update_powerup_glow(
+                        &mut model_draws[first..],
+                        interp.powerup_mask.unwrap_or(0),
+                        0.0,
+                        players.model.scale_factor(),
+                    );
                     if let (Some(weapon), Some(hand)) = (&player.weapon, players.hand_world(&id, &interp)) {
                         let quad = player.quad.then_some(get_quad_damage_pulse(0.0));
-                        hand_weapons.draws(weapon, hand, quad, &mut model_draws);
+                        hand_weapons.draws(weapon, &hand, quad, &mut model_draws);
                     }
                     let at = DVec3::new(interp.x, interp.y, interp.z);
                     static_actors.push((
@@ -2769,7 +2832,7 @@ pub fn build_renderer(gpu: &Gpu, map: &mut LoadedMap, output_format: wgpu::Textu
         gpu,
         format,
         &mut models,
-        remote_players.as_ref().map(|r: &RemotePlayerRenderer| &r.model),
+        remote_players.as_ref().map(|r: &RemotePlayerRenderer| &*r.model),
     );
     let mut teleports = TeleportEffect::new(teleport_renderer.has_ghosts());
     for held in &map.teleports {
@@ -2783,7 +2846,7 @@ pub fn build_renderer(gpu: &Gpu, map: &mut LoadedMap, output_format: wgpu::Textu
             teleports.update(age / (age * 100.0).ceil());
         }
     }
-    let player_model = remote_players.as_ref().map(|r: &RemotePlayerRenderer| &r.model);
+    let player_model = remote_players.as_ref().map(|r: &RemotePlayerRenderer| &*r.model);
     teleport_renderer.advance(player_model, 0.0);
     teleport_renderer.ghost_draws(player_model, &teleports, &mut joints, &mut model_draws);
     let mut projectiles = Vec::new();
@@ -3018,6 +3081,7 @@ pub fn build_renderer(gpu: &Gpu, map: &mut LoadedMap, output_format: wgpu::Textu
         models,
         model_draws,
         items,
+        item_models,
         weapon_pickup_spans,
         pickup_active: Vec::new(),
         item_time: 0.0,
@@ -3130,19 +3194,14 @@ pub fn build_renderer(gpu: &Gpu, map: &mut LoadedMap, output_format: wgpu::Textu
             let interp = held.player.interpolated();
             players.update(&id, &interp, 0.0, 1.0, Some(&held.player.clip));
             players.go_to_frame(&id, held.player.frame);
-            if let Some(instance) = players.take(&id) {
-                ragdolls.spawn(
-                    &players.model,
-                    instance,
-                    body_matrix(&interp),
-                    babylon(held.dir),
-                    style.tint_color,
-                );
+            let world = players.world_of(&id, &interp);
+            if let (Some(DetachedBody { body, instance }), Some(world)) = (players.take(&id), world) {
+                ragdolls.spawn(body, instance, world, babylon(held.dir), style.tint_color, None);
             }
         }
         if let Some(age) = map.ragdolls.iter().map(|r| r.age).reduce(f64::min) {
             for _ in 0..(age * 60.0).round() as usize {
-                ragdolls.update(&players.model, 1.0 / 60.0);
+                ragdolls.update(1.0 / 60.0);
                 for (at, color) in ragdolls.take_gibs() {
                     renderer.gibs.spawn(at, DVec3::ZERO, color);
                 }

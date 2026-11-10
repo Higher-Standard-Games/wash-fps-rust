@@ -854,21 +854,34 @@ pub const OUTLINE_CHOICES: [CvarChoice; 3] = [
 ];
 
 /// `BOOST_CHOICES`: a glow of the players' own for dark corners.
-pub const BOOST_CHOICES: [CvarChoice; 3] = [
+pub const BOOST_CHOICES: [CvarChoice; 4] = [
     CvarChoice {
         id: "off",
         label: "Off",
-        values: &[("cl_player_fullbright", 0.0)],
+        values: &[("cl_player_tint", 0.0), ("cl_player_fullbright", 0.0)],
+    },
+    CvarChoice {
+        id: "tint",
+        label: "Tint",
+        values: &[("cl_player_tint", 1.0), ("cl_player_fullbright", 0.0)],
     },
     CvarChoice {
         id: "some",
         label: "Some",
-        values: &[("cl_player_fullbright", 1.0), ("cl_player_fullbright_intensity", 0.25)],
+        values: &[
+            ("cl_player_tint", 1.0),
+            ("cl_player_fullbright", 1.0),
+            ("cl_player_fullbright_intensity", 0.25),
+        ],
     },
     CvarChoice {
         id: "lots",
         label: "Lots",
-        values: &[("cl_player_fullbright", 1.0), ("cl_player_fullbright_intensity", 0.6)],
+        values: &[
+            ("cl_player_tint", 1.0),
+            ("cl_player_fullbright", 1.0),
+            ("cl_player_fullbright_intensity", 0.6),
+        ],
     },
 ];
 
@@ -916,8 +929,8 @@ pub fn page_cvars(page: SettingsPageId) -> &'static [&'static str] {
     match page {
         SettingsPageId::Controls => &["m_sensitivity", "cl_ads_sensitivity", "cl_autorun"],
         SettingsPageId::Gameplay => &[
-            "cl_team_ally_sounds",
-            "cl_team_enemy_sounds",
+            "cl_team_ally_model",
+            "cl_team_enemy_model",
             "cl_team_ally_color",
             "cl_team_ally_outline_color",
             "cl_team_enemy_color",
@@ -926,6 +939,7 @@ pub fn page_cvars(page: SettingsPageId) -> &'static [&'static str] {
             "cl_team_ffa_outline_color",
             "cl_player_outline",
             "cl_player_outline_size",
+            "cl_player_tint",
             "cl_player_fullbright",
             "cl_player_fullbright_intensity",
             "cg_crosshair",
@@ -1014,6 +1028,8 @@ pub fn register_client_cvars(cvars: &mut Cvars) {
     // PlayerModelVisualSettings.ts, FPSPlayerAudio.ts.
     register_player_model_visual_cvars(cvars);
     register_player_audio_cvars(cvars);
+    // RemotePlayerRenderer.ts.
+    crate::client::remote_player_renderer::register_remote_player_cvars(cvars);
     // FPSController.ts.
     int_flag(
         cvars,
@@ -1154,6 +1170,6 @@ mod tests {
         reset_side_colors(&mut cvars);
         assert!(side_colors_are_default(&cvars));
         assert_eq!(current_choice(&cvars, &OUTLINE_CHOICES).map(|c| c.id), Some("thin"));
-        assert!(current_choice(&cvars, &BOOST_CHOICES).is_none_or(|c| c.id == "off"));
+        assert_eq!(current_choice(&cvars, &BOOST_CHOICES).map(|c| c.id), Some("tint"));
     }
 }

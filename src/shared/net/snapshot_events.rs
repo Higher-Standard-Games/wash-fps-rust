@@ -13,8 +13,8 @@ use shagger::shared::net::game_state::Vec3;
 use shagger::shared::net::snapshot::EventCodec;
 
 /// `EVT_NAME_MAP`: the event name for each wire code. Codes 23 and 25 are
-/// `damage`, 24 is `weapon_fire`.
-pub const EVENT_NAMES: [&str; 26] = [
+/// `damage`, 24 is `weapon_fire`, 26 is `death`.
+pub const EVENT_NAMES: [&str; 27] = [
     "",
     "combat_state",
     "match_state",
@@ -41,6 +41,7 @@ pub const EVENT_NAMES: [&str; 26] = [
     "damage",
     "weapon_fire",
     "damage",
+    "death",
 ];
 
 /// A damage event that names where the hit landed.
@@ -49,6 +50,10 @@ pub const DAMAGE_LOCATED: u8 = 23;
 pub const FIRE_SEEDED: u8 = 24;
 /// A damage event that carries the victim's pain tier.
 pub const DAMAGE_PAINED: u8 = 25;
+/// A death event that names the killing weapon and where the blow landed:
+/// code 11's layout, then the hit location byte and the weapon id string
+/// (`DEATH_LOCATED`).
+pub const DEATH_LOCATED: u8 = 26;
 
 /// Wire order of the hit location byte. Append only: the index is the encoding.
 pub const HIT_LOCATIONS: [&str; 3] = ["body", "head", "legs"];
@@ -151,6 +156,11 @@ pub enum SnapshotEvent {
         at: Point,
         vel: Point,
         kb_dir: Point,
+        /// The weapon that dealt the killing blow ("riotgun", ...), when a
+        /// hitscan or melee weapon did (code 26 only).
+        kill_weapon: Option<String>,
+        /// Where the killing blow landed, for a head or leg hit (code 26 only).
+        hit_location: Option<&'static str>,
     },
     Award {
         award_type: String,
@@ -403,16 +413,40 @@ impl EventCodec for WashoiEvents {
                     pain_tier,
                 }
             }
-            11 => E::Death {
-                entity_id: d.read_string()?,
-                killer_id: d.read_string()?,
-                weapon_id: d.read_string()?,
-                damage_type: d.read_string()?,
-                final_damage: d.read_uint16()?,
-                at: point(d)?,
-                vel: point(d)?,
-                kb_dir: point(d)?,
-            },
+            // Code 26 adds the hit location and the killing weapon; code 11 has neither.
+            11 | DEATH_LOCATED => {
+                let entity_id = d.read_string()?;
+                let killer_id = d.read_string()?;
+                let weapon_id = d.read_string()?;
+                let damage_type = d.read_string()?;
+                let final_damage = d.read_uint16()?;
+                let at = point(d)?;
+                let vel = point(d)?;
+                let kb_dir = point(d)?;
+                let (hit_location, kill_weapon) = if code == DEATH_LOCATED {
+                    // A body hit is left without a location, as code 11 leaves it.
+                    let location = HIT_LOCATIONS
+                        .get(usize::from(d.read_uint8()?))
+                        .copied()
+                        .filter(|&l| l != "body");
+                    let weapon = d.read_string()?;
+                    (location, (!weapon.is_empty()).then_some(weapon))
+                } else {
+                    (None, None)
+                };
+                E::Death {
+                    entity_id,
+                    killer_id,
+                    weapon_id,
+                    damage_type,
+                    final_damage,
+                    at,
+                    vel,
+                    kb_dir,
+                    kill_weapon,
+                    hit_location,
+                }
+            }
             12 => E::Award {
                 award_type: d.read_string()?,
                 player_id: d.read_string()?,

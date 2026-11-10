@@ -66,7 +66,6 @@ use washoi::client::demo_service::analysis_report;
 use washoi::client::first_person_view::{BodyFrame, FirstPersonView, ViewKeys, ViewOffset};
 use washoi::client::game_events::GameAudio;
 use washoi::client::hud::widgets::pause_menu::{PauseMenu, PauseMenuAction};
-use washoi::client::match_state_manager::MatchPhase;
 use washoi::client::teleport_effect::TeamColor;
 use washoi::client::washoi_style::install_style;
 use washoi::client::weapon_view::{clip_reload_time, quad_view_weapon_outline, shot_style};
@@ -955,12 +954,13 @@ impl App {
                 }
                 // `FPSPlayer.updateFiring`: the Voltaic's beam shows while fire
                 // is held, alive, with a loaded clip, neither reloading nor
-                // switching, and not once the match is over.
+                // switching, and not while a freeze holds movement (the
+                // post-game, a round's countdown and its end).
                 self.beam_wanted = matches!(&*feed, Feed::Play(p, held)
                     if p.alive
                         && held.fire
                         && p.weapon_in_hand().map(canonical_weapon_id) == Some("voltaic")
-                        && p.match_state().phase() != MatchPhase::PostGame)
+                        && !p.match_state().is_movement_frozen())
                     && hud.state.current_clip() > 0.0
                     && !self.view_reloading
                     && !s.renderer.switch_anim.is_switching();
