@@ -2759,8 +2759,10 @@ listed under "Not ported".
 - **Beam.** The Voltaic's beam stops in every movement freeze, not only
   the post-game (`FPSPlayer.updateFiring`).
 - **Not ported.** Video export from the demo browser (not wanted); the
-  settings page's 3D team preview (`PlayerTeamPreview.ts`, a browser page:
-  a UI change, for a PR); SHAG's WebGPU snapshot fixes, `RagdollFrame` and
+  settings page's new team cards and 3D preview (`GameplayPage.ts`,
+  `PlayerTeamPreview.ts`) need no port: the settings screen is the lobby
+  page's own (WEBVIEW_LOBBY.md 8), and its model and tint cvars round-trip
+  through the storage mirror to the cvars registered here; SHAG's WebGPU snapshot fixes, `RagdollFrame` and
   LOD stepping (browser renderer internals with no native counterpart);
   the crowd benchmark and animation test pages, and the demo browser's
   animation timeline (browser tools); `ensureBspCollision` (rebuilds Havok's map
