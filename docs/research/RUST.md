@@ -2732,6 +2732,20 @@ whole areas rather than single items. 0.2.0 closes them in two steps.
 
 Newest first. Each entry names the commits and what proves them.
 
+### The console in washoi.log (November 11, 2026)
+
+A game started from its icon has no console: the Windows build is a GUI
+program, and an AppImage or app bundle started from the desktop prints
+nowhere a player can see. So a match that failed while loading left no
+trace beyond the lobby's notice. Now, when standard output is not a
+terminal, `main` points standard output and error at `washoi.log` in the
+config folder (shagger `afa3c7a`, `core::console_log`: `dup2` on Unix,
+`SetStdHandle` on Windows), new each run with the run before kept as
+`washoi.old.log`. `fatal` no longer appends to the file itself then, its
+message already landing there. Started from a terminal, nothing changes.
+Checked on Linux with the output piped: the log holds the run's lines and
+a second run moves it to `washoi.old.log`.
+
 ### Linux AppImage and macOS self-update (November 11, 2026)
 
 The other two platforms now update themselves at start the way Windows

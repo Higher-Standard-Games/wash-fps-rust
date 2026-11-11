@@ -422,6 +422,9 @@ fn parse_options(args: impl Iterator<Item = String>) -> Options {
     o
 }
 
+/// Standard output and error go to `washoi.log` (no terminal to print to).
+static CONSOLE_LOGGED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
 fn main() {
     // Lossy rather than `args()`, which panics on a path that is not UTF-8.
     let mut args: Vec<String> = std::env::args_os()
@@ -453,6 +456,15 @@ fn main() {
     if let Some(dir) = config_dir() {
         let version: &'static str = Box::leak(washoi::version_line().into_boxed_str());
         shagger::core::crash_report::install("washoi", version, dir.join("crashes"));
+        // Started from its icon there is no console: what the game prints
+        // goes to `washoi.log`, the run before kept as `washoi.old.log`.
+        if shagger::core::console_log::redirect(&dir.join("washoi.log")) {
+            CONSOLE_LOGGED.store(true, std::sync::atomic::Ordering::Relaxed);
+            let at = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map_or(0, |d| d.as_secs());
+            println!("washoi {} started at {at} ({mode})", washoi::version_line());
+        }
     }
     let url = if matches!(mode.as_str(), "game" | "sync" | "regions") {
         String::new()
@@ -744,12 +756,15 @@ fn default_key_file() -> Option<PathBuf> {
 
 use washoi::config_dir;
 
-/// An error that ends the game: printed, added to `washoi.log` in the
-/// config folder, and in a release build shown in a dialog, since a game
-/// started from its icon has no console to print to.
+/// An error that ends the game: printed (into `washoi.log` in the config
+/// folder when there is no console, else added to it), and in a release
+/// build shown in a dialog, since a game started from its icon has no
+/// console to print to.
 fn fatal(why: &str) -> i32 {
     eprintln!("{why}");
-    if let Some(dir) = config_dir() {
+    if !CONSOLE_LOGGED.load(std::sync::atomic::Ordering::Relaxed)
+        && let Some(dir) = config_dir()
+    {
         use std::io::Write;
         let _ = std::fs::create_dir_all(&dir);
         if let Ok(mut log) = std::fs::OpenOptions::new()

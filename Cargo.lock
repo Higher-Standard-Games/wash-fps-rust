@@ -3876,7 +3876,7 @@ dependencies = [
 [[package]]
 name = "shagger"
 version = "0.0.1"
-source = "git+https://github.com/Higher-Standard-Games/shagger?rev=c3512ddc9eb671044ef17ff0b3fa7c2cf48b63c2#c3512ddc9eb671044ef17ff0b3fa7c2cf48b63c2"
+source = "git+https://github.com/Higher-Standard-Games/shagger?rev=afa3c7a454f190ce51284e126e8c827afbf97a7a#afa3c7a454f190ce51284e126e8c827afbf97a7a"
 dependencies = [
  "bytemuck",
  "cpal",
@@ -3890,6 +3890,7 @@ dependencies = [
  "gtk",
  "image",
  "lewton",
+ "libc",
  "pollster",
  "rapier3d",
  "reqwest",
@@ -3905,6 +3906,7 @@ dependencies = [
  "tokio-tungstenite",
  "webpki-roots 1.0.11",
  "wgpu",
+ "windows-sys 0.61.2",
  "winit",
  "wry",
  "zip",
@@ -3913,7 +3915,7 @@ dependencies = [
 [[package]]
 name = "shagger_shared"
 version = "0.0.1"
-source = "git+https://github.com/Higher-Standard-Games/shagger?rev=c3512ddc9eb671044ef17ff0b3fa7c2cf48b63c2#c3512ddc9eb671044ef17ff0b3fa7c2cf48b63c2"
+source = "git+https://github.com/Higher-Standard-Games/shagger?rev=afa3c7a454f190ce51284e126e8c827afbf97a7a#afa3c7a454f190ce51284e126e8c827afbf97a7a"
 dependencies = [
  "flate2",
 ]
