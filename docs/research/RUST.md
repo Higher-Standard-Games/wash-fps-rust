@@ -2765,6 +2765,14 @@ Newest first. Each entry names the commits and what proves them.
   frustum, as the main view does, and `draw_opaque_view` skips the rest.
   Only draws outside the mirrored clip volume go, so the picture cannot
   change; not measured on a pool.
+- **The freefly cue card.** `SpectatorOverlay`'s `freeflyCue`
+  (`.fps-spectator-cue`) is `hud/widgets/spectator_cue.rs`: the
+  cyan-edged SPECTATOR card, bottom left 200 px up, with cream key chips
+  in two columns. It shows to a live spectator behind no one's eyes and
+  gives way to the spectator bar on a chase. Changed: it names the native
+  watch mode's fixed keys (WASD, mouse, Shift, Space, C, F to chase, Esc)
+  and has no Join Game, which the native watch mode lacks. `hud_render`
+  draws it (`HUD_FREEFLY_PNG`).
 
 ### The data screen as the lobby's twin (November 11, 2026)
 

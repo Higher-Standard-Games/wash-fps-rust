@@ -433,3 +433,77 @@ fn a_full_inventory_is_asked_to_swap() {
     };
     assert!((height / 3..height / 2).any(crosses));
 }
+
+/// A spectator flying free: the SPECTATOR card with the keys, bottom left
+/// above where the HUD would be. Writes the frame to `HUD_FREEFLY_PNG`
+/// when set.
+#[test]
+fn a_freefly_spectator_sees_the_keys() {
+    let Ok(gpu) = Gpu::headless() else {
+        eprintln!("skipped: no GPU adapter");
+        return;
+    };
+    let (width, height) = (1280u32, 720u32);
+    let mut hud = FpsHud::new(&gpu, OFFSCREEN_FORMAT).unwrap();
+    let roster = vec![(
+        "player_3".to_owned(),
+        PlayerState {
+            entity_id: "player_3".into(),
+            name: "Noodlesoup".into(),
+            ..PlayerState::default()
+        },
+    )];
+    let match_state = MatchStateManager::new();
+    let frame = WatchFrame {
+        roster: &roster,
+        match_state: &match_state,
+        events: &[],
+        view_entity: None,
+        playback: false,
+        playing: false,
+        speed: 0.0,
+        positions: &[],
+        yaw: 0.0,
+        dt: 1.0 / 60.0,
+        air: None,
+        watched: None,
+    };
+    hud.update_watching(&frame, width as f32, height as f32);
+    assert!(hud.state.watcher);
+    assert!(hud.state.spectating.is_empty());
+    hud.prepare(&gpu);
+    let post = ImageProcessingPostProcess::new(&gpu, OFFSCREEN_FORMAT);
+    let pixels = render_hdr_with_ui_to_rgba(
+        &gpu,
+        width,
+        height,
+        wgpu::Color {
+            r: 0.3,
+            g: 0.3,
+            b: 0.3,
+            a: 1.0,
+        },
+        &post,
+        &ImageProcessingConfiguration::default(),
+        |_| {},
+        |_| {},
+        |pass| hud.draw(pass),
+    );
+    if let Some(path) = std::env::var_os("HUD_FREEFLY_PNG") {
+        image::save_buffer(path, &pixels, width, height, image::ExtendedColorType::Rgba8).unwrap();
+    }
+    // The card's cyan edge and its cream key chips, in the lower left.
+    let count = |test: &dyn Fn(u8, u8, u8) -> bool| {
+        (height / 2..height)
+            .flat_map(|y| (0..width / 3).map(move |x| (x, y)))
+            .filter(|&(x, y)| {
+                let i = ((y * width + x) * 4) as usize;
+                test(pixels[i], pixels[i + 1], pixels[i + 2])
+            })
+            .count()
+    };
+    let cyan = count(&|r, g, b| r < 90 && g > 180 && b > 180);
+    let cream = count(&|r, g, b| r > 220 && g > 200 && b > 170);
+    assert!(cyan > 100, "{cyan}");
+    assert!(cream > 300, "{cream}");
+}
