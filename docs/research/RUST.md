@@ -2729,6 +2729,14 @@ them and for zip, macOS and Linux players, who keep the download notice.
 Unit tests cover the installer pick (its name, size, hash and address) and
 the check of the download.
 
+The lobby page turns away the rest (wash-fps PR #8,
+`client/native/UpdateRequired.ts`): the page is always washoi.net's
+current one, so below its `MIN_NATIVE_CLIENT` it shows "Update required"
+with the download (from this client's `native:update`) and Quit instead of
+the lobby. The minimum starts at 0.1.0; it is raised in the deployment of
+a change old clients cannot read (a snapshot field, a message type, a
+bridge message).
+
 ### Windows installer (November 11, 2026)
 
 A plain start has been the whole game since 0.1.0 (region picker, data
