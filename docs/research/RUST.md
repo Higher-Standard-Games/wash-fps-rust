@@ -2710,6 +2710,14 @@ whole areas rather than single items. 0.2.0 closes them in two steps.
 
 ## 24. Progress log
 
+### 0.2.1 released (November 11, 2026)
+
+- **Linux fixes** after 0.2.0 on Arch (Wayland): GTK held to X11 so the
+  lobby webview no longer panics in wry's `new_x11`, and the AppImage names
+  the WebKitGTK 4.1 package when it is missing (the entry below).
+- **Engine**: shagger c3512dd.
+- **Version 0.2.1.**
+
 ### 0.2.0 released (November 11, 2026)
 
 - **The goal's two steps** (section 23's 0.2.0 list): the fixes and the
