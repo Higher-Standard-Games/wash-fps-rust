@@ -2301,6 +2301,7 @@ impl MapRenderer {
         let active = &self.pickup_active;
         self.item_models.draws(
             self.item_time,
+            camera.position.as_dvec3(),
             camera_rotation(camera.view().as_dmat4()),
             |id| pickup_shown(active, id),
             &mut self.frame_draws,

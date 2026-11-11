@@ -52,6 +52,28 @@ pub fn blue_glow_mask(pixels: &[u8]) -> Vec<u8> {
     out
 }
 
+/// RGBA bytes read from a texture as a new PNG image (`textureFromPixels`):
+/// the bytes are in the order the source holds them, so the image reads
+/// with its coordinates.
+#[must_use]
+pub fn png_image(name: &str, bytes: &[u8], width: u32, height: u32) -> Option<ModelImage> {
+    let mut png = Cursor::new(Vec::new());
+    image::write_buffer_with_format(
+        &mut png,
+        bytes,
+        width,
+        height,
+        image::ExtendedColorType::Rgba8,
+        image::ImageFormat::Png,
+    )
+    .ok()?;
+    Some(ModelImage {
+        name: name.to_owned(),
+        mime_type: Some("image/png".to_owned()),
+        bytes: png.into_inner(),
+    })
+}
+
 /// The glow's emissive intensity at `seconds` (`scenePulse`), every core
 /// breathing together.
 #[must_use]
@@ -83,21 +105,12 @@ pub fn blue_glow_layer(model: &GltfModel) -> Option<(GltfModel, Vec<Option<Vec3>
                 let image = model.images.get(base)?;
                 let decoded = decode_image(&image.name, &image.bytes)?;
                 let mask = blue_glow_mask(&decoded.pixels);
-                let mut png = Cursor::new(Vec::new());
-                image::write_buffer_with_format(
-                    &mut png,
+                images.push(png_image(
+                    &format!("{}_blue_glow", image.name),
                     &mask,
                     decoded.width,
                     decoded.height,
-                    image::ExtendedColorType::Rgba8,
-                    image::ImageFormat::Png,
-                )
-                .ok()?;
-                images.push(ModelImage {
-                    name: format!("{}_blue_glow", image.name),
-                    mime_type: Some("image/png".to_owned()),
-                    bytes: png.into_inner(),
-                });
+                )?);
                 masks.push((base, images.len() - 1));
                 Some((images.len() - 1, Vec3::ONE))
             }

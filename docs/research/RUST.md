@@ -2742,6 +2742,22 @@ below (SHAG `432cce3`, wash-fps `247cafe`), in slices.
   side's. A player sounds like the body they are drawn with
   (`playerVoiceForEntity` reads the look; `setLocalPlayerVoice` for your
   own drowning).
+- **Items.** Every armor, health, ammo and powerup pickup draws its
+  packaged model now (`definitions/items.rs`, the ammo box at 24), with
+  the procedural recipes left as the fallback while `washoi_models.pk3` is
+  missing. `pickups/health_tint.rs` (`HealthTint.ts`): the bubble's tier
+  colour, the cross fullbright (its innermost part, masked in the texture),
+  and a steady glow at 1.6; the ultra health is the megahealth with its
+  blue turned purple (hue 285), breathing. `pickups/quad_core.rs`
+  (`QuadCore.ts`): the quad's Q split out as a primitive of its own,
+  turning every 3 s in its ring and glowing at 1.4. Babylon's emissive
+  textures are added-light layers, as for the megahealth's blue glow.
+  `pickups/ammo_box_symbols.rs` (`AmmoBoxSymbols.ts`): the weapon symbols
+  from `washoi_gfx.pk3` on four unlit quads, wound clockwise seen from
+  outside (Babylon's front faces). `pickups/item_sparkles.rs` follows the
+  new `ItemSparkles.ts`: world-unit sizes and rise, a shell of 0.85 of the
+  item's radius, turning with the item, 5 to 16 per item by kind, and only
+  the 8 nearest drawn items within 900 units sparkle, chosen every 0.25 s.
 - **Checked, nothing to port.** beta9.1's gun handed to two players:
   native hand weapons are drawn per frame from one shared model, with no
   parked instances to hand out twice.

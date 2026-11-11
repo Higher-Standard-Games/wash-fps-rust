@@ -1,11 +1,11 @@
 //! wash-fps `world/pickups/ItemSparkles.ts`: small white sparkles that rise
 //! slowly from an item and fade out.
 //!
-//! Each is a tiny camera-facing quad under the item. Babylon places a
-//! billboard under a parent by the parent's scaling and position only
-//! (`BillboardUseParentOrientation` is off), so they bob with the item and
-//! grow with its scale without turning with it. They stop with the item
-//! when it is collected.
+//! Each sparkle lives in its item's own space, so it turns and bobs with
+//! it, and draws as a camera-facing dot (Babylon draws every sparkle of a
+//! scene as thin instances of one dot). Only the nearest
+//! [`MAX_SPARKLING_ITEMS`] drawn items within [`SPARKLE_RANGE`] of the
+//! camera sparkle ([`choose_sparkling`]); the others rest.
 
 use std::io::Cursor;
 
@@ -15,26 +15,32 @@ use shagger::rendering::glam::{DMat3, DVec3, Mat4, Vec3};
 use shagger::rendering::gpu::Gpu;
 use shagger::rendering::model_renderer::{ModelDraw, ModelHandle, ModelMaterialMode, ModelRenderer};
 
-/// Sparkles per item, each rising and fading in turn, so about COUNT / LIFE
-/// are born a second.
-pub const COUNT: usize = 16;
 /// Seconds a sparkle lives.
 const LIFE_MIN: f64 = 2.0;
 const LIFE_MAX: f64 = 3.2;
-/// In the model's own units (the packaged items are ~1.9 across, drawn
-/// ~18x): born just inside its shell, rising this fast, this large at their
-/// brightest.
-const SHELL_RADIUS: f64 = 0.8;
-const RISE_MIN: f64 = 0.35;
-const RISE_MAX: f64 = 0.6;
-const SIZE_MIN: f64 = 0.04;
-const SIZE_MAX: f64 = 0.08;
-/// The dot texture's size (`sparkleMaterial`'s canvas).
+/// In world units: rising this fast, this large at their brightest.
+const RISE_MIN: f64 = 6.3;
+const RISE_MAX: f64 = 10.8;
+const SIZE_MIN: f64 = 0.72;
+const SIZE_MAX: f64 = 1.44;
+/// Born just inside the item: this share of its bounding radius.
+const SHELL_SHARE: f64 = 0.85;
+
+/// Only items this close to the camera sparkle, and only the nearest few
+/// of them.
+pub const SPARKLE_RANGE: f64 = 900.0;
+pub const MAX_SPARKLING_ITEMS: usize = 8;
+/// The most sparkles one item has; more are not made.
+pub const MAX_SPARKLES_PER_ITEM: usize = 16;
+/// Seconds between choosing which items sparkle.
+pub const CHOOSE_EVERY: f64 = 0.25;
+/// The dot texture's size (`createDot`'s canvas).
 const DOT: u32 = 32;
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 struct Sparkle {
-    position: DVec3,
+    /// Where it is in the item's own space.
+    local: DVec3,
     age: f64,
     life: f64,
     rise: f64,
@@ -45,22 +51,27 @@ struct Sparkle {
 #[derive(Debug, Clone)]
 pub struct ItemSparkles {
     sparkles: Vec<Sparkle>,
+    shell: f64,
     /// `Math.random`'s stand-in: a xorshift seeded by the item.
     seed: u64,
-    last: Option<f64>,
+    /// Among the nearest, so it sparkles (`active`).
+    pub active: bool,
 }
 
 impl ItemSparkles {
+    /// `count` sparkles (at most [`MAX_SPARKLES_PER_ITEM`]) for an item whose
+    /// bounding sphere, in its own units, has this radius.
     #[must_use]
-    pub fn new(seed: u64) -> Self {
+    pub fn new(seed: u64, count: usize, radius: f64) -> Self {
         let mut out = Self {
-            sparkles: Vec::with_capacity(COUNT),
+            sparkles: Vec::with_capacity(count.min(MAX_SPARKLES_PER_ITEM)),
+            shell: radius * SHELL_SHARE,
             seed: seed.wrapping_mul(0x9e37_79b9_7f4a_7c15) | 1,
-            last: None,
+            active: false,
         };
-        for _ in 0..COUNT {
+        for _ in 0..count.min(MAX_SPARKLES_PER_ITEM) {
             let mut sparkle = Sparkle {
-                position: DVec3::ZERO,
+                local: DVec3::ZERO,
                 age: 0.0,
                 life: 1.0,
                 rise: 0.0,
@@ -75,6 +86,16 @@ impl ItemSparkles {
         out
     }
 
+    #[must_use]
+    pub fn len(&self) -> usize {
+        self.sparkles.len()
+    }
+
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.sparkles.is_empty()
+    }
+
     fn random(&mut self) -> f64 {
         self.seed ^= self.seed << 13;
         self.seed ^= self.seed >> 7;
@@ -82,70 +103,65 @@ impl ItemSparkles {
         (self.seed >> 11) as f64 / (1u64 << 53) as f64
     }
 
-    /// A new sparkle at a random point just inside the item's shell.
+    /// A new sparkle at a random point just inside the item.
     fn respawn(&mut self, sparkle: &mut Sparkle) {
         let u = self.random() * 2.0 - 1.0;
         let angle = self.random() * std::f64::consts::PI * 2.0;
-        let ring = (1.0 - u * u).sqrt() * SHELL_RADIUS;
-        sparkle.position = DVec3::new(angle.cos() * ring, u * SHELL_RADIUS, angle.sin() * ring);
+        let ring = (1.0 - u * u).sqrt() * self.shell;
+        sparkle.local = DVec3::new(angle.cos() * ring, u * self.shell, angle.sin() * ring);
         sparkle.age = 0.0;
         sparkle.life = LIFE_MIN + self.random() * (LIFE_MAX - LIFE_MIN);
         sparkle.rise = RISE_MIN + self.random() * (RISE_MAX - RISE_MIN);
         sparkle.size = SIZE_MIN + self.random() * (SIZE_MAX - SIZE_MIN);
     }
 
-    /// Ages and lifts the sparkles to `now` seconds; a hidden item's rest.
-    pub fn update(&mut self, now: f64, shown: bool) {
-        // Clamped, so a stall or an item coming back into view does not
-        // jump them
-        let dt = self.last.map_or(0.0, |last| (now - last).min(0.1));
-        self.last = Some(now);
-        if !shown {
-            return;
-        }
+    /// Ages and lifts the sparkles by `dt` seconds under an item drawn at
+    /// `scale`: rise speeds are in world units, the sparkles in the item's.
+    pub fn advance(&mut self, dt: f64, scale: f64) {
+        let scale = if scale == 0.0 { 1.0 } else { scale };
         let mut sparkles = std::mem::take(&mut self.sparkles);
         for sparkle in &mut sparkles {
             sparkle.age += dt;
             if sparkle.age >= sparkle.life {
                 self.respawn(sparkle);
             }
-            sparkle.position.y += sparkle.rise * dt;
+            sparkle.local.y += (sparkle.rise * dt) / scale;
         }
         self.sparkles = sparkles;
     }
 
-    /// Each sparkle's local position and scaling: grown in quickly, then
-    /// shrunk away over the rest of the climb.
-    fn placed(&self) -> impl Iterator<Item = (DVec3, f64)> + '_ {
-        self.sparkles.iter().map(|s| {
-            let t = s.age / s.life;
-            let fade = if t < 0.15 { t / 0.15 } else { (1.0 - t) / 0.85 };
-            (s.position, s.size * fade)
-        })
-    }
-
-    /// The sparkles' draws under an item at `item_position` drawn at
-    /// `item_scale`, facing the camera (`camera` turns camera axes to world).
-    pub fn draws(
-        &self,
-        quad: ModelHandle,
-        item_position: DVec3,
-        item_scale: f64,
-        camera: DMat3,
-        draws: &mut Vec<ModelDraw>,
-    ) {
+    /// The sparkles' draws under an item whose world matrix is `item`,
+    /// facing the camera (`camera` turns camera axes to world): grown in
+    /// quickly, then shrunk away over the rest of the climb.
+    pub fn draws(&self, quad: ModelHandle, item: Mat4, camera: DMat3, draws: &mut Vec<ModelDraw>) {
         let facing = camera.as_mat3();
-        for (local, scale) in self.placed() {
-            if scale <= 0.0 {
+        for s in &self.sparkles {
+            let t = s.age / s.life;
+            let size = s.size * if t < 0.15 { t / 0.15 } else { (1.0 - t) / 0.85 };
+            if size <= 0.0 {
                 continue;
             }
-            let at = (item_position + local * item_scale).as_vec3();
-            let world = Mat4::from_translation(at)
-                * Mat4::from_mat3(facing)
-                * Mat4::from_scale(Vec3::splat((scale * item_scale) as f32));
+            let at = item.transform_point3(s.local.as_vec3());
+            let world =
+                Mat4::from_translation(at) * Mat4::from_mat3(facing) * Mat4::from_scale(Vec3::splat(size as f32));
             draws.push(ModelDraw::new(quad, 0, world));
         }
     }
+}
+
+/// `SparkleField.choose`: of the drawn items' distances to the camera (by
+/// their place in the list, None when not drawn), the nearest
+/// [`MAX_SPARKLING_ITEMS`] within [`SPARKLE_RANGE`].
+#[must_use]
+pub fn choose_sparkling(distances: &[Option<f64>]) -> Vec<usize> {
+    let mut near: Vec<(usize, f64)> = distances
+        .iter()
+        .enumerate()
+        .filter_map(|(i, d)| d.filter(|d| *d <= SPARKLE_RANGE).map(|d| (i, d)))
+        .collect();
+    // `Array.sort` is stable, as is this.
+    near.sort_by(|a, b| a.1.total_cmp(&b.1));
+    near.into_iter().take(MAX_SPARKLING_ITEMS).map(|(i, _)| i).collect()
 }
 
 /// The soft white dot (`sparkleMaterial`'s canvas radial gradient), grey
@@ -246,32 +262,30 @@ mod tests {
     use super::*;
 
     #[test]
-    fn sparkles_rise_fade_and_respawn_inside_the_shell() {
-        let mut s = ItemSparkles::new(7);
-        assert_eq!(s.sparkles.len(), COUNT);
+    fn sparkles_rise_in_world_units_inside_the_shell() {
+        let mut s = ItemSparkles::new(7, 20, 1.0);
+        assert_eq!(s.len(), MAX_SPARKLES_PER_ITEM);
         for p in &s.sparkles {
-            assert!(p.position.length() <= SHELL_RADIUS + 1e-9);
+            assert!(p.local.length() <= SHELL_SHARE + 1e-9);
             assert!((LIFE_MIN..LIFE_MAX).contains(&p.life));
             assert!(p.age < p.life);
         }
-        let before: Vec<f64> = s.sparkles.iter().map(|p| p.position.y).collect();
-        s.update(0.0, true);
-        s.update(0.05, true);
+        let before: Vec<f64> = s.sparkles.iter().map(|p| p.local.y).collect();
+        s.advance(0.05, 18.0);
         for (p, y) in s.sparkles.iter().zip(before) {
             if p.age >= 0.05 {
-                assert!((p.position.y - y - p.rise * 0.05).abs() < 1e-9);
+                assert!((p.local.y - y - p.rise * 0.05 / 18.0).abs() < 1e-9);
             }
         }
-        // A stall moves them at most a tenth of a second.
-        let ages: Vec<f64> = s.sparkles.iter().map(|p| p.age).collect();
-        s.update(10.0, true);
-        for (p, a) in s.sparkles.iter().zip(ages) {
-            assert!(p.age <= a + 0.1 + 1e-9);
-        }
-        // Hidden, they rest.
-        let rest = s.sparkles.clone();
-        s.update(10.05, false);
-        assert_eq!(s.sparkles, rest);
+        assert_eq!(ItemSparkles::new(1, 5, 1.0).len(), 5);
+    }
+
+    #[test]
+    fn only_the_nearest_eight_in_range_sparkle() {
+        let mut distances: Vec<Option<f64>> = (0..12).map(|i| Some(f64::from(i) * 50.0)).collect();
+        distances[0] = None;
+        distances[3] = Some(950.0);
+        assert_eq!(choose_sparkling(&distances), vec![1, 2, 4, 5, 6, 7, 8, 9]);
     }
 
     #[test]
