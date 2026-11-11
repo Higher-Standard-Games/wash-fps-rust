@@ -3,13 +3,21 @@
 //! `scripts/deployment/client-release.sh`). The menu reads it once per run,
 //! and when a newer version is out it offers the package for this machine.
 //!
+//! A game the Windows installer put in place updates itself before the
+//! data sync instead (`self_update`): it downloads the newer installer,
+//! checks its size and SHA-256 against the index, and runs it silently; the
+//! installer closes this game, replaces it and starts the new one.
+//!
 //! No TypeScript source: the browser game is always current.
 
+use std::path::{Path, PathBuf};
 use std::sync::Mutex;
+use std::sync::atomic::AtomicBool;
 use std::time::Duration;
 
 use serde_json::Value;
-use shagger::network::client::http_fetch::{FetchEvent, HttpFetch};
+use sha2::{Digest, Sha256};
+use shagger::network::client::http_fetch::{FetchEvent, HttpFetch, fetch_at_most};
 
 /// Where the site publishes the index.
 pub const LATEST_URL: &str = "https://washoi.net/client/latest.json";
@@ -17,6 +25,8 @@ pub const LATEST_URL: &str = "https://washoi.net/client/latest.json";
 const DOWNLOAD_PREFIX: &str = "https://washoi.net/client/";
 /// The index is a few hundred bytes; anything larger is not it.
 const MAX_INDEX: usize = 64 * 1024;
+/// The largest installer the game will download.
+const MAX_INSTALLER: u64 = 512 * 1024 * 1024;
 
 /// A newer game, and its package for this machine.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -95,8 +105,18 @@ pub fn dismiss() {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Latest {
     pub version: String,
-    /// `(platform, url)`, platform as `linux-x86_64`.
-    pub files: Vec<(String, String)>,
+    pub files: Vec<File>,
+}
+
+/// One package in the index.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct File {
+    /// As `linux-x86_64`.
+    pub platform: String,
+    pub name: String,
+    pub url: String,
+    pub size: Option<u64>,
+    pub sha256: Option<String>,
 }
 
 /// Reads the index; `None` when it is not one.
@@ -115,9 +135,14 @@ pub fn parse_latest(body: &[u8]) -> Option<Latest> {
             files
                 .iter()
                 .filter_map(|f| {
-                    let platform = f.get("platform")?.as_str()?;
-                    let url = f.get("url")?.as_str()?;
-                    Some((platform.to_owned(), url.to_owned()))
+                    let text = |k: &str| f.get(k).and_then(Value::as_str).map(str::to_owned);
+                    Some(File {
+                        platform: text("platform")?,
+                        name: text("name").unwrap_or_default(),
+                        url: text("url")?,
+                        size: f.get("size").and_then(Value::as_u64),
+                        sha256: text("sha256"),
+                    })
                 })
                 .collect()
         })
@@ -135,12 +160,142 @@ pub fn offer(latest: &Latest, current: &str, os: &str, arch: &str) -> Option<Upd
     let url = latest
         .files
         .iter()
-        .find(|(p, url)| *p == platform && safe_url(url))
-        .map(|(_, url)| url.clone());
+        .find(|f| f.platform == platform && safe_url(&f.url))
+        .map(|f| f.url.clone());
     Some(Update {
         version: latest.version.clone(),
         url,
     })
+}
+
+/// A newer installer to download: `tools/windows/washoi.iss`'s
+/// `washoi-<version>-windows-<arch>-setup.exe`, with the size and SHA-256
+/// the site recorded.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Installer {
+    pub version: String,
+    pub url: String,
+    pub size: u64,
+    pub sha256: String,
+}
+
+/// The installer for this machine when `latest` is newer; `None` without
+/// one, or without the size and hash to check it by.
+#[must_use]
+pub fn installer(latest: &Latest, current: &str, os: &str, arch: &str) -> Option<Installer> {
+    if !newer(&latest.version, current) {
+        return None;
+    }
+    let platform = format!("{os}-{arch}");
+    let file = latest.files.iter().find(|f| {
+        f.platform == platform && f.name.ends_with("-setup.exe") && f.url.ends_with("-setup.exe") && safe_url(&f.url)
+    })?;
+    let size = file.size.filter(|s| *s > 0 && *s <= MAX_INSTALLER)?;
+    let sha256 = file
+        .sha256
+        .as_deref()
+        .filter(|h| h.len() == 64 && h.bytes().all(|b| b.is_ascii_hexdigit()))?
+        .to_ascii_lowercase();
+    Some(Installer {
+        version: latest.version.clone(),
+        url: file.url.clone(),
+        size,
+        sha256,
+    })
+}
+
+/// Whether this game updates itself: Windows, installed by the installer
+/// (its uninstaller sits beside the exe), and a release build.
+#[must_use]
+pub fn self_updates() -> bool {
+    cfg!(windows)
+        && !cfg!(debug_assertions)
+        && std::env::current_exe()
+            .ok()
+            .and_then(|exe| exe.parent().map(|d| d.join("unins000.exe").is_file()))
+            .unwrap_or(false)
+}
+
+/// What [`self_update`] reports while it runs.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum UpdateProgress {
+    Checking,
+    Downloading { version: String, received: u64, total: u64 },
+}
+
+/// Fetches the index and, when a newer installer is out, downloads and
+/// checks it into `dir`: its path, or `None` when this game is current.
+///
+/// # Errors
+/// Why the index or the installer could not be had; the caller plays on.
+pub fn self_update(
+    dir: &Path,
+    cancel: &AtomicBool,
+    progress: &mut dyn FnMut(UpdateProgress),
+) -> Result<Option<PathBuf>, String> {
+    progress(UpdateProgress::Checking);
+    let index = fetch_at_most(
+        LATEST_URL,
+        Duration::from_secs(5),
+        Duration::from_secs(10),
+        Some(MAX_INDEX as u64),
+        cancel,
+        &mut |_, _| {},
+    )
+    .map_err(|e| format!("update check: {e:?}"))?;
+    let latest = parse_latest(&index).ok_or("update check: not an index")?;
+    // Old installers are not kept.
+    let _ = std::fs::remove_dir_all(dir);
+    let Some(update) = installer(&latest, crate::VERSION, std::env::consts::OS, std::env::consts::ARCH) else {
+        return Ok(None);
+    };
+    println!("update: downloading Washoi {}", update.version);
+    let version = update.version.clone();
+    let body = fetch_at_most(
+        &update.url,
+        Duration::from_secs(20),
+        Duration::from_secs(30 * 60),
+        Some(update.size),
+        cancel,
+        &mut |received, _| {
+            progress(UpdateProgress::Downloading {
+                version: version.clone(),
+                received,
+                total: update.size,
+            });
+        },
+    )
+    .map_err(|e| format!("update download: {e:?}"))?;
+    verify(&body, &update)?;
+    std::fs::create_dir_all(dir).map_err(|e| format!("update: {e}"))?;
+    let path = dir.join(format!("washoi-{}-setup.exe", update.version));
+    shagger::core::atomic_file::write_atomic(&path, &body).map_err(|e| format!("update: {e}"))?;
+    Ok(Some(path))
+}
+
+/// The download is the file the site recorded.
+fn verify(body: &[u8], update: &Installer) -> Result<(), String> {
+    if body.len() as u64 != update.size {
+        return Err(format!("update: {} bytes, not {}", body.len(), update.size));
+    }
+    let hash: String = Sha256::digest(body).iter().map(|b| format!("{b:02x}")).collect();
+    if hash != update.sha256 {
+        return Err("update: the download does not match its SHA-256".into());
+    }
+    Ok(())
+}
+
+/// Starts the installer silently; it waits for this game to close, then
+/// starts the new one (`tools/windows/washoi.iss`, `/RELAUNCH=1`).
+///
+/// # Errors
+/// The installer could not be started.
+pub fn run_installer(path: &Path) -> Result<(), String> {
+    std::process::Command::new(path)
+        .args(["/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART", "/RELAUNCH=1"])
+        .spawn()
+        .map(drop)
+        .map_err(|e| format!("update: could not start the installer: {e}"))
 }
 
 /// `1.2.3` or `1.2.3-rc.1`: the numbers, and whether it is a pre-release.
@@ -217,6 +372,12 @@ mod tests {
           {"platform":"windows-x86_64","name":"x","url":"https://evil.example/x.zip"}
         ]}"#;
 
+    const SHA: &str = "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08";
+
+    fn with_installer(file: &str) -> Latest {
+        parse_latest(format!(r#"{{"version":"0.3.0","files":[{file}]}}"#).as_bytes()).unwrap()
+    }
+
     #[test]
     fn versions_compare_by_number_and_a_release_beats_its_pre_release() {
         assert!(newer("0.3.0", "0.2.9"));
@@ -253,6 +414,53 @@ mod tests {
         assert_eq!(offer(&latest, "0.2.0", "windows", "x86_64").unwrap().url, None);
         assert_eq!(offer(&latest, "0.3.0", "linux", "x86_64"), None);
         assert_eq!(offer(&latest, "0.4.0", "linux", "x86_64"), None);
+    }
+
+    #[test]
+    fn the_installer_needs_its_name_size_and_hash() {
+        let good = format!(
+            r#"{{"platform":"windows-x86_64","name":"washoi-0.3.0-windows-x86_64-setup.exe",
+               "url":"https://washoi.net/client/0.3.0/washoi-0.3.0-windows-x86_64-setup.exe","size":4,"sha256":"{}"}}"#,
+            SHA.to_uppercase()
+        );
+        let latest = with_installer(&format!(
+            r#"{{"platform":"windows-x86_64","name":"washoi-0.3.0-windows-x86_64.zip",
+               "url":"https://washoi.net/client/0.3.0/washoi-0.3.0-windows-x86_64.zip","size":4,"sha256":"{SHA}"}},{good}"#
+        ));
+        let found = installer(&latest, "0.2.0", "windows", "x86_64").unwrap();
+        assert_eq!(
+            found.url,
+            "https://washoi.net/client/0.3.0/washoi-0.3.0-windows-x86_64-setup.exe"
+        );
+        assert_eq!((found.size, found.sha256.as_str()), (4, SHA));
+        assert_eq!(installer(&latest, "0.3.0", "windows", "x86_64"), None);
+        assert_eq!(installer(&latest, "0.2.0", "windows", "aarch64"), None);
+        // Without a size or a hash, or off the site, nothing is run.
+        for broken in [
+            good.replace(r#""size":4,"#, ""),
+            good.replace(r#""size":4"#, r#""size":0"#),
+            good.replace(&SHA.to_uppercase(), "00"),
+            good.replace("https://washoi.net/", "https://evil.example/"),
+        ] {
+            assert_eq!(
+                installer(&with_installer(&broken), "0.2.0", "windows", "x86_64"),
+                None,
+                "{broken}"
+            );
+        }
+    }
+
+    #[test]
+    fn the_download_must_match_the_index() {
+        let update = Installer {
+            version: "0.3.0".into(),
+            url: String::new(),
+            size: 4,
+            sha256: SHA.into(),
+        };
+        assert!(verify(b"test", &update).is_ok());
+        assert!(verify(b"tess", &update).is_err());
+        assert!(verify(b"tests", &update).is_err());
     }
 
     #[test]

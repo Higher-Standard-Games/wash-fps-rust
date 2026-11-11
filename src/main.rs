@@ -625,7 +625,7 @@ fn game(mut o: Options) -> i32 {
     if !o.offline {
         match data_sync_screen::run(&data, &dir) {
             Ok(data_sync_screen::SyncOutcome::Ready) => {}
-            Ok(data_sync_screen::SyncOutcome::Quit) => return 0,
+            Ok(data_sync_screen::SyncOutcome::Quit | data_sync_screen::SyncOutcome::Updating) => return 0,
             Err(why) => return fatal(&why),
         }
     }

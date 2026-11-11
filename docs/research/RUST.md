@@ -2712,6 +2712,23 @@ whole areas rather than single items. 0.2.0 closes them in two steps.
 
 Newest first. Each entry names the commits and what proves them.
 
+### Windows self-update (November 11, 2026)
+
+An installed Windows game (`update_check::self_updates`: a release build
+with the installer's `unins000.exe` beside it) now updates itself when it
+starts, on the data sync screen before the data: it reads `latest.json`
+(5 s idle, 10 s total, so an offline start barely waits), and when a newer
+`-setup.exe` is listed with its size and SHA-256 (wash-fps PR #7 publishes
+it), downloads it into the cache's `updates/`, checks both, runs it with
+`/VERYSILENT /SUPPRESSMSGBOXES /NORESTART /RELAUNCH=1` and ends; the
+installer closes the game, replaces it and starts the new one. Every start
+updates, so a current game is the only one a player keeps. A failed check,
+download or hash is printed and the game plays on; the lobby turning away
+clients too old for its protocol is what makes the update unavoidable for
+them and for zip, macOS and Linux players, who keep the download notice.
+Unit tests cover the installer pick (its name, size, hash and address) and
+the check of the download.
+
 ### Windows installer (November 11, 2026)
 
 A plain start has been the whole game since 0.1.0 (region picker, data
@@ -2727,9 +2744,9 @@ uninstaller that leaves the settings and the game data. It closes a
 running game before replacing it, and `/VERYSILENT /RELAUNCH=1` starts the
 game again afterwards: the self-update to come runs exactly that.
 
-Next, in order: the game downloads and runs the installer itself (wash-fps'
-`client-release.sh` publishes it to `washoi.net/client/`), the lobby turns
-away a client too old for its protocol so the update is required, a
+Next, in order: the game downloads and runs the installer itself (above),
+the lobby turns away a client too old for its protocol so the update is
+required, a
 launch-options file beside the exe for testers (in place of `.bat` files),
 macOS swapping its `.app` in place, and a Linux AppImage.
 
@@ -3345,8 +3362,9 @@ one address players know:
   Only `https://washoi.net/client/` addresses of plain characters are
   opened. Unit tests cover the version order, the platform pick, broken
   indexes and the address filter.
-- **Not yet**: the game does not replace itself; the player installs the
-  download. Signed packages (16) make that safe to automate later.
+- **Since then**: an installed Windows game replaces itself at start
+  ("Windows self-update", November 11), checked by the SHA-256 the site
+  records; signing (16) would add who made it to what it is.
 
 ### Fifth review round: round 4's fixes, threads and shutdown, more fuzzing (November 3, 2026)
 
