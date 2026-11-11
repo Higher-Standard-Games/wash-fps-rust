@@ -20,8 +20,10 @@ use crate::client::crosshair::{Crosshair, CrosshairFrame};
 use crate::client::hud::frame_rate_display::FrameRateDisplay;
 use crate::client::hud::hud_widget::{FpsHudWidget, HudFrame};
 use crate::client::hud::washiki::{Fonts, UI_SCALE};
+use crate::client::hud::widgets::air_meter::AirMeter;
 use crate::client::hud::widgets::ammo_counter::AmmoCounter;
 use crate::client::hud::widgets::ammo_warning::AmmoWarning;
+use crate::client::hud::widgets::bomb_status::BombStatus;
 use crate::client::hud::widgets::chat::Chat;
 use crate::client::hud::widgets::death_screen::DeathScreen;
 use crate::client::hud::widgets::event_feed::EventFeed;
@@ -31,6 +33,8 @@ use crate::client::hud::widgets::gametype_badge::GametypeBadge;
 use crate::client::hud::widgets::phase_message::PhaseMessage;
 use crate::client::hud::widgets::pickup_toast::PickupToast;
 use crate::client::hud::widgets::powerup_timer::PowerupTimer;
+use crate::client::hud::widgets::ready_bar::ReadyBar;
+use crate::client::hud::widgets::round_result::RoundResult;
 use crate::client::hud::widgets::scoreboard::Scoreboard;
 use crate::client::hud::widgets::speedometer::Speedometer;
 use crate::client::hud::widgets::timer::Timer;
@@ -66,6 +70,10 @@ pub struct FpsHud {
     ammo_warning: AmmoWarning,
     pickup: PickupToast,
     powerup_timer: PowerupTimer,
+    air: AirMeter,
+    ready: ReadyBar,
+    round_result: RoundResult,
+    bomb_status: BombStatus,
     death: DeathScreen,
     damage: DamageOverlay,
     pub chat: Chat,
@@ -100,6 +108,8 @@ pub struct WatchFrame<'a> {
     /// The camera's yaw, radians.
     pub yaw: f64,
     pub dt: f64,
+    /// Our own air and whether we are drowning, when we play.
+    pub air: Option<(f64, bool)>,
 }
 
 impl FpsHud {
@@ -128,6 +138,10 @@ impl FpsHud {
             ammo_warning: AmmoWarning::default(),
             pickup: PickupToast::default(),
             powerup_timer: PowerupTimer::default(),
+            air: AirMeter::default(),
+            ready: ReadyBar::default(),
+            round_result: RoundResult::default(),
+            bomb_status: BombStatus::default(),
             death: DeathScreen::default(),
             damage: DamageOverlay::default(),
             chat: Chat::default(),
@@ -159,6 +173,7 @@ impl FpsHud {
             state.spectating = frame.view_entity.unwrap_or_default().to_owned();
         }
         state.update_from_game_state(frame.roster, frame.match_state);
+        (state.air, state.drowning) = frame.air.unwrap_or((1.0, false));
         let view = frame.view_entity.unwrap_or_default();
         // `keepOnlyLocalPowerups` runs per snapshot; the subject's
         // `combat_state`, sent in every one, says a snapshot arrived.
@@ -347,6 +362,12 @@ impl FpsHud {
         self.timer.draw(&mut self.hud, &fonts, timer_x, top);
         // `.fps-phase-message`: top 88 px, centred.
         self.phase.draw(&mut self.hud, &fonts, vw / 2.0, 88.0 * s);
+        // `.fps-ready-bar`: 176 px down, centred.
+        self.ready.draw(&mut self.hud, &fonts, vw / 2.0, 176.0 * s);
+        // `.fps-hud-top-left`: the bomb objective.
+        self.bomb_status.draw(&mut self.hud, &fonts, 20.0 * s, 20.0 * s);
+        // `.fps-hud-center`: the round's result.
+        self.round_result.draw(&mut self.hud, &fonts, vw / 2.0, vh / 2.0);
         // `.fps-frag-container`: 31 % down, centred.
         self.frag_message.draw(&mut self.hud, &fonts, vw / 2.0, vh * 0.31);
         // `.fps-hud-bottom-bar`: 16 px up, 28 px in; nobody's to show for
@@ -360,6 +381,10 @@ impl FpsHud {
             let [_, timer_h] = self.powerup_timer.size(&self.hud, &fonts);
             self.powerup_timer
                 .draw(&mut self.hud, &fonts, 28.0 * s, bottom - vitals_h - timer_h);
+            // `.fps-air-meter`, in the powerup's column.
+            let [_, air_h] = self.air.size(&self.hud, &fonts);
+            self.air
+                .draw(&mut self.hud, &fonts, 28.0 * s, bottom - vitals_h - timer_h - air_h);
             let [ammo_w, ammo_h] = self.ammo.size(&self.hud, &fonts);
             let ammo_x = vw - 28.0 * s - ammo_w;
             self.ammo.draw(&mut self.hud, &fonts, ammo_x, bottom - ammo_h);
@@ -389,6 +414,8 @@ impl FpsHud {
         // ammo warning (950) and the crosshair (1000).
         self.death.draw(&mut self.hud, &fonts, 0.0, 0.0);
         self.damage.draw(&mut self.hud, frame.dt, vw, vh);
+        // `.fps-bomb-plant-meter` (z 620), below the crosshair.
+        self.bomb_status.draw_centre(&mut self.hud, &fonts, vw, vh);
         if subject {
             self.ammo_warning.draw(&mut self.hud, &fonts, vw / 2.0, vh * 0.83);
         }
@@ -411,9 +438,13 @@ impl FpsHud {
         }
     }
 
-    fn widgets_mut(&mut self) -> [&mut dyn FpsHudWidget; 14] {
+    fn widgets_mut(&mut self) -> [&mut dyn FpsHudWidget; 18] {
         [
             &mut self.powerup_timer,
+            &mut self.air,
+            &mut self.ready,
+            &mut self.round_result,
+            &mut self.bomb_status,
             &mut self.weapon_slots,
             &mut self.ammo_warning,
             &mut self.pickup,

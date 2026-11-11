@@ -94,6 +94,10 @@ pub struct HudState {
     pub now: f64,
     /// The subject's powerup timers (`LocalPowerupState`).
     pub powerups: LocalPowerupState,
+    /// Our own air, 0 to 1, and whether it has run out
+    /// (`localAirFraction`, `localDrowning`).
+    pub air: f64,
+    pub drowning: bool,
 }
 
 impl Default for HudState {
@@ -119,6 +123,8 @@ impl Default for HudState {
             death_seq: 0,
             now: 0.0,
             powerups: LocalPowerupState::default(),
+            air: 1.0,
+            drowning: false,
         }
     }
 }

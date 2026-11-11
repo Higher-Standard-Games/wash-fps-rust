@@ -256,6 +256,10 @@ pub fn update_watch_hud(
             playback: matches!(feed, Feed::Demo(_)),
             speed,
             dt,
+            air: match feed {
+                Feed::Play(p, _) => Some((p.air.air(), p.air.drowning())),
+                _ => None,
+            },
         },
         width,
         height,
