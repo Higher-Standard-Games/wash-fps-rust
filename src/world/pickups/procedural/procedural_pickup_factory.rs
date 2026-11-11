@@ -78,7 +78,7 @@ fn png(width: u32, height: u32, rgba: &[u8]) -> Vec<u8> {
 }
 
 /// A prototype as a model primitive: winding turned, bounds measured.
-fn primitive(name: &str, data: &VertexData, material: usize, order: usize) -> ModelPrimitive {
+pub(crate) fn primitive(name: &str, data: &VertexData, material: usize, order: usize) -> ModelPrimitive {
     let positions: Vec<[f32; 3]> = data
         .positions
         .as_chunks::<3>()

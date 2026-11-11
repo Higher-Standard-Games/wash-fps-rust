@@ -2712,6 +2712,128 @@ whole areas rather than single items. 0.2.0 closes them in two steps.
 
 Newest first. Each entry names the commits and what proves them.
 
+### Public beta QA, round 3: rendering performance (November 11, 2026)
+
+The frame's CPU path read for work the browser does not do, and the
+model renderer measured with `washoi bench` (dm14, 1280x720, llvmpipe,
+400 frames).
+
+- **Models are culled (shagger `5b54d70`).** `ModelRenderer` drew every
+  model draw every frame, behind the camera too; Babylon frustum-culls
+  each active mesh. Each draw's primitive box, grown by its outline (a
+  rigged one to its largest half-extent and a quarter more, for its
+  poses), is now tested against the view (`rendering::frustum`). A
+  ragdoll's bones leave its world matrix, so its draws set `cull: false`.
+  The water's actor reflection still draws every actor it selected. In
+  the three golden demos 60 to 85 % of the model draws are culled, and
+  twelve frames from them are pixel for pixel what they were.
+- **State bound once.** A draw sets the pipeline, material and buffers
+  only when they differ from the draw before (an outlined primitive's
+  three passes share all but the pipeline), and `prepare` reuses its
+  sort and upload buffers.
+- **Measured.** Mean frame 99.9 to 88.5 ms on the software rasterizer,
+  the opaque pass 74.8 to 65.8 ms; the CPU's encode 0.52 to 0.42 ms and
+  submit 0.95 to 0.64 ms.
+- **Read and left.** The world is drawn by batch behind PVS and frustum
+  culling, with its pipeline bound once a run; render targets and probes
+  are made at load or on a resize, never a frame. The per-frame strings
+  in `set_live_players` and the water's `actor_draws.contains` are
+  linear in a handful of players.
+- **Not ported: `cl_player_pose_hz`.** The browser poses medium-distance
+  players at 30 Hz and pauses off-screen or tiny ones, to save
+  JavaScript time on Babylon's animation groups. Posing a player
+  natively is a few microseconds; a culled player is no longer drawn,
+  which was the cost that mattered.
+- **Antialiasing, as the browser has it.** The browser's `r_msaa` is the
+  canvas context's `antialias` (`BrowserRuntime.ts`), but the world draws
+  into `DefaultRenderingPipeline`'s target, single sampled (`samples`
+  stays 1) and without FXAA: its world is not antialiased either. Only
+  what is drawn straight to the canvas after the pipeline is, the view
+  weapon. The native client's weapon overlay is single sampled; that pass
+  is the one difference left (`r_msaa` is read by nothing).
+
+### Public beta QA, round 2: code quality and data flows (November 11, 2026)
+
+The settings the lobby page writes followed to the code that reads them,
+and the snapshot, event and effect paths read for leaks and stale state.
+
+- **Video settings that did nothing (shagger `2d40247`).** The page's
+  presets write `r_dynamiclight`, `r_gibs`, `r_teleport_ghost` and
+  `r_marks` (Ultralow turns them off); the native client registered none
+  but `r_marks`. They are render vars now, read through
+  `rendering::render_toggles::render_toggle` (an unregistered switch is
+  on): dynamic lights for the world and the view weapon, ragdoll gibs
+  (with gibs off a gibbed player leaves nothing, and our own death camera
+  pulls back from where the body was), the teleport's ghost, wall marks.
+  `r_cel_weapon_outlines` now turns the view weapon's black outline off
+  (the quad and invisibility overlays stay).
+- **Settings the native client does not apply yet.** `r_renderscale`,
+  `r_msaa` and `cl_player_pose_hz` are registered with the browser's
+  defaults, so a preset reads back as chosen and the page keeps them;
+  render scale and antialiasing are not drawn (every pipeline is single
+  sampled), and every remote player is posed every frame.
+- **`VIDEO_PRESETS`** follows beta9's four presets (Ultralow, Smooth,
+  Balanced, Pretty) value for value; a switch the page writes as a flag
+  (`r_fog`) matches a preset's 1 or 0, as `valueMatches` does.
+- **A leak.** `SnapshotFeed`'s projectile tick map dropped nothing; it now
+  forgets a projectile `PROJECTILE_FORGET_TICKS` after it was last seen,
+  as the definitions beside it do.
+- **Read and found sound.** No unwrap on anything the network or a file
+  decides; the network runs on its own thread behind channels; snapshots,
+  events and demos are fuzzed (earlier rounds); every effect resets on a
+  demo seek (`discontinuity`).
+
+### Public beta QA, round 1: features against the browser (November 11, 2026)
+
+Every client feature of wash-fps `client/` held against the native
+client. What was missing is ported; what is left is listed at the end.
+
+- **The bomb in the world.** `client/bomb_renderer.rs` (`BombRenderer.ts`):
+  the dynamite bundle on the carrier's back (their `Spine1` bone,
+  `RemotePlayerRenderer::bone_anchor`, 28 up when the model is not
+  drawn), spinning and bobbing when loose, planted with its light
+  blinking faster as the fuse runs down and the defuse ring around it.
+- **The HUD's round widgets.** `hud/widgets/air_meter.rs` (`AirMeter.ts`,
+  from the local air tracker), `ready_bar.rs` (`ReadyBar.ts`, warmup's
+  "press F4" and a spectator's plate), `round_result.rs`
+  (`RoundResult.ts`, with the detonation's 1.5 s grace) and
+  `bomb_status.rs` (`BombStatus.ts`: the side, the bomb's state and the
+  plant and defuse meter under the crosshair).
+- **Watching a teammate while dead.** `client/spectate_view.rs`
+  (`SpectateView.ts`'s teammate hand-off and round-end camera): dead in a
+  live round, after 3 s the view goes behind the eyes of the first living
+  teammate, through the demo's follow path (their weapon, their view
+  effects, their model hidden), and the HUD describes them
+  (`spectatingEntityId ?? localEntityId`). At the round's end a dead
+  player's death camera goes to `roundResult.focus`. Cycling between
+  teammates is not ported: nothing in the browser calls it.
+  `hud/widgets/spectator_bar.rs` is the overlay's "Spectating: name" bar
+  (`SpectatorOverlay.ts`), for a dead player and for a spectator chasing
+  someone; its arrow keys are drawn, the fonts having no arrows.
+- **Slide dust.** `client/slide_dust.rs` (`SlideDust.ts`): pairs of grey
+  cubes kicked out behind a slider, everyone's and our own. Babylon's face
+  vertex colours become one primitive a face with the shade in the
+  emissive, as the browser's unlit material shows it (0.7 times the
+  shade).
+- **The Voltaic's hum (shagger `14cf741`).** `client/fps_voltaic_audio.rs`
+  (`FPSVoltaicAudio.ts`): one looping voice per shooter while the beam is
+  held, the attack on the first shot, the release when it stops, pitched
+  up under quad; the beam's single shots are no longer played. The
+  engine's `audio::loop_overlap` ports `LoopOverlap.ts` and the shaping in
+  `AudioV2Sfx.createBuffer` (region, crossfaded overlap, intro); the pitch
+  is baked into the shaped buffer, the mixer playing at one rate. The
+  browser holds a voice by server ticks since the last fire; the native
+  frame has none, so the same 0.12 s is measured on the effect clock.
+- **The app icon.** `assets/icon` is now washoi.net's icon (the site's
+  `android-chrome-512x512.png`): the window's icon, the macOS bundle's,
+  and new, the Windows executable's (`build.rs` writes `washoi.ico` as a
+  compiled resource for the MSVC linker, byte for byte what `llvm-rc`
+  makes of `1 ICON "washoi.ico"`) and the Linux tarball's, with a
+  `.desktop` launcher entry matching the window's app id.
+- **Not ported, for later.** The hint coach (`HintCoach`, `HintPanel`:
+  first-match tips), gamepad input (`InputDevice`, the pad bindings and
+  the pad's cues), and the spectator's freefly cue card.
+
 ### 1.0.0-beta9 review (November 11, 2026)
 
 SHAG `v1.0.0-beta.9.1` and wash-fps `0abb874` against the staging review
@@ -2777,6 +2899,12 @@ below (SHAG `432cce3`, wash-fps `247cafe`), in slices.
   as a template, with `template` lines anywhere in a shader, their
   arguments ending with the line, nesting four deep. The engine's own
   vectors came out unchanged.
+- **`r_anisotropy` (shagger `f0b9d6d`).** The world sampler's anisotropy
+  was fixed at 8, where SHAG sets every texture's
+  `anisotropicFilteringLevel` from `r_anisotropy` (4 by default). It is now
+  read when the map loads, rounded down to the power of two wgpu takes; a
+  change takes effect with the next map, not live as Babylon's does. Found
+  comparing dm7's floor against the browser, which otherwise matched.
 - **Checked, nothing to port.** beta9.1's gun handed to two players:
   native hand weapons are drawn per frame from one shared model, with no
   parked instances to hand out twice. The freefly camera following

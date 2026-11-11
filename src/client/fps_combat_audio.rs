@@ -9,6 +9,7 @@ use shagger::rendering::glam::DVec3;
 
 use crate::client::fps_player_audio::{fps_player_sound_paths, player_voice_sound};
 use crate::client::fps_reload_audio::RELOAD_SOUND_PATH;
+use crate::client::fps_voltaic_audio::VOLTAIC_STOP;
 use crate::client::game_events::canonical_weapon_id;
 
 /// `weaponFireSounds`.
@@ -109,7 +110,7 @@ pub fn fps_combat_sound_paths() -> Vec<String> {
         .chain(DAMAGE_CONFIRMATION_SOUNDS.iter())
         .map(|s| (*s).to_owned())
         .chain(fps_player_sound_paths())
-        .chain([KILL_ECHO_SOUND, EMPTY_CLIP_SOUND, RELOAD_SOUND_PATH].map(str::to_owned));
+        .chain([KILL_ECHO_SOUND, EMPTY_CLIP_SOUND, RELOAD_SOUND_PATH, VOLTAIC_STOP].map(str::to_owned));
     for path in all {
         if !paths.contains(&path) {
             paths.push(path);
@@ -164,6 +165,10 @@ impl FpsCombatAudio {
         origin: DVec3,
         local_shooter: bool,
     ) {
+        // The beam is a sustained voice (`FpsVoltaicAudio`), not shots.
+        if canonical_weapon_id(weapon_id) == "voltaic" {
+            return;
+        }
         let Some(path) = self.choose_variant(get_weapon_fire_sounds(weapon_id)) else {
             return;
         };

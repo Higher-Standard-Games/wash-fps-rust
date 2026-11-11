@@ -11,6 +11,7 @@ use shagger::shared::bsp::brush_model_state::{BrushModelState, extract_brush_mod
 use shagger::shared::js::js_hypot;
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
+use washoi::client::bomb_renderer::{BombRenderer, CARRY_FALLBACK_HEIGHT};
 use washoi::client::bomb_site_debris::BombSiteDebris;
 use washoi::client::bomb_site_markers::{BLAST_SCALE, BLAST_SHAKE_RANGE, BombSiteMarkers, MarkerPose};
 use washoi::client::cartoon_hit_effect::{CartoonHitEffect, CartoonHitRenderer};
@@ -25,6 +26,7 @@ use washoi::client::quad_damage_visual::{get_quad_damage_pulse, mask_has_quad};
 use washoi::client::ragdoll::death_clip::DeathFacts;
 use washoi::client::ragdoll_system::{RagdollSystem, RagdollTrails};
 use washoi::client::remote_player_renderer::{DetachedBody, HandWeapons, update_powerup_glow};
+use washoi::client::slide_dust::{SlideDust, SlideDustRenderer};
 use washoi::client::teleport_effect::{TeamColor, TeleportEffect, TeleportRenderer, legacy_team_color, play_tele_in};
 use washoi::liquid::client::liquid_interaction_system::{LiquidInteractionSystem, Ring, WaterRipples};
 use washoi::liquid::client::liquid_ring_renderer::LiquidRingRenderer;
@@ -37,6 +39,7 @@ use shagger::audio::audio_v2_sfx::{AudioV2Sfx, SfxPlayOptions};
 use shagger::babylon::post_processes::image_processing_post_process::{
     ImageProcessingConfiguration, ImageProcessingPostProcess, Vignette, VignetteBlendMode,
 };
+use shagger::core::cvar::with_cvars;
 use shagger::lighting::sky_light_system::bsp_mode_lights;
 use shagger::loader::bsp::bsp_loader::{BspFile, BspLightVol, LightGrid, load, load_collision};
 use shagger::loader::bsp::light_grid_sampling::{LightSample, sample_light_vols};
@@ -57,6 +60,7 @@ use shagger::rendering::hdr_target::HDR_FORMAT;
 use shagger::rendering::hdr_target::HdrTarget;
 use shagger::rendering::model_renderer::{ModelDraw, ModelRenderer};
 use shagger::rendering::offscreen::{OFFSCREEN_FORMAT, render_hdr_scene_with_ui_to_rgba};
+use shagger::rendering::render_toggles::render_toggle;
 use washoi::client::fps_bomb_audio::BOMB_BLAST_SOUND;
 
 use shagger::effects::color_correction_post_process::active_color_matrix;
@@ -212,7 +216,8 @@ pub struct ViewOptions {
 }
 
 /// The HUD's frame of a demo or a match being watched, behind the
-/// followed player (if any).
+/// followed player (if any). In play, `follow` is the teammate watched
+/// while dead, whom the HUD then describes.
 #[allow(clippy::too_many_arguments)]
 pub fn update_watch_hud(
     hud: &mut FpsHud,
@@ -226,9 +231,11 @@ pub fn update_watch_hud(
     height: f32,
 ) {
     let local = feed.local_entity();
-    let view_entity = local.or_else(|| follow.and_then(|i| players.get(i)).map(|(id, _, _)| id.as_str()));
+    let followed = follow.and_then(|i| players.get(i));
+    let view_entity = local.or_else(|| followed.map(|(id, _, _)| id.as_str()));
+    let watched = local.and(followed).map(|(id, _, _)| id.as_str());
     let speed = match feed {
-        Feed::Play(p, _) => {
+        Feed::Play(p, _) if followed.is_none() => {
             let v = p.velocity();
             v.x.hypot(v.z)
         }
@@ -246,6 +253,7 @@ pub fn update_watch_hud(
     hud.update_watching(
         &WatchFrame {
             playing: local.is_some(),
+            watched,
             positions: &positions,
             yaw,
             roster: feed.roster(),
@@ -255,6 +263,10 @@ pub fn update_watch_hud(
             playback: matches!(feed, Feed::Demo(_)),
             speed,
             dt,
+            air: match feed {
+                Feed::Play(p, _) => Some((p.air.air(), p.air.drowning())),
+                _ => None,
+            },
         },
         width,
         height,
@@ -659,6 +671,9 @@ pub struct TeleportView {
 pub enum DeathFollow {
     Ragdoll(u64),
     Gibs(u64),
+    /// Nothing to follow (gibs off): the camera pulls back from where the
+    /// body was.
+    Still,
 }
 
 /// A body fallen as a ragdoll, held at an age (`--ragdoll`).
@@ -1059,6 +1074,15 @@ pub struct MapRenderer {
     /// and their models by path.
     bomb_debris: BombSiteDebris,
     debris_models: HashMap<String, ProjectileModel>,
+    /// The bomb itself (`BombRenderer`), and its carrier's spine and yaw
+    /// when they were drawn last frame.
+    bomb: BombRenderer,
+    /// The trails behind sliders (`SlideDust`); ours is emitted by the
+    /// window, everyone else's with their model.
+    pub slide_dust: SlideDust,
+    slide_dust_renderer: SlideDustRenderer,
+    bomb_anchor: Option<(String, DVec3, f64)>,
+    bomb_carrier: Option<String>,
     /// Blast sounds the detonation asked for, not yet played.
     blast_sounds: usize,
     /// Each live player's tint, for the colour their shards take.
@@ -1377,6 +1401,16 @@ impl MapRenderer {
                     .collect()
             })
             .unwrap_or_default();
+        // `BombRenderer.update`: the carrier as drawn last frame.
+        let anchor = self.bomb_anchor.clone();
+        self.bomb.update(dt, match_state.bomb(), |carrier| {
+            anchor.filter(|(id, _, _)| id == carrier).map(|(_, at, yaw)| (at, yaw))
+        });
+        self.bomb_carrier = match_state
+            .bomb()
+            .and_then(|b| b.get("carrier"))
+            .and_then(shagger::shared::json::Value::as_str)
+            .map(str::to_owned);
         if self.applied_disabled.as_ref() != Some(&disabled) {
             // `restore`: the round's reset, then the server's list.
             self.brush_models.restore(&disabled);
@@ -1468,7 +1502,14 @@ impl MapRenderer {
         self.update_charge_glows(players);
         self.joints.truncate(self.static_joints);
         self.live_draws.clear();
+        self.bomb_anchor = None;
         self.live_actors.clear();
+        // `RemotePlayerRenderer` emits everyone's dust; `Game` steps it.
+        for (id, p, _) in players {
+            let sliding = p.sliding && p.grounded && p.water_level.unwrap_or(0) == 0 && !p.on_ladder.unwrap_or(false);
+            self.slide_dust.emit(id, DVec3::new(p.x, p.y, p.z), p.vx, p.vz, sliding);
+        }
+        self.slide_dust.step(effect_dt);
         let Some(renderer) = &mut self.remote_players else {
             return;
         };
@@ -1511,6 +1552,15 @@ impl MapRenderer {
             );
             if let Some(world) = renderer.world_of(id, interp) {
                 self.live_worlds.insert(id.clone(), world);
+            }
+            if self.bomb_carrier.as_deref() == Some(id.as_str()) {
+                // `getBoneAnchor(carrier, "Spine1")`, else shoulder height
+                // over the hitbox (`carrierFallback`).
+                let (at, yaw) = renderer.bone_anchor(id, interp, "Spine1").unwrap_or((
+                    DVec3::new(interp.x, interp.y + CARRY_FALLBACK_HEIGHT, interp.z),
+                    interp.yaw,
+                ));
+                self.bomb_anchor = Some((id.clone(), at, yaw));
             }
             let first = self.live_draws.len();
             renderer.draws(id, interp, style, &mut self.joints, &mut self.live_draws);
@@ -1635,6 +1685,7 @@ impl MapRenderer {
             }
         }
         self.gibs.clear();
+        self.slide_dust.reset();
         self.bomb_debris.clear();
         self.damage_numbers.clear();
     }
@@ -1866,8 +1917,11 @@ impl MapRenderer {
         // RagdollSystem.update: a ragdoll that has faded bursts here.
         if let Some(ragdolls) = &mut self.ragdolls {
             ragdolls.update(dt);
+            let gibs_on = with_cvars(|c| render_toggle(c, "r_gibs"));
             for (at, color) in ragdolls.take_gibs() {
-                self.gibs.spawn(at, DVec3::ZERO, color);
+                if gibs_on {
+                    self.gibs.spawn(at, DVec3::ZERO, color);
+                }
             }
         }
         for event in events {
@@ -1901,6 +1955,14 @@ impl MapRenderer {
                     .map(|(_, yaw)| *yaw);
                 let death_pos = DVec3::new(at.x, at.y, at.z);
                 if gib {
+                    // With gibs off (`r_gibs 0`) nothing flies, but the view
+                    // still pulls back from where the body was.
+                    if !with_cvars(|c| render_toggle(c, "r_gibs")) {
+                        if let Some(yaw) = local {
+                            self.local_death = Some((DeathFollow::Still, death_pos, yaw));
+                        }
+                        continue;
+                    }
                     let burst = self.gibs.spawn(death_pos, DVec3::new(vel.x, vel.y, vel.z), color);
                     if let (Some(yaw), Some(burst)) = (local, burst) {
                         self.local_death = Some((DeathFollow::Gibs(burst), death_pos, yaw));
@@ -2014,6 +2076,7 @@ impl MapRenderer {
         match follow {
             DeathFollow::Ragdoll(serial) => self.ragdolls.as_ref()?.position_of(serial),
             DeathFollow::Gibs(burst) => self.gibs.burst_position(burst),
+            DeathFollow::Still => None,
         }
     }
 
@@ -2216,7 +2279,9 @@ impl MapRenderer {
             view_model.view.aspect_ratio = f64::from(aspect);
         }
         self.culling.update(camera, aspect);
-        let lights: Vec<DynamicLight> = if self.dynamic_lights {
+        // `r_dynamiclight 0` (the Ultralow preset): no pool lights.
+        let dynamic = self.dynamic_lights && with_cvars(|c| render_toggle(c, "r_dynamiclight"));
+        let lights: Vec<DynamicLight> = if dynamic {
             self.lights.lights().chain(self.charge_glows.iter().copied()).collect()
         } else {
             Vec::new()
@@ -2285,6 +2350,9 @@ impl MapRenderer {
             );
         }
         self.gib_renderer.draws(&self.gibs, &mut self.frame_draws);
+        self.bomb.draws(&mut self.frame_draws);
+        self.slide_dust.eye = Some(camera.position.as_dvec3());
+        self.slide_dust_renderer.draws(&self.slide_dust, &mut self.frame_draws);
         for fragment in self.bomb_debris.fragments() {
             if let Some(model) = self.debris_models.get(&fragment.path) {
                 model.draws(fragment.world(), self.item_time, &mut self.frame_draws);
@@ -2451,7 +2519,7 @@ impl MapRenderer {
             }
         }
         if let Some(view_model) = &mut self.view_model {
-            view_model.dynamic_lights = self.dynamic_lights;
+            view_model.dynamic_lights = self.dynamic_lights && with_cvars(|c| render_toggle(c, "r_dynamiclight"));
             view_model.prepare(gpu, camera, aspect);
         }
     }
@@ -2806,6 +2874,8 @@ pub fn build_renderer(gpu: &Gpu, map: &mut LoadedMap, output_format: wgpu::Textu
         }
     }
     let gib_renderer = GibRenderer::new(gpu, &mut models);
+    let bomb = BombRenderer::new(gpu, &mut models);
+    let slide_dust_renderer = SlideDustRenderer::new(gpu, &mut models);
     // The `func_explosive` brush models (`BrushModelState`), and in a demo
     // or a match the debris models they throw (`BombSiteDebris.preload`).
     let brush_models = BrushModelState::new(extract_brush_models(&map.bsp.entities, &map.bsp.models));
@@ -3147,6 +3217,11 @@ pub fn build_renderer(gpu: &Gpu, map: &mut LoadedMap, output_format: wgpu::Textu
         bomb_sites: BombSiteMarkers::default(),
         bomb_debris: BombSiteDebris::default(),
         debris_models,
+        bomb,
+        slide_dust: SlideDust::default(),
+        slide_dust_renderer,
+        bomb_anchor: None,
+        bomb_carrier: None,
         blast_sounds: 0,
         live_tints: HashMap::new(),
         ragdolls,

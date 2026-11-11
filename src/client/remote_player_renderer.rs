@@ -521,6 +521,19 @@ impl RemotePlayerRenderer {
         })
     }
 
+    /// `getBoneAnchor`: where a bone of a player's body is in the world
+    /// (`mixamorig:` prefixed, as the glTF names it), and the body's yaw.
+    #[must_use]
+    pub fn bone_anchor(&self, id: &str, interp: &InterpolatedEntity, bone: &str) -> Option<(DVec3, f64)> {
+        let remote = self.instances.get(id)?;
+        let model = &self.bodies[remote.body].model;
+        let skeleton = &model.model.skeleton;
+        let joint = skeleton.find(&format!("mixamorig:{bone}"))?;
+        let globals = skeleton.global_matrices(&remote.instance.locals);
+        let world = body_matrix(interp, model) * *globals.get(joint)?;
+        Some((world.w_axis.truncate().as_dvec3(), interp.yaw))
+    }
+
     /// One player's draws, appending its joint palettes to `joints`.
     pub fn draws(
         &self,

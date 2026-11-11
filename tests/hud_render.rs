@@ -98,6 +98,8 @@ fn a_fragged_player_sees_the_death_screen() {
         positions: &positions,
         yaw: 0.0,
         dt: 1.0 / 60.0,
+        air: None,
+        watched: None,
     };
     hud.update_watching(&frame, width as f32, height as f32);
     // A second in: the countdown is on, the overlay still fading.
@@ -190,6 +192,8 @@ fn a_quad_carrier_sees_the_countdown() {
             positions: &positions,
             yaw: 0.0,
             dt: 1.0 / 60.0,
+            air: None,
+            watched: None,
         };
         hud.update_watching(&frame, width as f32, height as f32);
         hud.prepare(&gpu);
@@ -232,4 +236,104 @@ fn a_quad_carrier_sees_the_countdown() {
     // A snapshot without it ends it.
     let pixels = render(&snapshot(4)[..1]);
     assert!(count(&pixels, &hot) < 100);
+}
+
+/// Dead in a round, watching a teammate: the "Spectating" bar names them
+/// above the bottom bar, and the HUD shows their vitals and weapon. Writes
+/// the frame to `HUD_SPECTATE_PNG` when set.
+#[test]
+fn a_dead_player_watching_a_teammate_sees_whom() {
+    let Ok(gpu) = Gpu::headless() else {
+        eprintln!("skipped: no GPU adapter");
+        return;
+    };
+    let (width, height) = (1280u32, 720u32);
+    let mut hud = FpsHud::new(&gpu, OFFSCREEN_FORMAT).unwrap();
+    let player = |id: &str, name: &str| {
+        (
+            id.to_owned(),
+            PlayerState {
+                entity_id: id.into(),
+                name: name.into(),
+                ..PlayerState::default()
+            },
+        )
+    };
+    let roster = vec![player("player_1", "Washiki!"), player("player_3", "Noodlesoup")];
+    let mut match_state = MatchStateManager::new();
+    match_state.process_event(
+        &json::parse(r#"{"type":"match_state","phase":2,"round":1,"playerTeams":{"1":"red","3":"red"}}"#).unwrap(),
+    );
+    let positions = vec![("player_3".to_owned(), [0.0, 0.0, 0.0])];
+    let events = vec![
+        SnapshotEvent::CombatState {
+            entity_id: "player_1".into(),
+            health: 0,
+            armor: 0,
+            dead: true,
+        },
+        SnapshotEvent::CombatState {
+            entity_id: "player_3".into(),
+            health: 77,
+            armor: 10,
+            dead: false,
+        },
+        SnapshotEvent::WeaponState {
+            entity_id: "player_3".into(),
+            current_weapon: "machinegun".into(),
+            weapons: json::parse(r#"["blade","machinegun"]"#).unwrap(),
+            ammo: json::parse(r#"{"machinegun":{"clip":20,"reserve":60}}"#).unwrap(),
+            reloading: false,
+            last_fire_tick: 0,
+        },
+    ];
+    let frame = WatchFrame {
+        roster: &roster,
+        match_state: &match_state,
+        events: &events,
+        view_entity: Some("player_1"),
+        playback: false,
+        playing: true,
+        speed: 0.0,
+        positions: &positions,
+        yaw: 0.0,
+        dt: 1.0 / 60.0,
+        air: None,
+        watched: Some("player_3"),
+    };
+    hud.update_watching(&frame, width as f32, height as f32);
+    assert!(hud.state.local_dead);
+    assert_eq!(hud.state.spectating, "player_3");
+    assert_eq!(hud.state.spectating_name, "Noodlesoup");
+    hud.prepare(&gpu);
+    let post = ImageProcessingPostProcess::new(&gpu, OFFSCREEN_FORMAT);
+    let pixels = render_hdr_with_ui_to_rgba(
+        &gpu,
+        width,
+        height,
+        wgpu::Color {
+            r: 0.3,
+            g: 0.3,
+            b: 0.3,
+            a: 1.0,
+        },
+        &post,
+        &ImageProcessingConfiguration::default(),
+        |_| {},
+        |_| {},
+        |pass| hud.draw(pass),
+    );
+    if let Some(path) = std::env::var_os("HUD_SPECTATE_PNG") {
+        image::save_buffer(path, &pixels, width, height, image::ExtendedColorType::Rgba8).unwrap();
+    }
+    // The bar's cyan edge, left of centre, above the bottom bar.
+    let cyan = (height - 320..height - 230)
+        .flat_map(|y| (0..width / 2).map(move |x| (x, y)))
+        .filter(|&(x, y)| {
+            let i = ((y * width + x) * 4) as usize;
+            let (r, g, b) = (pixels[i], pixels[i + 1], pixels[i + 2]);
+            r < 90 && g > 180 && b > 180
+        })
+        .count();
+    assert!(cyan > 100, "{cyan}");
 }

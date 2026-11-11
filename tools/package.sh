@@ -3,11 +3,13 @@
 #
 #   cargo build --release && tools/package.sh
 #
-#   Linux    washoi-<version>-linux-<arch>.tar.gz    washoi, README.txt, licences
+#   Linux    washoi-<version>-linux-<arch>.tar.gz    washoi, README.txt, licences,
+#            the icon and a .desktop launcher entry
 #   macOS    washoi-<version>-macos-<arch>.zip       Washoi.app (icon from
 #            assets/icon, ad-hoc signed unless MACOS_SIGN_IDENTITY names a
 #            Developer ID in the keychain)
-#   Windows  washoi-<version>-windows-<arch>.zip     washoi.exe, README.txt, licences
+#   Windows  washoi-<version>-windows-<arch>.zip     washoi.exe (its icon built in
+#            by build.rs), README.txt, licences
 #
 # BIN overrides the binary (default target/release/washoi[.exe]); VERSION
 # the version in the names (default Cargo.toml's).
@@ -63,6 +65,27 @@ case $os in
     cp "$bin" "$stage/$name/washoi"
     # Not stripped: a crash report's backtrace needs the symbols.
     extras "$stage/$name"
+    # The icon and a launcher entry; the window's app id
+    # (net.washoi.Washoi) matches them on Wayland and X11.
+    cp assets/icon/washoi-512.png "$stage/$name/net.washoi.Washoi.png"
+    cat > "$stage/$name/net.washoi.Washoi.desktop" <<DESKTOP
+[Desktop Entry]
+Type=Application
+Name=Washoi
+Comment=Arena shooter
+Exec=washoi
+Icon=net.washoi.Washoi
+StartupWMClass=washoi
+Categories=Game;ActionGame;
+DESKTOP
+    cat >> "$stage/$name/README.txt" <<TXT
+
+To add Washoi to the app menu, with its icon:
+  mkdir -p ~/.local/bin ~/.local/share/icons/hicolor/512x512/apps ~/.local/share/applications
+  cp washoi ~/.local/bin/
+  cp net.washoi.Washoi.png ~/.local/share/icons/hicolor/512x512/apps/
+  cp net.washoi.Washoi.desktop ~/.local/share/applications/
+TXT
     tar -C "$stage" -czf "dist/$name.tar.gz" "$name"
     echo "dist/$name.tar.gz"
     ;;

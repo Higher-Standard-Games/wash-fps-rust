@@ -80,6 +80,8 @@ pub struct HudState {
     pub local_player_id: String,
     /// The player whose eyes the view is behind, or "" for our own.
     pub spectating: String,
+    /// Their name, for the spectator bar.
+    pub spectating_name: String,
     /// A spectator rather than a player.
     pub watcher: bool,
     /// A recording, not a match we are in.
@@ -94,6 +96,10 @@ pub struct HudState {
     pub now: f64,
     /// The subject's powerup timers (`LocalPowerupState`).
     pub powerups: LocalPowerupState,
+    /// Our own air, 0 to 1, and whether it has run out
+    /// (`localAirFraction`, `localDrowning`).
+    pub air: f64,
+    pub drowning: bool,
 }
 
 impl Default for HudState {
@@ -109,6 +115,7 @@ impl Default for HudState {
             scoreboard: Vec::new(),
             local_player_id: String::new(),
             spectating: String::new(),
+            spectating_name: String::new(),
             watcher: false,
             playback: false,
             gametype_name: String::new(),
@@ -119,6 +126,8 @@ impl Default for HudState {
             death_seq: 0,
             now: 0.0,
             powerups: LocalPowerupState::default(),
+            air: 1.0,
+            drowning: false,
         }
     }
 }
