@@ -33,6 +33,7 @@ use crate::client::fps_pickup_audio::{
     FPS_PICKUP_SOUND_PATHS, is_powerup_label, play_pickup_sound, play_powerup_pickup_sound, play_powerup_spawn_sound,
 };
 use crate::client::fps_reload_audio::FpsReloadAudio;
+use crate::client::fps_voltaic_audio::FpsVoltaicAudio;
 use crate::client::match_state_manager::{MatchPhase, MatchStateManager};
 use crate::shared::net::snapshot_events::{Point, SnapshotEvent};
 
@@ -358,6 +359,10 @@ pub struct GameAudio {
     pub sfx: AudioV2Sfx,
     combat: FpsCombatAudio,
     reload: FpsReloadAudio,
+    /// The Voltaic's hum, and the effect clock it last heard (ms): a clock
+    /// that stands still is a paused demo, and the hum stops.
+    voltaic: FpsVoltaicAudio,
+    voltaic_clock: f64,
     movement: FpsMovementAudio,
     announcer: FpsAnnouncer,
     bomb: FpsBombAudio,
@@ -385,6 +390,7 @@ impl GameAudio {
     pub fn discontinuity(&mut self) {
         self.movement.reset();
         self.reload.reset();
+        self.voltaic.reset(&mut self.sfx);
     }
 
     #[must_use]
@@ -393,6 +399,8 @@ impl GameAudio {
             sfx,
             combat: FpsCombatAudio::default(),
             reload: FpsReloadAudio::default(),
+            voltaic: FpsVoltaicAudio::default(),
+            voltaic_clock: f64::NEG_INFINITY,
             movement: FpsMovementAudio::default(),
             announcer: FpsAnnouncer::default(),
             bomb: FpsBombAudio::default(),
@@ -580,6 +588,10 @@ impl GameAudio {
         position: &dyn Fn(&str) -> Option<DVec3>,
         now: f64,
     ) {
+        let present = now > self.voltaic_clock;
+        self.voltaic_clock = now;
+        self.voltaic
+            .present(&mut self.sfx, events, view_entity_id, position, now / 1000.0, present);
         let viewed = |id: &str| Some(id) == view_entity_id;
         for event in events {
             match event {

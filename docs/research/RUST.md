@@ -2712,6 +2712,51 @@ whole areas rather than single items. 0.2.0 closes them in two steps.
 
 Newest first. Each entry names the commits and what proves them.
 
+### Public beta QA, round 1: features against the browser (November 11, 2026)
+
+Every client feature of wash-fps `client/` held against the native
+client. What was missing is ported; what is left is listed at the end.
+
+- **The bomb in the world.** `client/bomb_renderer.rs` (`BombRenderer.ts`):
+  the dynamite bundle on the carrier's back (their `Spine1` bone,
+  `RemotePlayerRenderer::bone_anchor`, 28 up when the model is not
+  drawn), spinning and bobbing when loose, planted with its light
+  blinking faster as the fuse runs down and the defuse ring around it.
+- **The HUD's round widgets.** `hud/widgets/air_meter.rs` (`AirMeter.ts`,
+  from the local air tracker), `ready_bar.rs` (`ReadyBar.ts`, warmup's
+  "press F4" and a spectator's plate), `round_result.rs`
+  (`RoundResult.ts`, with the detonation's 1.5 s grace) and
+  `bomb_status.rs` (`BombStatus.ts`: the side, the bomb's state and the
+  plant and defuse meter under the crosshair).
+- **Watching a teammate while dead.** `client/spectate_view.rs`
+  (`SpectateView.ts`'s teammate hand-off and round-end camera): dead in a
+  live round, after 3 s the view goes behind the eyes of the first living
+  teammate, through the demo's follow path (their weapon, their view
+  effects, their model hidden), and the HUD describes them
+  (`spectatingEntityId ?? localEntityId`). At the round's end a dead
+  player's death camera goes to `roundResult.focus`. Cycling between
+  teammates is not ported: nothing in the browser calls it.
+  `hud/widgets/spectator_bar.rs` is the overlay's "Spectating: name" bar
+  (`SpectatorOverlay.ts`), for a dead player and for a spectator chasing
+  someone; its arrow keys are drawn, the fonts having no arrows.
+- **Slide dust.** `client/slide_dust.rs` (`SlideDust.ts`): pairs of grey
+  cubes kicked out behind a slider, everyone's and our own. Babylon's face
+  vertex colours become one primitive a face with the shade in the
+  emissive, as the browser's unlit material shows it (0.7 times the
+  shade).
+- **The Voltaic's hum (shagger `14cf741`).** `client/fps_voltaic_audio.rs`
+  (`FPSVoltaicAudio.ts`): one looping voice per shooter while the beam is
+  held, the attack on the first shot, the release when it stops, pitched
+  up under quad; the beam's single shots are no longer played. The
+  engine's `audio::loop_overlap` ports `LoopOverlap.ts` and the shaping in
+  `AudioV2Sfx.createBuffer` (region, crossfaded overlap, intro); the pitch
+  is baked into the shaped buffer, the mixer playing at one rate. The
+  browser holds a voice by server ticks since the last fire; the native
+  frame has none, so the same 0.12 s is measured on the effect clock.
+- **Not ported, for later.** The hint coach (`HintCoach`, `HintPanel`:
+  first-match tips), gamepad input (`InputDevice`, the pad bindings and
+  the pad's cues), and the spectator's freefly cue card.
+
 ### 1.0.0-beta9 review (November 11, 2026)
 
 SHAG `v1.0.0-beta.9.1` and wash-fps `0abb874` against the staging review
