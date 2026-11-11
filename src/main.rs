@@ -4,8 +4,9 @@
 
 //! The native client binary. Run without arguments, it is the game: it
 //! brings the game data up to date (`data_sync_screen`), then opens the
-//! region's lobby page (`lobby_webview`). The modes below are the tools the port was
-//! built with.
+//! region's lobby page (`lobby_webview`). Without arguments it reads them
+//! from `washoi.args` beside the executable when that exists
+//! (`launch_args`). The modes below are the tools the port was built with.
 //!
 //! ```text
 //! washoi [--region eu|us] [--data DIR] [--offline]
@@ -423,10 +424,21 @@ fn parse_options(args: impl Iterator<Item = String>) -> Options {
 
 fn main() {
     // Lossy rather than `args()`, which panics on a path that is not UTF-8.
-    let mut args = std::env::args_os()
+    let mut args: Vec<String> = std::env::args_os()
         .skip(1)
         .map(|a| a.to_string_lossy().into_owned())
-        .peekable();
+        .collect();
+    // A plain start takes its command line from `washoi.args` beside the
+    // executable, when there is one.
+    if args.is_empty()
+        && let Some(file) = washoi::launch_args::path()
+    {
+        args = washoi::launch_args::read(&file);
+        if !args.is_empty() {
+            println!("{}: {}", file.display(), args.join(" "));
+        }
+    }
+    let mut args = args.into_iter().peekable();
     // The game itself: no mode, or only its options.
     let mode = match args.peek().map(String::as_str) {
         None => "game".to_owned(),

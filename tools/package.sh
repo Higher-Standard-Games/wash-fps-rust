@@ -51,6 +51,11 @@ the game data (about 350 MB); later starts fetch only what changed.
   washoi --offline       start with the data already downloaded
   washoi --version       print the version
 
+A plain start reads its options from washoi.args beside the program, when
+that file exists (one or more per line, # starts a comment), so a shortcut
+or script is never needed:
+  --region us
+
 Settings live in the config folder (~/.config/washoi on Linux,
 ~/Library/Application Support/Washoi on macOS, %APPDATA%\\Washoi on
 Windows); a crash leaves a report in its crashes folder.

@@ -2712,6 +2712,16 @@ whole areas rather than single items. 0.2.0 closes them in two steps.
 
 Newest first. Each entry names the commits and what proves them.
 
+### Launch options in washoi.args (November 11, 2026)
+
+A plain start (no arguments) now reads its command line from
+`washoi.args` beside the executable when it exists (`launch_args`): one
+or more arguments per line, double quotes around a path with spaces, `#`
+comments. A tester keeps `--region us` or `--data DIR` there instead of a
+`.bat` or a shortcut, and a double-click still starts the game; a command
+line given wins over the file. The package README says so. Unit tests
+cover the parsing.
+
 ### Windows self-update (November 11, 2026)
 
 An installed Windows game (`update_check::self_updates`: a release build
@@ -2755,8 +2765,8 @@ game again afterwards: the self-update to come runs exactly that.
 Next, in order: the game downloads and runs the installer itself (above),
 the lobby turns away a client too old for its protocol so the update is
 required, a
-launch-options file beside the exe for testers (in place of `.bat` files),
-macOS swapping its `.app` in place, and a Linux AppImage.
+launch-options file beside the exe for testers (in place of `.bat` files;
+done, above), macOS swapping its `.app` in place, and a Linux AppImage.
 
 ### Player outlines along hard edges (November 11, 2026)
 

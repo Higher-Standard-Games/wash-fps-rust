@@ -7,6 +7,7 @@ pub use shagger;
 
 pub mod client;
 pub mod console;
+pub mod launch_args;
 pub mod liquid;
 pub mod regions;
 pub mod server;
