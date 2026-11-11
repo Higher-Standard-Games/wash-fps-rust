@@ -35,7 +35,7 @@ use shagger::shared::server::simulation::types::Vec3;
 
 /// `DEFAULT_FPS_MOVEMENT_CONFIG`: the one tuning the server and client use.
 pub const DEFAULT_FPS_MOVEMENT_CONFIG: MovementConfig = MovementConfig {
-    max_speed: 280.0,
+    max_speed: 320.0,
     run_speed: 400.0,
     ground_acceleration: 10.0,
     air_acceleration: 1.0,

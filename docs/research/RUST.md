@@ -2767,6 +2767,16 @@ below (SHAG `432cce3`, wash-fps `247cafe`), in slices.
   `func_static` brush models (`handleStatic`, the "sky tower" of dm1) are
   built where they stand with the world's batches, their sky faces left
   out as a brush model's are.
+- **Golden vectors from the beta9 data (shagger `5c0be0c`).** Regenerated
+  with `WASHOI_MAPS` from the published packages, which now hold 13 maps
+  (dm5 and dm7 rebuilt) and ship textures as WebP (only the minimaps stay
+  KTX). They caught three things the staging review had missed, all older
+  than beta9 but never in a regenerated vector: the base ground speed
+  (`maxSpeed`) is 320, not 280, since wash-fps `1ccf041`; a `trigger_push`
+  may aim at a `target_push` (dm3's jump pad); and any shader body serves
+  as a template, with `template` lines anywhere in a shader, their
+  arguments ending with the line, nesting four deep. The engine's own
+  vectors came out unchanged.
 - **Checked, nothing to port.** beta9.1's gun handed to two players:
   native hand weapons are drawn per frame from one shared model, with no
   parked instances to hand out twice. The freefly camera following

@@ -41,7 +41,7 @@ pub fn blue_glow_weight(r: f64, g: f64, b: f64) -> f64 {
 #[must_use]
 pub fn blue_glow_mask(pixels: &[u8]) -> Vec<u8> {
     let mut out = vec![0; pixels.len()];
-    for (texel, mask) in pixels.chunks_exact(4).zip(out.chunks_exact_mut(4)) {
+    for (texel, mask) in pixels.as_chunks::<4>().0.iter().zip(out.as_chunks_mut::<4>().0) {
         let [r, g, b] = [texel[0], texel[1], texel[2]].map(f64::from);
         let w = blue_glow_weight(r, g, b);
         mask[0] = (r * w) as u8;
