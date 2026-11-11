@@ -86,6 +86,11 @@ pub trait ShotMuzzles {
     /// `getWeaponMuzzleWorldPosition`: the muzzle of another player's gun,
     /// shooting along `direction`.
     fn remote_muzzle(&self, entity_id: &str, direction: DVec3) -> Option<DVec3>;
+    /// `FollowedViewWeapon.beamMuzzle`: the gun on screen when `entity_id`
+    /// is the player watched through their eyes.
+    fn followed_muzzle(&self, _entity_id: &str) -> Option<DVec3> {
+        None
+    }
 }
 
 /// No guns drawn: every shot leaves the eye.
@@ -177,7 +182,12 @@ pub fn play_shots(
                 if *electro_rail {
                     // handleElectroRail: our rail leaves the gun on screen; the
                     // damage endpoint stays the server's.
-                    if local_hero && let Some(muzzle) = muzzles.view_muzzle(RAIL_START_DISTANCE) {
+                    let muzzle = if local_hero {
+                        muzzles.view_muzzle(RAIL_START_DISTANCE)
+                    } else {
+                        muzzles.followed_muzzle(entity_id)
+                    };
+                    if let Some(muzzle) = muzzle {
                         sample.start = muzzle;
                     }
                     fx.hitscan.fire_rail(fx.now, &sample);

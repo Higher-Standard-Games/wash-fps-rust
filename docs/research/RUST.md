@@ -2732,6 +2732,40 @@ whole areas rather than single items. 0.2.0 closes them in two steps.
 
 Newest first. Each entry names the commits and what proves them.
 
+### Demo fixes, sideways captions (November 11, 2026)
+
+- **The gun in a demo.** `start_prepared` loaded the hand weapons only to
+  join a match (`map.hands = o.join`), so a demo watched through a
+  player's eyes had an empty holster. It loads them for any feed now.
+  Checked in the real window under Xvfb: the watched player's plasma gun
+  is on screen.
+- **Beams from the gun on screen.** The watched player's body is not
+  drawn, so their beams, rails and shots fell back to the eye. As
+  `RemotePlayerRenderer.setFollowedMuzzle` does, the renderer now knows
+  the followed player (`set_followed_player`) and resolves their muzzle
+  to the view model's (`getMuzzleWorldPosition`, 5 units). The
+  `ShotMuzzles::followed_muzzle` hook gives their rail the same start
+  (`handleElectroRail`'s `followedMuzzle`), and the per-frame refresh of
+  remote Voltaic starts uses it too.
+- **The exit plate.** `DemoViewerHUD`'s `.dvh-exit` was left out. The gold
+  ✕ plate is drawn in the top left corner, fading with the bar, and a
+  click leaves playback for the lobby as Escape does
+  (`DemoOverlayAction::Exit`). Checked under Xvfb with xdotool: the click
+  logs "demo: back to the lobby" and the window closes.
+- **TIME and VITAL on their side.** The web writes both captions with
+  `writing-mode: vertical-rl`; native stacked upright letters. shagger
+  d6a8a09 adds `Hud2d::text_vertical`, which turns a run a quarter
+  clockwise (a unit test checks the corners). `hud_render` shows both.
+- The lobby page's menu music played on under the match: the page is only
+  hidden. That is fixed in the page (wash-fps `client/native/PageMusic.ts`),
+  so it reaches 0.2.1 too once deployed.
+- **The water's actor reflection is culled (shagger 49c5133).** It drew
+  every part of each chosen player through the mirrored view.
+  `set_second_view` now tests the frame's draws against that view's
+  frustum, as the main view does, and `draw_opaque_view` skips the rest.
+  Only draws outside the mirrored clip volume go, so the picture cannot
+  change; not measured on a pool.
+
 ### The data screen as the lobby's twin (November 11, 2026)
 
 `data_sync_screen.rs` drew a plain centred egui progress bar. It now draws

@@ -108,16 +108,14 @@ impl VitalsBlock {
         let line_top = y + h - 26.0 * s - line;
         let baseline = line_top + (line - (ascent + descent)) / 2.0 + ascent;
         hud.text(x + 36.0 * s, baseline, &format!("{}", self.health), &number);
-        // "VITAL", written top to bottom at the right.
-        let caption = fonts.body(13.0, cream_dim()).align(Align::Center);
-        let step = 13.0 * s * 1.18;
-        let letters = "VITAL".chars().count() as f32;
+        // "VITAL", `writing-mode: vertical-rl` at the right: the letters on
+        // their side, the column's lower right corner 42 in and 30 up.
+        let caption = fonts.body(13.0, cream_dim()).spacing(13.0 * s * 0.18);
+        let (ascent, descent) = hud.line_metrics(&caption);
+        let length = hud.measure("VITAL", &caption);
+        let right = x + w - 42.0 * s;
         let bottom = y + h - 30.0 * s;
-        let column = x + w - 42.0 * s - 7.0 * s;
-        for (i, ch) in "VITAL".chars().enumerate() {
-            let baseline = bottom - (letters - 1.0 - i as f32) * step - 3.0 * s;
-            hud.text(column, baseline, &ch.to_string(), &caption);
-        }
+        hud.text_vertical(right - (ascent + descent), bottom - length, "VITAL", &caption);
     }
 
     fn draw_armor(&self, hud: &mut Hud2d, fonts: &Fonts, x: f32, y: f32) {

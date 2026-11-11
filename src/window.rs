@@ -864,6 +864,7 @@ impl App {
                 _ => None,
             };
             s.renderer.set_local_player(local, f64::from(self.camera.yaw));
+            s.renderer.set_followed_player(self.pov_entity.as_deref());
             s.renderer
                 .set_live_projectiles(&view.projectiles, effect_dt, &self.camera);
             s.renderer
@@ -1311,6 +1312,10 @@ impl App {
                 DemoOverlayAction::Seek(progress) => demo.seek_to_progress(progress),
                 DemoOverlayAction::Speed(step) => {
                     demo.step_speed(step);
+                }
+                DemoOverlayAction::Exit => {
+                    println!("demo: back to the lobby");
+                    self.leave = true;
                 }
             }
             if let Some(hud) = &mut self.demo_hud {
