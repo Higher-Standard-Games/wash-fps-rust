@@ -3,10 +3,11 @@
 //! `scripts/deployment/client-release.sh`). The menu reads it once per run,
 //! and when a newer version is out it offers the package for this machine.
 //!
-//! A game the Windows installer put in place updates itself before the
-//! data sync instead (`self_update`): it downloads the newer installer,
-//! checks its size and SHA-256 against the index, and runs it silently; the
-//! installer closes this game, replaces it and starts the new one.
+//! A game that can replace itself does so before the data sync instead
+//! (`self_update`, `apply`): it downloads the newer package, checks its size
+//! and SHA-256 against the index, and puts it in place. On Windows the
+//! installer it ran silently does that; an AppImage replaces its own file;
+//! a `Washoi.app` swaps its bundle. Then the new game starts.
 //!
 //! No TypeScript source: the browser game is always current.
 
@@ -168,9 +169,31 @@ pub fn offer(latest: &Latest, current: &str, os: &str, arch: &str) -> Option<Upd
     })
 }
 
-/// A newer installer to download: `tools/windows/washoi.iss`'s
-/// `washoi-<version>-windows-<arch>-setup.exe`, with the size and SHA-256
-/// the site recorded.
+/// How this copy of the game replaces itself.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Target {
+    /// Installed by `tools/windows/washoi.iss`: a newer installer is run.
+    WindowsInstaller,
+    /// Run as this AppImage (the runtime's `APPIMAGE`): the file is replaced.
+    AppImage(PathBuf),
+    /// Run from this `Washoi.app`: the bundle is replaced.
+    MacApp(PathBuf),
+}
+
+impl Target {
+    /// The end of the package's name in the index (`tools/package.sh`).
+    #[must_use]
+    pub fn suffix(&self) -> &'static str {
+        match self {
+            Self::WindowsInstaller => "-setup.exe",
+            Self::AppImage(_) => ".AppImage",
+            Self::MacApp(_) => ".zip",
+        }
+    }
+}
+
+/// A newer package to download: the one [`Target::suffix`] names, with the
+/// size and SHA-256 the site recorded.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Installer {
     pub version: String,
@@ -179,17 +202,18 @@ pub struct Installer {
     pub sha256: String,
 }
 
-/// The installer for this machine when `latest` is newer; `None` without
-/// one, or without the size and hash to check it by.
+/// The package for this machine ending in `suffix` when `latest` is newer;
+/// `None` without one, or without the size and hash to check it by.
 #[must_use]
-pub fn installer(latest: &Latest, current: &str, os: &str, arch: &str) -> Option<Installer> {
+pub fn installer(latest: &Latest, current: &str, os: &str, arch: &str, suffix: &str) -> Option<Installer> {
     if !newer(&latest.version, current) {
         return None;
     }
     let platform = format!("{os}-{arch}");
-    let file = latest.files.iter().find(|f| {
-        f.platform == platform && f.name.ends_with("-setup.exe") && f.url.ends_with("-setup.exe") && safe_url(&f.url)
-    })?;
+    let file = latest
+        .files
+        .iter()
+        .find(|f| f.platform == platform && f.name.ends_with(suffix) && f.url.ends_with(suffix) && safe_url(&f.url))?;
     let size = file.size.filter(|s| *s > 0 && *s <= MAX_INSTALLER)?;
     let sha256 = file
         .sha256
@@ -204,16 +228,31 @@ pub fn installer(latest: &Latest, current: &str, os: &str, arch: &str) -> Option
     })
 }
 
-/// Whether this game updates itself: Windows, installed by the installer
-/// (its uninstaller sits beside the exe), and a release build.
+/// How this game updates itself, if it does: a release build that the
+/// Windows installer put in place (its uninstaller sits beside the exe), that
+/// runs as an AppImage, or that runs from a `.app` bundle macOS has not
+/// moved to a read-only place (App Translocation).
 #[must_use]
-pub fn self_updates() -> bool {
-    cfg!(windows)
-        && !cfg!(debug_assertions)
-        && std::env::current_exe()
-            .ok()
-            .and_then(|exe| exe.parent().map(|d| d.join("unins000.exe").is_file()))
-            .unwrap_or(false)
+pub fn self_update_target() -> Option<Target> {
+    if cfg!(debug_assertions) {
+        return None;
+    }
+    let exe = std::env::current_exe().ok()?;
+    if cfg!(windows) {
+        return exe
+            .parent()
+            .is_some_and(|d| d.join("unins000.exe").is_file())
+            .then_some(Target::WindowsInstaller);
+    }
+    if cfg!(target_os = "macos") {
+        // `Washoi.app/Contents/MacOS/washoi`.
+        let bundle = exe.parent()?.parent()?.parent()?;
+        let is_app = bundle.extension().is_some_and(|e| e == "app");
+        let translocated = bundle.to_string_lossy().contains("/AppTranslocation/");
+        return (is_app && !translocated).then(|| Target::MacApp(bundle.to_path_buf()));
+    }
+    let image = PathBuf::from(std::env::var_os("APPIMAGE")?);
+    (image.is_absolute() && image.is_file()).then_some(Target::AppImage(image))
 }
 
 /// What [`self_update`] reports while it runs.
@@ -223,12 +262,14 @@ pub enum UpdateProgress {
     Downloading { version: String, received: u64, total: u64 },
 }
 
-/// Fetches the index and, when a newer installer is out, downloads and
-/// checks it into `dir`: its path, or `None` when this game is current.
+/// Fetches the index and, when a newer package for `target` is out,
+/// downloads and checks it: its path (in `dir`, or beside the AppImage it
+/// replaces), or `None` when this game is current.
 ///
 /// # Errors
-/// Why the index or the installer could not be had; the caller plays on.
+/// Why the index or the package could not be had; the caller plays on.
 pub fn self_update(
+    target: &Target,
     dir: &Path,
     cancel: &AtomicBool,
     progress: &mut dyn FnMut(UpdateProgress),
@@ -244,9 +285,15 @@ pub fn self_update(
     )
     .map_err(|e| format!("update check: {e:?}"))?;
     let latest = parse_latest(&index).ok_or("update check: not an index")?;
-    // Old installers are not kept.
+    // Old downloads are not kept.
     let _ = std::fs::remove_dir_all(dir);
-    let Some(update) = installer(&latest, crate::VERSION, std::env::consts::OS, std::env::consts::ARCH) else {
+    let Some(update) = installer(
+        &latest,
+        crate::VERSION,
+        std::env::consts::OS,
+        std::env::consts::ARCH,
+        target.suffix(),
+    ) else {
         return Ok(None);
     };
     println!("update: downloading Washoi {}", update.version);
@@ -267,8 +314,18 @@ pub fn self_update(
     )
     .map_err(|e| format!("update download: {e:?}"))?;
     verify(&body, &update)?;
-    std::fs::create_dir_all(dir).map_err(|e| format!("update: {e}"))?;
-    let path = dir.join(format!("washoi-{}-setup.exe", update.version));
+    let path = match target {
+        // Beside the file it replaces, so the swap is one rename.
+        Target::AppImage(image) => {
+            let mut name = image.file_name().ok_or("update: the AppImage has no name")?.to_owned();
+            name.push(".update");
+            image.with_file_name(name)
+        }
+        Target::WindowsInstaller | Target::MacApp(_) => {
+            std::fs::create_dir_all(dir).map_err(|e| format!("update: {e}"))?;
+            dir.join(format!("washoi-{}{}", update.version, target.suffix()))
+        }
+    };
     shagger::core::atomic_file::write_atomic(&path, &body).map_err(|e| format!("update: {e}"))?;
     Ok(Some(path))
 }
@@ -285,17 +342,81 @@ fn verify(body: &[u8], update: &Installer) -> Result<(), String> {
     Ok(())
 }
 
-/// Starts the installer silently; it waits for this game to close, then
-/// starts the new one (`tools/windows/washoi.iss`, `/RELAUNCH=1`).
+/// Puts the downloaded package in place and starts the new game; the caller
+/// then ends this one.
 ///
 /// # Errors
-/// The installer could not be started.
-pub fn run_installer(path: &Path) -> Result<(), String> {
-    std::process::Command::new(path)
-        .args(["/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART", "/RELAUNCH=1"])
+/// The new game could not be put in place or started; the old one is kept.
+pub fn apply(target: &Target, download: &Path) -> Result<(), String> {
+    match target {
+        // The installer waits for this game to close, replaces it and starts
+        // the new one (`tools/windows/washoi.iss`, `/RELAUNCH=1`).
+        Target::WindowsInstaller => std::process::Command::new(download)
+            .args(["/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART", "/RELAUNCH=1"])
+            .spawn()
+            .map(drop)
+            .map_err(|e| format!("update: could not start the installer: {e}")),
+        Target::AppImage(image) => {
+            make_executable(download)?;
+            // A running AppImage keeps its open file; the name gets the new one.
+            std::fs::rename(download, image).map_err(|e| format!("update: could not replace the AppImage: {e}"))?;
+            std::process::Command::new(image)
+                .spawn()
+                .map(drop)
+                .map_err(|e| format!("update: could not start the new AppImage: {e}"))
+        }
+        Target::MacApp(bundle) => replace_bundle(bundle, download),
+    }
+}
+
+#[cfg(unix)]
+fn make_executable(path: &Path) -> Result<(), String> {
+    use std::os::unix::fs::PermissionsExt;
+    std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o755)).map_err(|e| format!("update: {e}"))
+}
+
+#[cfg(not(unix))]
+fn make_executable(_path: &Path) -> Result<(), String> {
+    Ok(())
+}
+
+/// Unpacks the zip (`ditto`, as `tools/package.sh` packed it) beside the
+/// bundle, swaps the two by rename, and opens the new one.
+fn replace_bundle(bundle: &Path, zip: &Path) -> Result<(), String> {
+    let parent = bundle.parent().ok_or("update: the app has no folder")?;
+    let id = std::process::id();
+    let unpacked = parent.join(format!(".washoi-update-{id}"));
+    let _ = std::fs::remove_dir_all(&unpacked);
+    let ok = std::process::Command::new("ditto")
+        .arg("-x")
+        .arg("-k")
+        .arg(zip)
+        .arg(&unpacked)
+        .status()
+        .map_err(|e| format!("update: could not unpack: {e}"))?;
+    let new_app = unpacked.join("Washoi.app");
+    if !ok.success() || !new_app.join("Contents/MacOS/washoi").is_file() {
+        let _ = std::fs::remove_dir_all(&unpacked);
+        return Err("update: the download holds no Washoi.app".into());
+    }
+    let old = parent.join(format!(".washoi-old-{id}.app"));
+    if let Err(e) = std::fs::rename(bundle, &old) {
+        let _ = std::fs::remove_dir_all(&unpacked);
+        return Err(format!("update: could not move the app aside: {e}"));
+    }
+    if let Err(e) = std::fs::rename(&new_app, bundle) {
+        let _ = std::fs::rename(&old, bundle);
+        let _ = std::fs::remove_dir_all(&unpacked);
+        return Err(format!("update: could not put the new app in place: {e}"));
+    }
+    let _ = std::fs::remove_dir_all(&unpacked);
+    let _ = std::fs::remove_dir_all(&old);
+    std::process::Command::new("open")
+        .arg("-n")
+        .arg(bundle)
         .spawn()
         .map(drop)
-        .map_err(|e| format!("update: could not start the installer: {e}"))
+        .map_err(|e| format!("update: could not open the new app: {e}"))
 }
 
 /// `1.2.3` or `1.2.3-rc.1`: the numbers, and whether it is a pre-release.
@@ -427,14 +548,14 @@ mod tests {
             r#"{{"platform":"windows-x86_64","name":"washoi-0.3.0-windows-x86_64.zip",
                "url":"https://washoi.net/client/0.3.0/washoi-0.3.0-windows-x86_64.zip","size":4,"sha256":"{SHA}"}},{good}"#
         ));
-        let found = installer(&latest, "0.2.0", "windows", "x86_64").unwrap();
+        let found = installer(&latest, "0.2.0", "windows", "x86_64", "-setup.exe").unwrap();
         assert_eq!(
             found.url,
             "https://washoi.net/client/0.3.0/washoi-0.3.0-windows-x86_64-setup.exe"
         );
         assert_eq!((found.size, found.sha256.as_str()), (4, SHA));
-        assert_eq!(installer(&latest, "0.3.0", "windows", "x86_64"), None);
-        assert_eq!(installer(&latest, "0.2.0", "windows", "aarch64"), None);
+        assert_eq!(installer(&latest, "0.3.0", "windows", "x86_64", "-setup.exe"), None);
+        assert_eq!(installer(&latest, "0.2.0", "windows", "aarch64", "-setup.exe"), None);
         // Without a size or a hash, or off the site, nothing is run.
         for broken in [
             good.replace(r#""size":4,"#, ""),
@@ -443,11 +564,40 @@ mod tests {
             good.replace("https://washoi.net/", "https://evil.example/"),
         ] {
             assert_eq!(
-                installer(&with_installer(&broken), "0.2.0", "windows", "x86_64"),
+                installer(&with_installer(&broken), "0.2.0", "windows", "x86_64", "-setup.exe"),
                 None,
                 "{broken}"
             );
         }
+    }
+
+    #[test]
+    fn each_target_takes_its_own_package() {
+        let file = |platform: &str, name: &str| {
+            format!(
+                r#"{{"platform":"{platform}","name":"{name}","url":"https://washoi.net/client/0.3.0/{name}","size":4,"sha256":"{SHA}"}}"#
+            )
+        };
+        let latest = with_installer(
+            &[
+                file("linux-x86_64", "washoi-0.3.0-linux-x86_64.tar.gz"),
+                file("linux-x86_64", "washoi-0.3.0-linux-x86_64.AppImage"),
+                file("macos-aarch64", "washoi-0.3.0-macos-aarch64.zip"),
+            ]
+            .join(","),
+        );
+        let pick = |os: &str, arch: &str, target: Target| {
+            installer(&latest, "0.2.0", os, arch, target.suffix()).map(|i| i.url)
+        };
+        assert_eq!(
+            pick("linux", "x86_64", Target::AppImage(PathBuf::from("/x"))).as_deref(),
+            Some("https://washoi.net/client/0.3.0/washoi-0.3.0-linux-x86_64.AppImage")
+        );
+        assert_eq!(
+            pick("macos", "aarch64", Target::MacApp(PathBuf::from("/A/Washoi.app"))).as_deref(),
+            Some("https://washoi.net/client/0.3.0/washoi-0.3.0-macos-aarch64.zip")
+        );
+        assert_eq!(pick("linux", "x86_64", Target::WindowsInstaller), None);
     }
 
     #[test]

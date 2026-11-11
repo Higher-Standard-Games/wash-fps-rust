@@ -10,10 +10,11 @@
 //! (`shagger::loader::pk3::package_store`). Without the network, a data
 //! directory a sync completed before is used as it is.
 //!
-//! An installed Windows game first updates itself here
-//! (`update_check::self_update`): with a newer installer downloaded and
-//! checked, the screen starts it and the game ends, and the installer starts
-//! the new version. A failed update is printed and the game plays on.
+//! A game that can replace itself (the installed Windows game, an AppImage,
+//! a `Washoi.app`) first updates here (`update_check::self_update`): with a
+//! newer package downloaded and checked, the screen puts it in place and
+//! starts it, and this game ends. A failed update is printed and the game
+//! plays on.
 
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -48,8 +49,8 @@ const BACKGROUND: wgpu::Color = wgpu::Color {
 enum Phase {
     /// The game's own update, before the data.
     Updating(UpdateProgress),
-    /// A newer installer, downloaded and checked: to be started.
-    Install(PathBuf),
+    /// A newer package, downloaded and checked: to be put in place.
+    Install(update_check::Target, PathBuf),
     Running(SyncProgress),
     Done,
     /// Why, and what the directory holds: a complete set, some packages, or none.
@@ -87,17 +88,25 @@ pub enum SyncOutcome {
 
 /// Brings `dir` up to `base_url`'s packages and playlists on a thread of
 /// its own, reporting into `phase`.
-fn start(base_url: String, dir: PathBuf, update: bool, cancel: Arc<AtomicBool>, phase: Arc<Mutex<Phase>>) {
+fn start(
+    base_url: String,
+    dir: PathBuf,
+    update: Option<update_check::Target>,
+    cancel: Arc<AtomicBool>,
+    phase: Arc<Mutex<Phase>>,
+) {
     std::thread::spawn(move || {
         let set = |p: Phase| {
             if let Ok(mut slot) = phase.lock() {
                 *slot = p;
             }
         };
-        if update && let Some(updates) = washoi::cache_dir().map(|d| d.join("updates")) {
-            match update_check::self_update(&updates, &cancel, &mut |p| set(Phase::Updating(p))) {
-                Ok(Some(installer)) => {
-                    set(Phase::Install(installer));
+        if let Some(target) = update
+            && let Some(updates) = washoi::cache_dir().map(|d| d.join("updates"))
+        {
+            match update_check::self_update(&target, &updates, &cancel, &mut |p| set(Phase::Updating(p))) {
+                Ok(Some(download)) => {
+                    set(Phase::Install(target, download));
                     return;
                 }
                 Ok(None) => {}
@@ -168,9 +177,9 @@ fn megabytes(bytes: u64) -> String {
 
 impl SyncApp {
     /// The sync from the start, after the game's own update when `update`.
-    fn restart(&mut self, update: bool) {
+    fn restart(&mut self, update: Option<update_check::Target>) {
         self.cancel = Arc::new(AtomicBool::new(false));
-        self.phase = Arc::new(Mutex::new(if update {
+        self.phase = Arc::new(Mutex::new(if update.is_some() {
             Phase::Updating(UpdateProgress::Checking)
         } else {
             Phase::Running(SyncProgress {
@@ -194,17 +203,17 @@ impl SyncApp {
             self.outcome = Some(SyncOutcome::Ready);
             return;
         }
-        if let Phase::Install(installer) = &phase {
-            match update_check::run_installer(installer) {
+        if let Phase::Install(target, download) = &phase {
+            match update_check::apply(target, download) {
                 Ok(()) => {
-                    println!("update: started {}", installer.display());
+                    println!("update: started the new game from {}", download.display());
                     self.outcome = Some(SyncOutcome::Updating);
                     return;
                 }
                 // Played on: the data sync follows on the next try.
                 Err(why) => {
                     eprintln!("{why}");
-                    self.restart(false);
+                    self.restart(None);
                     return;
                 }
             }
@@ -259,7 +268,7 @@ impl SyncApp {
                                     .text(format!("{} / {}", megabytes(*received), megabytes(*total))),
                             );
                         }
-                        Phase::Install(_) => {
+                        Phase::Install(..) => {
                             ui.label("Installing the update…");
                         }
                         Phase::Running(p) if p.total == 0 => {
@@ -321,7 +330,7 @@ impl SyncApp {
         present(&m.gpu, &m.window, &mut m.surface, &m.config, frame);
         match choice {
             Some(true) => self.outcome = Some(SyncOutcome::Ready),
-            Some(false) => self.restart(update_check::self_updates()),
+            Some(false) => self.restart(update_check::self_update_target()),
             None => {}
         }
     }
@@ -415,7 +424,7 @@ pub fn run(base_url: &str, dir: &Path) -> Result<SyncOutcome, String> {
         outcome: None,
         error: None,
     };
-    app.restart(update_check::self_updates());
+    app.restart(update_check::self_update_target());
     let ran = run_on_event_loop(&mut app);
     app.cancel.store(true, Ordering::Relaxed);
     if let Some(m) = &app.open {
@@ -442,7 +451,7 @@ pub fn run_headless(base_url: &str, dir: &Path) -> Result<(), String> {
         received: 0,
         total: 0,
     });
-    start(base_url.to_owned(), dir.to_path_buf(), false, cancel, phase.clone());
+    start(base_url.to_owned(), dir.to_path_buf(), None, cancel, phase.clone());
     let mut last = String::new();
     loop {
         let now = phase.lock().expect("sync phase").clone();
@@ -458,7 +467,7 @@ pub fn run_headless(base_url: &str, dir: &Path) -> Result<(), String> {
                 );
                 last = p.package;
             }
-            Phase::Running(_) | Phase::Updating(_) | Phase::Install(_) => {}
+            Phase::Running(_) | Phase::Updating(_) | Phase::Install(..) => {}
         }
         std::thread::sleep(Duration::from_millis(100));
     }

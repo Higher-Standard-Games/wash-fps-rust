@@ -2712,6 +2712,23 @@ whole areas rather than single items. 0.2.0 closes them in two steps.
 
 Newest first. Each entry names the commits and what proves them.
 
+### Linux AppImage and macOS self-update (November 11, 2026)
+
+The other two platforms now update themselves at start the way Windows
+does (`update_check::Target`): a release build run as an AppImage (the
+runtime's `APPIMAGE`) downloads the newer `.AppImage` beside itself,
+checks it, makes it executable, renames it over itself and starts it; a
+release build run from a `Washoi.app` that macOS has not translocated
+downloads the newer `macos-<arch>.zip`, unpacks it with `ditto` beside the
+bundle, swaps the two by rename (putting the old one back if the second
+rename fails) and opens the new one. The tar.gz and a translocated app keep
+the download notice. `tools/package.sh` builds the AppImage from the same
+files as the tar.gz (it uses the system's WebKitGTK and ALSA, as the tar.gz
+does) with appimagetool 1.9.0, which the release workflow fetches and
+checks by hash; wash-fps' `client-release.sh` publishes it. The Apple
+silicon build moved from `macos-14`, which no longer gets a runner, to
+`macos-15`. Unit tests cover each target's package pick.
+
 ### Launch options in washoi.args (November 11, 2026)
 
 A plain start (no arguments) now reads its command line from

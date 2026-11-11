@@ -23,7 +23,7 @@ jobs:
       matrix:
         include:
           - runner: windows-latest
-          - runner: macos-14
+          - runner: macos-15
           - runner: ubuntu-24.04
     runs-on: ${{ matrix.runner }}
     defaults:

@@ -1,7 +1,7 @@
 name: Release
 
-# A tag v* builds the game for Linux, macOS (Apple silicon and Intel) and
-# Windows (a zip and an installer), packages each with tools/package.sh and
+# A tag v* builds the game for Linux (a tar.gz and an AppImage), macOS (Apple
+# silicon and Intel) and Windows (a zip and an installer), packages each with tools/package.sh and
 # attaches them to a draft GitHub release. Run by hand, it builds and keeps
 # the packages as workflow artifacts only, unless the `release` input asks
 # for the draft.
@@ -45,7 +45,8 @@ jobs:
         include:
           # The oldest supported Ubuntu, so the binary runs on older glibc.
           - runner: ubuntu-22.04
-          - runner: macos-14
+          # Apple silicon: macos-14 no longer gets a runner.
+          - runner: macos-15
           # Intel: macos-13 is retired.
           - runner: macos-15-intel
           - runner: windows-latest
@@ -127,6 +128,15 @@ jobs:
           [IO.File]::WriteAllBytes("$env:RUNNER_TEMP\cert.pfx", [Convert]::FromBase64String($env:WINDOWS_CERTIFICATE))
           $signtool = Get-ChildItem "C:\Program Files (x86)\Windows Kits\10\bin\*\x64\signtool.exe" | Select-Object -Last 1
           & $signtool.FullName sign /f "$env:RUNNER_TEMP\cert.pfx" /p "$env:WINDOWS_CERTIFICATE_PASSWORD" /fd sha256 /tr http://timestamp.digicert.com /td sha256 target\release\washoi.exe
+      # tools/package.sh builds the AppImage with appimagetool, pinned by hash.
+      - name: Install appimagetool
+        if: runner.os == 'Linux'
+        run: |
+          curl -fsSL -o "$RUNNER_TEMP/appimagetool" \
+            https://github.com/AppImage/appimagetool/releases/download/1.9.0/appimagetool-x86_64.AppImage
+          echo "46fdd785094c7f6e545b61afcfb0f3d98d8eab243f644b4b17698c01d06083d1  $RUNNER_TEMP/appimagetool" | sha256sum -c
+          chmod +x "$RUNNER_TEMP/appimagetool"
+          echo "APPIMAGETOOL=$RUNNER_TEMP/appimagetool" >> "$GITHUB_ENV"
       # tools/package.sh builds the Windows installer with Inno Setup 6.
       - name: Install Inno Setup
         if: runner.os == 'Windows'

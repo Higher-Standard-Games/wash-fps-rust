@@ -5,6 +5,9 @@
 #
 #   Linux    washoi-<version>-linux-<arch>.tar.gz    washoi, README.txt, licences,
 #            the icon and a .desktop launcher entry
+#            washoi-<version>-linux-<arch>.AppImage  the same as one file to
+#            run, which updates itself (update_check), when appimagetool is
+#            found (APPIMAGETOOL names it otherwise)
 #   macOS    washoi-<version>-macos-<arch>.zip       Washoi.app (icon from
 #            assets/icon, ad-hoc signed unless MACOS_SIGN_IDENTITY names a
 #            Developer ID in the keychain)
@@ -88,6 +91,9 @@ Categories=Game;ActionGame;
 DESKTOP
     cat >> "$stage/$name/README.txt" <<TXT
 
+The AppImage (washoi-$version-linux-$arch.AppImage) is the same game as one
+file: chmod +x it and run it. It updates itself when a new version is out.
+
 To add Washoi to the app menu, with its icon:
   mkdir -p ~/.local/bin ~/.local/share/icons/hicolor/512x512/apps ~/.local/share/applications
   cp washoi ~/.local/bin/
@@ -96,6 +102,27 @@ To add Washoi to the app menu, with its icon:
 TXT
     tar -C "$stage" -czf "dist/$name.tar.gz" "$name"
     echo "dist/$name.tar.gz"
+    # The AppImage: the same files in an AppDir. Like the tar.gz it uses the
+    # system's WebKitGTK 4.1 and ALSA rather than carrying them.
+    tool=${APPIMAGETOOL:-$(command -v appimagetool || true)}
+    if [ -z "$tool" ]; then
+      echo "no appimagetool: the AppImage is skipped" >&2
+    else
+      appdir="$stage/Washoi.AppDir"
+      mkdir -p "$appdir/usr/bin" "$appdir/usr/share/doc/washoi" \
+        "$appdir/usr/share/icons/hicolor/512x512/apps" "$appdir/usr/share/applications"
+      cp "$bin" "$appdir/usr/bin/washoi"
+      cp -R "$stage/$name/licenses" "$stage/$name/README.txt" "$appdir/usr/share/doc/washoi/"
+      cp assets/icon/washoi-512.png "$appdir/net.washoi.Washoi.png"
+      cp assets/icon/washoi-512.png "$appdir/usr/share/icons/hicolor/512x512/apps/net.washoi.Washoi.png"
+      cp assets/icon/washoi-512.png "$appdir/.DirIcon"
+      cp "$stage/$name/net.washoi.Washoi.desktop" "$appdir/net.washoi.Washoi.desktop"
+      cp "$stage/$name/net.washoi.Washoi.desktop" "$appdir/usr/share/applications/"
+      ln -s usr/bin/washoi "$appdir/AppRun"
+      # No FUSE on build machines: the tool runs extracted.
+      APPIMAGE_EXTRACT_AND_RUN=1 ARCH=$arch "$tool" --no-appstream "$appdir" "dist/$name.AppImage" >/dev/null
+      echo "dist/$name.AppImage"
+    fi
     ;;
   macos)
     app="$stage/Washoi.app"
