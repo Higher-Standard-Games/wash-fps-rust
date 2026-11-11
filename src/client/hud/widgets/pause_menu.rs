@@ -15,10 +15,10 @@
 
 use std::sync::Arc;
 
+use shagger::ui::components::lobby_twin::{clamp_css as clamp, gradient_polygon, horizontal_gradient, hsl, hsla};
 use shagger::ui::egui_layer::egui;
 use shagger::ui::egui_layer::egui::{Color32, Pos2, Rect, Vec2, pos2, vec2};
 
-use crate::client::hud::washiki;
 use crate::client::washoi_style::display_family;
 
 /// What a key on the menu asked for.
@@ -50,17 +50,6 @@ pub const PAUSE_MENU_NOTE: &str = "The match keeps going while you're here.";
 /// The lobby's logo (`/data/washoi.png`, washoi.net's `src/assets/washoi.png`).
 const LOGO_PNG: &[u8] = include_bytes!("../../../../assets/brand/washoi.png");
 
-/// A CSS `hsla()` colour as egui's.
-fn hsla(h: f32, s: f32, l: f32, a: f32) -> Color32 {
-    let c = washiki::hsla(h, s, l, a);
-    let byte = |v: f32| (v.clamp(0.0, 1.0) * 255.0).round() as u8;
-    Color32::from_rgba_unmultiplied(byte(c[0]), byte(c[1]), byte(c[2]), byte(c[3]))
-}
-
-fn hsl(h: f32, s: f32, l: f32) -> Color32 {
-    hsla(h, s, l, 1.0)
-}
-
 /// `--ink`, the rail's lettering.
 fn ink(a: f32) -> Color32 {
     hsla(250.0, 45.0, 8.0, a)
@@ -69,60 +58,6 @@ fn ink(a: f32) -> Color32 {
 /// `--cream`.
 fn cream(a: f32) -> Color32 {
     hsla(45.0, 100.0, 95.0, a)
-}
-
-/// CSS's `clamp(min, value, max)`.
-fn clamp(min: f32, value: f32, max: f32) -> f32 {
-    value.max(min).min(max)
-}
-
-/// A four-cornered shape with horizontal top and bottom edges (`tl`, `tr`
-/// at the top, `br`, `bl` at the bottom) filled with a vertical gradient:
-/// `stops` are (fraction down, colour), mixed as CSS mixes them, in sRGB.
-fn gradient_quad(mesh: &mut egui::Mesh, corners: [Pos2; 4], stops: &[(f32, Color32)]) {
-    let [tl, tr, br, bl] = corners;
-    let at = |t: f32| {
-        let y = tl.y + (bl.y - tl.y) * t;
-        (pos2(tl.x + (bl.x - tl.x) * t, y), pos2(tr.x + (br.x - tr.x) * t, y))
-    };
-    let color = |t: f32| {
-        let t = t.clamp(0.0, 1.0);
-        let mut prev = stops[0];
-        if t <= prev.0 {
-            return prev.1;
-        }
-        for &next in &stops[1..] {
-            if t <= next.0 {
-                let span = (next.0 - prev.0).max(f32::EPSILON);
-                return prev.1.lerp_to_gamma(next.1, (t - prev.0) / span);
-            }
-            prev = next;
-        }
-        prev.1
-    };
-    // Every stop is a row of the mesh, so each band mixes two colours only.
-    let mut rows: Vec<f32> = stops.iter().map(|s| s.0.clamp(0.0, 1.0)).collect();
-    rows.push(0.0);
-    rows.push(1.0);
-    rows.sort_by(f32::total_cmp);
-    rows.dedup();
-    let base = mesh.vertices.len() as u32;
-    for &t in &rows {
-        let (left, right) = at(t);
-        mesh.colored_vertex(left, color(t));
-        mesh.colored_vertex(right, color(t));
-    }
-    for i in 0..rows.len() as u32 - 1 {
-        let (a, b) = (base + i * 2, base + i * 2 + 2);
-        mesh.add_triangle(a, a + 1, b + 1);
-        mesh.add_triangle(a, b + 1, b);
-    }
-}
-
-fn paint_gradient(painter: &egui::Painter, corners: [Pos2; 4], stops: &[(f32, Color32)]) {
-    let mut mesh = egui::Mesh::default();
-    gradient_quad(&mut mesh, corners, stops);
-    painter.add(egui::Shape::mesh(mesh));
 }
 
 /// Text in one face, size and colour, `spacing` points between letters.
@@ -293,14 +228,18 @@ fn raised_key(
         let g = vec2(grow, grow);
         let corners = [a - g, b + vec2(grow, -grow), c + g, e + vec2(-grow, grow)];
         let color = look.shadow.gamma_multiply(alpha);
-        paint_gradient(painter, corners, &[(0.0, color), (1.0, color)]);
+        gradient_polygon(painter, &corners, &[(0.0, color), (1.0, color)]);
     }
     // The side it stands on.
-    paint_gradient(painter, shape(vec2(dx, d)), &[(0.0, look.side[0]), (1.0, look.side[1])]);
+    gradient_polygon(
+        painter,
+        &shape(vec2(dx, d)),
+        &[(0.0, look.side[0]), (1.0, look.side[1])],
+    );
     // The face, and its lit top edge and shaded foot.
     let lift = vec2(dx * press, d * press);
     let face = shape(lift);
-    paint_gradient(painter, face, &look.face);
+    gradient_polygon(painter, &face, &look.face);
     let band = |from: f32, to: f32| {
         let at = |t: f32| face[0].lerp(face[3], t);
         let at_right = |t: f32| face[1].lerp(face[2], t);
@@ -308,10 +247,10 @@ fn raised_key(
         [at(from / h), at_right(from / h), at_right(to / h), at(to / h)]
     };
     let white = Color32::from_white_alpha(140);
-    paint_gradient(painter, band(0.0, 2.0), &[(0.0, white), (1.0, white)]);
+    gradient_polygon(painter, &band(0.0, 2.0), &[(0.0, white), (1.0, white)]);
     let foot = hsla(250.0, 60.0, 5.0, 0.14);
     let h = rect.height();
-    paint_gradient(painter, band(h - 3.0, h), &[(0.0, foot), (1.0, foot)]);
+    gradient_polygon(painter, &band(h - 3.0, h), &[(0.0, foot), (1.0, foot)]);
     // `raised-key__label` and `__hint`, uppercase.
     let label = galley(
         painter,
@@ -424,9 +363,11 @@ impl PauseMenu {
                 let veil = ease_out(since / 0.18);
                 let shade = |a: f32| hsla(250.0, 45.0, 5.0, a * veil);
                 let r = screen;
-                let mid = r.left() + r.width() * 0.55;
-                paint_gradient_h(&painter, r.left(), mid, r, shade(0.55), shade(0.18));
-                paint_gradient_h(&painter, mid, r.right(), r, shade(0.18), shade(0.3));
+                horizontal_gradient(
+                    &painter,
+                    r,
+                    &[(0.0, shade(0.55)), (0.55, shade(0.18)), (1.0, shade(0.3))],
+                );
 
                 // `fps-match-menu__rail`: in from the left as it fades in.
                 let slide = ease_out(since / 0.24);
@@ -439,9 +380,9 @@ impl PauseMenu {
                     pos2(x0 + rail_w - skew, r.bottom()),
                     pos2(x0, r.bottom()),
                 ];
-                paint_gradient(
+                gradient_polygon(
                     &painter,
-                    rail,
+                    &rail,
                     &[
                         (0.0, alpha(hsl(46.0, 100.0, 57.0))),
                         (1.0, alpha(hsl(41.0, 96.0, 48.0))),
@@ -465,9 +406,9 @@ impl PauseMenu {
                 }
                 painter.add(egui::Shape::mesh(glow));
                 // The violet edge along the slant.
-                paint_gradient(
+                gradient_polygon(
                     &painter,
-                    [
+                    &[
                         pos2(x0 + rail_w - 8.0, r.top()),
                         pos2(x0 + rail_w, r.top()),
                         pos2(x0 + rail_w - skew, r.bottom()),
@@ -584,9 +525,9 @@ impl PauseMenu {
                 let plate_h = 11.0 + name_g.size().y + 3.0 + where_g.size().y + 11.0;
                 let plate_top = leave_top - 14.0 - plate_h;
                 if plate_top > y {
-                    paint_gradient(
+                    gradient_polygon(
                         &painter,
-                        [
+                        &[
                             pos2(left, plate_top),
                             pos2(left + foot_w, plate_top),
                             pos2(left + foot_w - 12.0, plate_top + plate_h),
@@ -623,18 +564,6 @@ impl PauseMenu {
     }
 }
 
-/// A rectangle's span from `x0` to `x1`, `from` to `to` left to right.
-fn paint_gradient_h(painter: &egui::Painter, x0: f32, x1: f32, r: Rect, from: Color32, to: Color32) {
-    let mut mesh = egui::Mesh::default();
-    mesh.colored_vertex(pos2(x0, r.top()), from);
-    mesh.colored_vertex(pos2(x1, r.top()), to);
-    mesh.colored_vertex(pos2(x1, r.bottom()), to);
-    mesh.colored_vertex(pos2(x0, r.bottom()), from);
-    mesh.add_triangle(0, 1, 2);
-    mesh.add_triangle(0, 2, 3);
-    painter.add(egui::Shape::mesh(mesh));
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -665,22 +594,6 @@ mod tests {
         assert!(shapes > 0);
         menu.close();
         assert!(!menu.open);
-    }
-
-    #[test]
-    fn a_gradient_has_a_row_per_stop() {
-        let mut mesh = egui::Mesh::default();
-        let corners = [pos2(0.0, 0.0), pos2(10.0, 0.0), pos2(8.0, 10.0), pos2(0.0, 10.0)];
-        gradient_quad(
-            &mut mesh,
-            corners,
-            &[(0.0, Color32::RED), (0.5, Color32::GREEN), (1.0, Color32::BLUE)],
-        );
-        assert_eq!(mesh.vertices.len(), 6);
-        assert_eq!(mesh.indices.len(), 12);
-        // The right edge slants in with the corners.
-        assert_eq!(mesh.vertices[3].pos, pos2(9.0, 5.0));
-        assert_eq!(mesh.vertices[2].color, Color32::GREEN);
     }
 
     #[test]
