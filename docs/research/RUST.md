@@ -2712,6 +2712,16 @@ whole areas rather than single items. 0.2.0 closes them in two steps.
 
 Newest first. Each entry names the commits and what proves them.
 
+### Player outlines along hard edges (November 11, 2026)
+
+The beta9 bodies split their vertices along hard edges, and the outline,
+pushed out along the vertex normals, tore open at every seam (ragged pink
+gaps around the body). shagger `2830b93` ports SHAG's
+`PlayerOutlineSmoothing` (`rendering::player_outline_smoothing`): a rigged
+primitive uploads a second vertex stream whose normals are averaged over
+the vertices that share a place and the same joints and weights, and the
+outline passes draw from it; the lit body keeps its own normals.
+
 ### Antialiasing: FXAA (November 11, 2026)
 
 shagger `43ce40c` ports Babylon's `FxaaPostProcess` and its WGSL shaders
