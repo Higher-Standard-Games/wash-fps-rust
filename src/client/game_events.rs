@@ -32,7 +32,6 @@ use crate::client::fps_movement_audio::{FPS_MOVEMENT_SOUND_PATHS, FpsMovementAud
 use crate::client::fps_pickup_audio::{
     FPS_PICKUP_SOUND_PATHS, is_powerup_label, play_pickup_sound, play_powerup_pickup_sound, play_powerup_spawn_sound,
 };
-use crate::client::fps_player_audio::player_voice_for_entity;
 use crate::client::fps_reload_audio::FpsReloadAudio;
 use crate::client::match_state_manager::{MatchPhase, MatchStateManager};
 use crate::shared::net::snapshot_events::{Point, SnapshotEvent};
@@ -560,23 +559,24 @@ impl GameAudio {
         &mut self,
         snapshots: &[HashMap<String, EntitySnapshot>],
         view_entity_id: Option<&str>,
-        teams: &HashMap<String, String>,
+        voice_of: &dyn Fn(&str) -> &'static str,
         ground_flags: &mut dyn FnMut(DVec3) -> i32,
     ) {
         for players in snapshots {
             self.movement
-                .process(&mut self.sfx, players, view_entity_id, teams, ground_flags);
+                .process(&mut self.sfx, players, view_entity_id, voice_of, ground_flags);
         }
     }
 
     /// The sounds of one snapshot's events, heard from the player on
-    /// screen (`view_entity_id`, none for a free camera). `teams` is the
-    /// roster, `position` where an entity stands, `now` in ms.
+    /// screen (`view_entity_id`, none for a free camera). `voice_of` is the
+    /// voice of the body a player is drawn with, `position` where an entity
+    /// stands, `now` in ms.
     pub fn play_event_sounds(
         &mut self,
         events: &[SnapshotEvent],
         view_entity_id: Option<&str>,
-        teams: &HashMap<String, String>,
+        voice_of: &dyn Fn(&str) -> &'static str,
         position: &dyn Fn(&str) -> Option<DVec3>,
         now: f64,
     ) {
@@ -615,7 +615,7 @@ impl GameAudio {
                     pain_tier,
                     ..
                 } => {
-                    let voice = player_voice_for_entity(teams, entity_id, view_entity_id);
+                    let voice = voice_of(entity_id);
                     self.combat.play_player_pain_sound(
                         &mut self.sfx,
                         entity_id,
@@ -647,7 +647,7 @@ impl GameAudio {
                     ..
                 } => {
                     let victim = viewed(entity_id);
-                    let voice = player_voice_for_entity(teams, entity_id, view_entity_id);
+                    let voice = voice_of(entity_id);
                     FpsCombatAudio::play_player_death_sound(&mut self.sfx, entity_id, vec(at), victim, voice);
                     if viewed(killer_id) && !victim {
                         FpsCombatAudio::play_kill_echo(&mut self.sfx);

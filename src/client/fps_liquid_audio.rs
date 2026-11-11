@@ -6,7 +6,7 @@ use shagger::audio::audio_v2_sfx::{AudioV2Sfx, SfxPlayOptions};
 use shagger::audio::mixer::SfxChannel;
 use shagger::rendering::glam::DVec3;
 
-use crate::client::fps_player_audio::{PlayerVoiceSide, player_voice_set, player_voice_sound};
+use crate::client::fps_player_audio::{local_player_voice, player_voice_sound};
 
 use crate::liquid::liquid_types::LiquidKind;
 
@@ -67,7 +67,7 @@ pub fn play_drown_tick(audio: &mut AudioV2Sfx) {
 }
 
 fn play_drown(audio: &mut AudioV2Sfx, volume: f32) {
-    let path = player_voice_sound("drown", player_voice_set(PlayerVoiceSide::Ally));
+    let path = player_voice_sound("drown", local_player_voice());
     audio.play_2d(
         &path,
         &SfxPlayOptions {

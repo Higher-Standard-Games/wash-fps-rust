@@ -2729,6 +2729,22 @@ below (SHAG `432cce3`, wash-fps `247cafe`), in slices.
   `timein` commands and `/timeout`, `/timein` in chat, the phase message's
   timeout banner, its count back in and "Fight!", and the announcer's
   timeout, time in, 1 and fight, holding every other call.
+- **Free-for-all looks.** `shared/players/player_look.rs` decodes the look
+  byte; `client/player_appearance.rs` ports `RemotePlayerRenderer`'s
+  `resolvePlayerTeamSlot`, `visualStyle`, `assignedLook`, `assignedModel`
+  and `modelChoiceFor`: a free-for-all player wears the server's body and
+  colour (yours its body, your colour stays yours), a team mode the side
+  colours seen from the followed player or your own team, which the native
+  client did not draw before (every player took the FFA slot).
+  `FfaColors` steps around your own colour and keeps a pick for the
+  session. Enemies start White, untinted (`cl_player_tint 0`), and their
+  model is `random`, drawn again for each game joined, never your own
+  side's. A player sounds like the body they are drawn with
+  (`playerVoiceForEntity` reads the look; `setLocalPlayerVoice` for your
+  own drowning).
+- **Checked, nothing to port.** beta9.1's gun handed to two players:
+  native hand weapons are drawn per frame from one shared model, with no
+  parked instances to hand out twice.
 
 ### Staging review: player models, layered animation, items (November 10, 2026)
 

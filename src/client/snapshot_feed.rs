@@ -11,7 +11,7 @@ use shagger::shared::net::game_state::{GameState, PlayerState};
 
 use crate::client::dropped_weapon_renderer::DroppedWeaponInfo;
 use crate::client::match_state_manager::MatchStateManager;
-use crate::client::remote_player_logic::{apply_roster, extract_entities};
+use crate::client::remote_player_logic::{apply_looks, apply_roster, extract_entities};
 use crate::shared::net::snapshot_events::SnapshotEvent;
 
 /// A projectile in flight, interpolated, in Babylon axes.
@@ -39,6 +39,8 @@ pub struct DemoView {
     pub weapons: HashMap<String, String>,
     /// Each player's team from the roster.
     pub teams: HashMap<String, String>,
+    /// Each free-for-all player's server-assigned look, by entity.
+    pub looks: HashMap<String, u8>,
     /// The players of every snapshot that arrived since the last frame, as
     /// sent (`processFPSMovementAudio` reads them).
     pub snapshots: Vec<HashMap<String, EntitySnapshot>>,
@@ -66,6 +68,8 @@ pub struct SnapshotFeed {
     seen_ticks: HashMap<String, u32>,
     /// Each player's team from the roster ("ffa" for none).
     pub teams: HashMap<String, String>,
+    /// `applyLooks`: each player's server-assigned free-for-all look.
+    pub looks: HashMap<String, u8>,
     /// The match as its `match_state` events tell it.
     pub match_state: MatchStateManager,
     /// The newest snapshot's players (`state.players`): names, scores,
@@ -115,6 +119,7 @@ impl SnapshotFeed {
     /// local player's own body is left out.
     pub fn push(&mut self, now: f64, state: &GameState<SnapshotEvent>, local_entity_id: &str) {
         apply_roster(&mut self.teams, state, local_entity_id);
+        apply_looks(&mut self.looks, state);
         // Every snapshot: the convergent source of truth for which pickups
         // are up, so a dropped snapshot heals on the next one.
         reconcile_active_set(&mut self.pickup_active, &state.pickup_active_mask);
@@ -204,6 +209,7 @@ impl SnapshotFeed {
             effects: std::mem::take(&mut self.effects),
             weapons: self.weapons.clone(),
             teams: self.teams.clone(),
+            looks: self.looks.clone(),
             snapshots: std::mem::take(&mut self.snapshots),
             pickup_active: self.pickup_active.clone(),
             dropped_weapons: self.dropped_weapons.clone(),

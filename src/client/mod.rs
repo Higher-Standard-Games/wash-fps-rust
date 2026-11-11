@@ -37,6 +37,7 @@ pub mod live_play;
 pub mod live_watch;
 pub mod local_powerup_state;
 pub mod match_state_manager;
+pub mod player_appearance;
 pub mod player_model_selection;
 pub mod player_model_visual_settings;
 pub mod prediction;

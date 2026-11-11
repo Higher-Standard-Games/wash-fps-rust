@@ -735,7 +735,7 @@ const fn team(
 }
 
 /// `TEAM_COLORS`: each sets a side's body and its outline together. Pink
-/// and cyan are the game's defaults for your side and enemies.
+/// and white are the game's defaults for your side and enemies.
 pub const TEAM_COLORS: [TeamColor; 8] = [
     team("pink", "Pink", [318.0, 1.0, 0.62], "1.55 0.2 1.35", "1.85 0.28 1.65"),
     team("cyan", "Cyan", [190.0, 1.0, 0.55], "0.1 1.15 1.85", "0.16 1.35 2.2"),
@@ -1162,7 +1162,7 @@ mod tests {
         assert!(current_choice(&cvars, &VIDEO_PRESETS.map(|p| p.0)).is_none());
 
         assert_eq!(side_color(&cvars, Side::Ally).map(|c| c.id), Some("pink"));
-        assert_eq!(side_color(&cvars, Side::Enemy).map(|c| c.id), Some("cyan"));
+        assert_eq!(side_color(&cvars, Side::Enemy).map(|c| c.id), Some("white"));
         assert!(side_colors_are_default(&cvars));
         set_side_color(&mut cvars, Side::Enemy, color_blind_side_color(Side::Enemy));
         assert_eq!(side_color(&cvars, Side::Enemy).map(|c| c.id), Some("orange"));
@@ -1170,6 +1170,6 @@ mod tests {
         reset_side_colors(&mut cvars);
         assert!(side_colors_are_default(&cvars));
         assert_eq!(current_choice(&cvars, &OUTLINE_CHOICES).map(|c| c.id), Some("thin"));
-        assert_eq!(current_choice(&cvars, &BOOST_CHOICES).map(|c| c.id), Some("tint"));
+        assert_eq!(current_choice(&cvars, &BOOST_CHOICES).map(|c| c.id), Some("off"));
     }
 }

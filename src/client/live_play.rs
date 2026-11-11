@@ -270,6 +270,8 @@ impl LivePlay {
         data: &Path,
         timeout: Duration,
     ) -> Result<Self, String> {
+        // Each game you join draws its own random enemy body.
+        crate::client::player_model_selection::reroll_random_enemy_model();
         let session = NetworkSession::start(
             SessionConfig {
                 url: url.to_owned(),
