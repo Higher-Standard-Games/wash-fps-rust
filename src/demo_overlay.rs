@@ -7,8 +7,9 @@
 //! timeline seeks there; on a mark, to a little before it.
 //!
 //! The TypeScript builds it from DOM elements with the HUD's raised keys;
-//! here it is one egui area in the same colours. Minimizing it and the exit
-//! plate are left out: the window's Escape already leaves.
+//! here it is one egui area in the same colours, and the gold exit plate
+//! (`.dvh-exit`) in the top left corner, which fades with it. Minimizing
+//! the bar is left out.
 
 // The bar's widgets sense clicks but never take keyboard focus
 // (`Sense::CLICK`, not `Sense::click()`): a focused button would also take
@@ -36,6 +37,8 @@ pub enum DemoOverlayAction {
     /// Seek to this point of the timeline (0 to 1).
     Seek(f64),
     Speed(i8),
+    /// The exit plate: leave playback, back to the lobby (Escape).
+    Exit,
 }
 
 /// `DemoTimelineEvent`'s kind, from the followed player's side.
@@ -122,7 +125,7 @@ impl DemoOverlay {
             Pos2::new(screen.left() + 24.0, screen.bottom() - height - 16.0),
             Pos2::new(screen.right() - 24.0, screen.bottom() - 16.0),
         );
-        let mut action = None;
+        let mut action = exit_plate(ctx, screen.min, opacity);
         egui::Area::new(egui::Id::unique("demo-viewer-hud"))
             .fixed_pos(bar.min)
             .fade_in(false)
@@ -290,6 +293,78 @@ impl DemoOverlay {
             });
         action
     }
+}
+
+/// `.dvh-exit`: a gold plate cut away at its lower right, with a ✕ in
+/// ink, in the corner at `at`; its click leaves playback.
+fn exit_plate(ctx: &egui::Context, at: Pos2, opacity: f32) -> Option<DemoOverlayAction> {
+    let size = vec2(52.0, 34.0);
+    let mut action = None;
+    egui::Area::new(egui::Id::unique("demo-viewer-exit"))
+        .fixed_pos(at)
+        .fade_in(false)
+        .order(egui::Order::Foreground)
+        .show(ctx, |ui| {
+            let (rect, hit) = ui.allocate_exact_size(size, Sense::CLICK);
+            let hit = hit.on_hover_text("Leave playback (Esc)");
+            let fade = |c: Color32| {
+                // `filter: brightness(1.08)` on hover.
+                let c = if hit.hovered() {
+                    let up = |v: u8| (f32::from(v) * 1.08).min(255.0) as u8;
+                    Color32::from_rgb(up(c.r()), up(c.g()), up(c.b()))
+                } else {
+                    c
+                };
+                c.gamma_multiply(opacity)
+            };
+            // `clip-path: polygon(0 0, 100% 0, calc(100% - 10px) 100%, 0 100%)`,
+            // `linear-gradient(240deg, #ffc52c, #efa600)`: light at the top
+            // right, deeper at the bottom left.
+            let light = fade(Color32::from_rgb(0xff, 0xc5, 0x2c));
+            let deep = fade(Color32::from_rgb(0xef, 0xa6, 0x00));
+            let corners = [
+                (rect.left_top(), deep.lerp_to_gamma(light, 0.4)),
+                (rect.right_top(), light),
+                (
+                    Pos2::new(rect.right() - 10.0, rect.bottom()),
+                    deep.lerp_to_gamma(light, 0.5),
+                ),
+                (rect.left_bottom(), deep),
+            ];
+            let mut mesh = egui::Mesh::default();
+            for (pos, color) in corners {
+                mesh.colored_vertex(pos, color);
+            }
+            mesh.add_triangle(0, 1, 2);
+            mesh.add_triangle(0, 2, 3);
+            let painter = ui.painter();
+            painter.add(mesh);
+            // `box-shadow: inset 0 -3px 0 #cd8600`.
+            let lip = rect.bottom() - 3.0;
+            painter.add(egui::Shape::convex_polygon(
+                vec![
+                    Pos2::new(rect.left(), lip),
+                    Pos2::new(rect.right() - 10.0 + 10.0 * 3.0 / size.y, lip),
+                    Pos2::new(rect.right() - 10.0, rect.bottom()),
+                    rect.left_bottom(),
+                ],
+                fade(Color32::from_rgb(0xcd, 0x86, 0x00)),
+                Stroke::NONE,
+            ));
+            // The ✕, drawn: padding 14 left, 22 right; 8 top, 9 bottom.
+            let mark = Rect::from_min_max(
+                Pos2::new(rect.left() + 14.0, rect.top() + 8.0),
+                Pos2::new(rect.right() - 22.0, rect.bottom() - 9.0),
+            );
+            let mark = Rect::from_center_size(mark.center(), vec2(11.0, 11.0));
+            let ink = Stroke::new(2.6, fade(Color32::from_rgb(0x17, 0x13, 0x26)));
+            painter.line_segment([mark.left_top(), mark.right_bottom()], ink);
+            painter.line_segment([mark.right_top(), mark.left_bottom()], ink);
+            if hit.clicked() {
+                action = Some(DemoOverlayAction::Exit);
+            }
+        });
+    action
 }
 
 #[cfg(test)]

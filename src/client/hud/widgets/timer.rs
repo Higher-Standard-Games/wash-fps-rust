@@ -105,16 +105,9 @@ impl FpsHudWidget for Timer {
             Mood::Critical => hsla(42.0, 95.0, 92.0, 0.7),
             _ => hsla(190.0, 100.0, 78.0, 0.55),
         };
-        let style = fonts.body(10.0, caption);
-        let step = 10.0 * s * 1.22;
-        for (i, ch) in "TIME".chars().enumerate() {
-            hud.text(
-                x + 14.0 * s,
-                y + 10.0 * s + 8.0 * s + i as f32 * step,
-                &ch.to_string(),
-                &style,
-            );
-        }
+        // `writing-mode: vertical-rl`: the letters turned on their side.
+        let style = fonts.body(10.0, caption).spacing(10.0 * s * 0.22);
+        hud.text_vertical(x + 14.0 * s, y + 10.0 * s, "TIME", &style);
     }
 }
 

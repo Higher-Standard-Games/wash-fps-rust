@@ -463,6 +463,9 @@ impl RemoteMuzzle {
 /// This frame's muzzles: ours on screen, the others in their hands.
 struct FrameMuzzles<'a> {
     local: Option<&'a str>,
+    /// The player watched through their eyes, whose gun is the one on
+    /// screen (`setFollowedMuzzle`).
+    followed: Option<&'a str>,
     view: Option<(&'a WeaponViewModel, &'a Camera)>,
     remote: &'a HashMap<String, RemoteMuzzle>,
 }
@@ -478,7 +481,15 @@ impl ShotMuzzles for FrameMuzzles<'_> {
     }
 
     fn remote_muzzle(&self, entity_id: &str, direction: DVec3) -> Option<DVec3> {
-        self.remote.get(entity_id).map(|m| m.resolve(direction))
+        self.followed_muzzle(entity_id)
+            .or_else(|| self.remote.get(entity_id).map(|m| m.resolve(direction)))
+    }
+
+    fn followed_muzzle(&self, entity_id: &str) -> Option<DVec3> {
+        if self.followed != Some(entity_id) {
+            return None;
+        }
+        self.view_muzzle(5.0)
     }
 }
 
@@ -1131,6 +1142,9 @@ pub struct MapRenderer {
     /// The local player (whose own body is not drawn) and their view yaw,
     /// for their corpse (`startLocalRagdollDeathCamera`).
     local_player: Option<(String, f64)>,
+    /// The player watched through their eyes (`_hiddenEntityId`): their
+    /// shots leave the gun on screen (`setFollowedMuzzle`).
+    followed_player: Option<String>,
     /// Where each drawn player's shots leave from this frame
     /// (`getWeaponMuzzleWorldPosition`).
     remote_muzzles: HashMap<String, RemoteMuzzle>,
@@ -2095,6 +2109,12 @@ impl MapRenderer {
         self.local_player = id.map(|id| (id.to_owned(), yaw));
     }
 
+    /// `setFollowedMuzzle`: the player watched through their eyes, whose
+    /// beams, rails and shots leave the gun on screen.
+    pub fn set_followed_player(&mut self, id: Option<&str>) {
+        self.followed_player = id.map(str::to_owned);
+    }
+
     /// The style the local player's corpse is drawn in: their own body,
     /// never drawn, has no entry among the live players'.
     pub fn set_local_style(&mut self, style: Option<PlayerModelVisualStyle>) {
@@ -2289,6 +2309,7 @@ impl MapRenderer {
             &|id| weapons.get(id).cloned(),
             &FrameMuzzles {
                 local: self.local_player.as_ref().map(|(id, _)| id.as_str()),
+                followed: self.followed_player.as_deref(),
                 view: self.view_model.as_ref().map(|v| (v, camera)),
                 remote: &self.remote_muzzles,
             },
@@ -2517,10 +2538,16 @@ impl MapRenderer {
                     .and_then(|(_, jitter)| view_model.blade_tip_world_position(camera, *jitter, height)),
             });
         }
-        // Remote beams leave their shooters' guns as they are now.
-        let muzzles = &self.remote_muzzles;
+        // Remote beams leave their shooters' guns as they are now; the
+        // watched player's, the gun on screen.
+        let muzzles = FrameMuzzles {
+            local: None,
+            followed: self.followed_player.as_deref(),
+            view: self.view_model.as_ref().map(|v| (v, camera)),
+            remote: &self.remote_muzzles,
+        };
         self.hitscan
-            .refresh_remote_lightning_starts(&mut |id, direction| muzzles.get(id).map(|m| m.resolve(direction)));
+            .refresh_remote_lightning_starts(&mut |id, direction| muzzles.remote_muzzle(id, direction));
         self.hitscan.muzzle_flashes.prepare(gpu, &frame);
         self.hitscan.impact_sparks.prepare(gpu, &frame);
         self.hitscan.rails.prepare(gpu, &frame);
@@ -3324,6 +3351,7 @@ pub fn build_renderer(gpu: &Gpu, map: &mut LoadedMap, output_format: wgpu::Textu
         departed: HashMap::new(),
         live_worlds: HashMap::new(),
         local_player: None,
+        followed_player: None,
         remote_muzzles: HashMap::new(),
         local_beam: false,
         blade_tip_flashes: Vec::new(),
@@ -3596,7 +3624,9 @@ pub fn start_prepared(o: &ViewOptions, prepared: Prepared) -> Result<i32, String
         }
         _ => None,
     };
-    map.hands = o.join;
+    // The weapon in hand: our own in a match, and the one a demo or a
+    // live match shows through a player's eyes.
+    map.hands = o.join || feed.is_some();
     let at = o.at.map(|[x, y, z, angle]| Camera::from_q3([x, y, z], angle));
     let Some(mut camera) = at.or_else(|| map.spawns.get(o.spawn).or(map.spawns.first()).copied()) else {
         return Err(format!("{map_name} has no spawn point"));
