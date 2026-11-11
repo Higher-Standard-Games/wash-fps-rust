@@ -2744,10 +2744,13 @@ model renderer measured with `washoi bench` (dm14, 1280x720, llvmpipe,
   JavaScript time on Babylon's animation groups. Posing a player
   natively is a few microseconds; a culled player is no longer drawn,
   which was the cost that mattered.
-- **No antialiasing.** Every pipeline is single sampled; `r_msaa` is
-  read by nothing. MSAA would touch every pipeline and the passes that
-  read the depth (soft particles, water); a post-process FXAA on the
-  resolve is the smaller step.
+- **Antialiasing, as the browser has it.** The browser's `r_msaa` is the
+  canvas context's `antialias` (`BrowserRuntime.ts`), but the world draws
+  into `DefaultRenderingPipeline`'s target, single sampled (`samples`
+  stays 1) and without FXAA: its world is not antialiased either. Only
+  what is drawn straight to the canvas after the pipeline is, the view
+  weapon. The native client's weapon overlay is single sampled; that pass
+  is the one difference left (`r_msaa` is read by nothing).
 
 ### Public beta QA, round 2: code quality and data flows (November 11, 2026)
 
