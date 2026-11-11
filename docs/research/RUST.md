@@ -2732,6 +2732,19 @@ whole areas rather than single items. 0.2.0 closes them in two steps.
 
 Newest first. Each entry names the commits and what proves them.
 
+### The data screen as the lobby's twin (November 11, 2026)
+
+`data_sync_screen.rs` drew a plain centred egui progress bar. It now draws
+the lobby's twin as the match loading screen does (shagger's
+`paint_twin`): the rail with the start-up's steps (Update, Game data,
+Lobby), its source and package as facts and the phases in its log; on the
+stage the phase as the title (CHECKING DATA, DOWNLOADING DATA, UPDATING
+WASHOI, DOWNLOAD FAILED), the gold status plate with the percentage, the
+browser's slanted cyan-violet-gold bar, and the megabytes and speed under
+it. A failure shows the error notice and the two keys, Try again and Play
+with the data on disk. Unit tests dress a download and a failure and draw
+them (`DATA_SYNC_PNG`, `DATA_SYNC_FAILED_PNG`).
+
 ### The Esc menu as the browser's gold rail (November 11, 2026)
 
 `client/hud/widgets/pause_menu.rs` now draws `FPSPauseMenu` as
