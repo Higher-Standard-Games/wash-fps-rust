@@ -1,9 +1,10 @@
 name: Release
 
 # A tag v* builds the game for Linux, macOS (Apple silicon and Intel) and
-# Windows, packages each with tools/package.sh and attaches them to a draft
-# GitHub release. Run by hand, it builds and keeps the packages as workflow
-# artifacts only, unless the `release` input asks for the draft.
+# Windows (a zip and an installer), packages each with tools/package.sh and
+# attaches them to a draft GitHub release. Run by hand, it builds and keeps
+# the packages as workflow artifacts only, unless the `release` input asks
+# for the draft.
 #
 # Signing happens only when its secrets exist:
 #   macOS    MACOS_CERTIFICATE (base64 .p12), MACOS_CERTIFICATE_PASSWORD,
@@ -126,6 +127,13 @@ jobs:
           [IO.File]::WriteAllBytes("$env:RUNNER_TEMP\cert.pfx", [Convert]::FromBase64String($env:WINDOWS_CERTIFICATE))
           $signtool = Get-ChildItem "C:\Program Files (x86)\Windows Kits\10\bin\*\x64\signtool.exe" | Select-Object -Last 1
           & $signtool.FullName sign /f "$env:RUNNER_TEMP\cert.pfx" /p "$env:WINDOWS_CERTIFICATE_PASSWORD" /fd sha256 /tr http://timestamp.digicert.com /td sha256 target\release\washoi.exe
+      # tools/package.sh builds the Windows installer with Inno Setup 6.
+      - name: Install Inno Setup
+        if: runner.os == 'Windows'
+        run: |
+          if [ ! -f "/c/Program Files (x86)/Inno Setup 6/ISCC.exe" ]; then
+            choco install innosetup --no-progress -y
+          fi
       - name: Package
         run: |
           # A tag v1.2.3 names the packages 1.2.3; otherwise Cargo.toml's version.
@@ -134,6 +142,16 @@ jobs:
         env:
           PYTHON: ${{ runner.os == 'Windows' && 'python' || 'python3' }}
           MACOS_SIGN_IDENTITY: ${{ steps.secrets.outputs.mac_cert == 'true' && secrets.MACOS_SIGN_IDENTITY || '' }}
+      - name: Sign the Windows installer
+        if: runner.os == 'Windows' && steps.secrets.outputs.win_cert == 'true'
+        env:
+          WINDOWS_CERTIFICATE_PASSWORD: ${{ secrets.WINDOWS_CERTIFICATE_PASSWORD }}
+        shell: pwsh
+        run: |
+          $signtool = Get-ChildItem "C:\Program Files (x86)\Windows Kits\10\bin\*\x64\signtool.exe" | Select-Object -Last 1
+          Get-ChildItem dist\*-setup.exe | ForEach-Object {
+            & $signtool.FullName sign /f "$env:RUNNER_TEMP\cert.pfx" /p "$env:WINDOWS_CERTIFICATE_PASSWORD" /fd sha256 /tr http://timestamp.digicert.com /td sha256 $_.FullName
+          }
       - name: Notarize the macOS app
         if: runner.os == 'macOS' && steps.secrets.outputs.notarize == 'true'
         env:

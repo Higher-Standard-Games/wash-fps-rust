@@ -10,6 +10,9 @@
 #            Developer ID in the keychain)
 #   Windows  washoi-<version>-windows-<arch>.zip     washoi.exe (its icon built in
 #            by build.rs), README.txt, licences
+#            washoi-<version>-windows-<arch>-setup.exe the same files as an
+#            installer (tools/windows/washoi.iss), when Inno Setup 6 is
+#            installed (ISCC names its compiler otherwise)
 #
 # BIN overrides the binary (default target/release/washoi[.exe]); VERSION
 # the version in the names (default Cargo.toml's).
@@ -141,5 +144,22 @@ PLIST
     extras "$stage/$name"
     (cd "$stage" && 7z a -tzip "$OLDPWD/dist/$name.zip" "$name" >/dev/null)
     echo "dist/$name.zip"
+    # The installer players double-click, with Start menu and desktop
+    # shortcuts and an uninstaller.
+    iscc=${ISCC:-}
+    if [ -z "$iscc" ]; then
+      for c in iscc "/c/Program Files (x86)/Inno Setup 6/ISCC.exe" "/c/Program Files/Inno Setup 6/ISCC.exe"; do
+        if command -v "$c" >/dev/null 2>&1 || [ -f "$c" ]; then iscc=$c; break; fi
+      done
+    fi
+    if [ -z "$iscc" ]; then
+      echo "no Inno Setup 6 (ISCC): the installer is skipped" >&2
+    else
+      # MSYS would turn the /D switches into paths.
+      MSYS2_ARG_CONV_EXCL='*' "$iscc" /Q "/DAppVersion=$version" \
+        "/DStageDir=$(cygpath -w "$stage/$name")" "/DOutputDir=$(cygpath -w "$PWD/dist")" \
+        "$(cygpath -w tools/windows/washoi.iss)"
+      echo "dist/$name-setup.exe"
+    fi
     ;;
 esac

@@ -2712,6 +2712,27 @@ whole areas rather than single items. 0.2.0 closes them in two steps.
 
 Newest first. Each entry names the commits and what proves them.
 
+### Windows installer (November 11, 2026)
+
+A plain start has been the whole game since 0.1.0 (region picker, data
+sync, lobby; the command line only overrides), so players need no script.
+What they lacked was the install: a zip to unpack and a folder to find.
+`tools/package.sh` now also builds `washoi-<v>-windows-x86_64-setup.exe`
+with Inno Setup 6 (`tools/windows/washoi.iss`) from the same files as the
+zip, and the release workflow installs Inno Setup and signs the installer
+when the certificate secret exists. It installs per user, in
+`%LOCALAPPDATA%\Programs\Washoi`, so it never asks for an administrator;
+it makes a Start menu shortcut, offers a desktop one, and registers an
+uninstaller that leaves the settings and the game data. It closes a
+running game before replacing it, and `/VERYSILENT /RELAUNCH=1` starts the
+game again afterwards: the self-update to come runs exactly that.
+
+Next, in order: the game downloads and runs the installer itself (wash-fps'
+`client-release.sh` publishes it to `washoi.net/client/`), the lobby turns
+away a client too old for its protocol so the update is required, a
+launch-options file beside the exe for testers (in place of `.bat` files),
+macOS swapping its `.app` in place, and a Linux AppImage.
+
 ### Player outlines along hard edges (November 11, 2026)
 
 The beta9 bodies split their vertices along hard edges, and the outline,
