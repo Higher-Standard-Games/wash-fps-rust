@@ -2741,6 +2741,12 @@ checks by hash; wash-fps' `client-release.sh` publishes it. The Apple
 silicon build moved from `macos-14`, which no longer gets a runner, to
 `macos-15`. Unit tests cover each target's package pick.
 
+Two fixes after 0.2.0 on Arch (Wayland): the AppImage's entry is now a
+script (`tools/linux/AppRun`) that names the WebKitGTK 4.1 package when
+`ldd` finds it missing, instead of the loader's bare error; and shagger
+holds GTK to X11 like winit, where it picked Wayland and wry panicked
+(WEBVIEW_LOBBY.md 15).
+
 ### Launch options in washoi.args (November 11, 2026)
 
 A plain start (no arguments) now reads its command line from

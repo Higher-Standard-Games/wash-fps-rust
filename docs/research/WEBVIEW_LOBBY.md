@@ -674,8 +674,16 @@ for those crates only. gtk-rs 0.18 uses the unmaintained `proc-macro-error`
 moves past GTK 3. wry 0.57.1 needs Rust 1.85, below the client's minimum.
 
 Building on Linux needs `libwebkit2gtk-4.1-dev` (CI and the release job
-install it); running needs `libwebkit2gtk-4.1-0`, which the client checks
-at start (`the lobby needs a web view: …`).
+install it); running needs `libwebkit2gtk-4.1-0`. A missing library stops the
+loader before `main`, so the client's own check (`the lobby needs a web
+view: …`) never runs; the AppImage's `AppRun` (`tools/linux/AppRun`) runs
+`ldd` first and names the package per distro instead, and the tar.gz
+README lists them. Arch's `webkit2gtk` is the 4.0 API; 4.1 is
+`webkit2gtk-4.1`. GTK is held to its X11 backend (shagger's
+`init_platform`), the same as winit: on a Wayland desktop it otherwise
+picked Wayland and wry panicked in `new_x11` (0.2.0, November 11, 2026).
+The GTK 4 port (webkitgtk-6.0) is not an option: wry supports only 4.1,
+and GTK 4 cannot embed a child in a foreign X11 window.
 
 Memory: a webview costs roughly 80–150 MB while the lobby shows. Hidden
 during a match it stays resident. If W0 measures it as a problem, the client

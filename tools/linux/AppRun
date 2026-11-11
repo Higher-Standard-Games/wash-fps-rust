@@ -1,0 +1,35 @@
+#!/bin/sh
+# The AppImage's entry point (tools/package.sh). The game links the system's
+# WebKitGTK 4.1 and ALSA rather than carrying them; when one is missing the
+# loader fails before the game can say anything, so this names the package
+# to install instead.
+here=$(dirname "$(readlink -f "$0")")
+bin="$here/usr/bin/washoi"
+if command -v ldd >/dev/null 2>&1; then
+  missing=$(ldd "$bin" 2>/dev/null | awk '/not found/ { print $1 }')
+  if [ -n "$missing" ]; then
+    text="Washoi needs system libraries that are not installed:
+
+$missing
+
+Install WebKitGTK 4.1 (and ALSA) with your package manager:
+  Arch, Manjaro        sudo pacman -S webkit2gtk-4.1
+  Debian, Ubuntu       sudo apt install libwebkit2gtk-4.1-0
+  Fedora               sudo dnf install webkit2gtk4.1
+  openSUSE             sudo zypper install libwebkit2gtk-4_1-0
+
+(Arch's webkit2gtk package is the older 4.0, not the one needed.)"
+    echo "$text" >&2
+    if [ ! -t 2 ]; then
+      if command -v zenity >/dev/null 2>&1; then
+        zenity --error --title=Washoi --no-wrap --text="$text" 2>/dev/null
+      elif command -v kdialog >/dev/null 2>&1; then
+        kdialog --title Washoi --error "$text" 2>/dev/null
+      elif command -v notify-send >/dev/null 2>&1; then
+        notify-send Washoi "$text" 2>/dev/null
+      fi
+    fi
+    exit 127
+  fi
+fi
+exec "$bin" "$@"
