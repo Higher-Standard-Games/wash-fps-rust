@@ -67,6 +67,7 @@ use washoi::client::demo_service::analysis_report;
 use washoi::client::first_person_view::{BodyFrame, FirstPersonView, ViewKeys, ViewOffset};
 use washoi::client::game_events::GameAudio;
 use washoi::client::hud::widgets::pause_menu::{PauseMenu, PauseMenuAction};
+use washoi::client::spectate_view::{DeathCameraCue, SpectateView};
 use washoi::client::teleport_effect::TeamColor;
 use washoi::client::washoi_style::install_style;
 use washoi::client::weapon_view::{clip_reload_time, quad_view_weapon_outline, shot_style};
@@ -158,6 +159,11 @@ struct App {
     /// confirms it (`FPSPlayer.switchWeapon`).
     predicted_weapon: Option<String>,
     death_follow: Option<DeathFollow>,
+    /// The round's focus point the death camera watches at its end.
+    death_focus: Option<DVec3>,
+    /// Dead in a round: the teammate watched, and the round-end camera
+    /// (`SpectateView`).
+    spectate: SpectateView,
     /// The match's sound, when there is a sound card.
     audio: Option<GameAudio>,
     /// The drop-down console (the backquote key) and its commands.
@@ -641,6 +647,14 @@ impl App {
                             smooth_factor,
                         ));
                         self.on_ladder = m.on_ladder;
+                        // `Game`'s own trail, from where we are drawn.
+                        s.renderer.slide_dust.emit(
+                            "local",
+                            body.feet,
+                            body.velocity.x,
+                            body.velocity.z,
+                            p.alive && p.grounded() && m.is_sliding && m.water_level == 0 && !m.on_ladder,
+                        );
                     }
                     None => self.first_person.reset(),
                 }
@@ -654,7 +668,9 @@ impl App {
                 // which heals a pick the server did not take.
                 let arrived = p.take_weapon_state();
                 let predicted = self.predicted_weapon.take();
+                // A teammate's eyes put their weapon in hand.
                 match p.weapon_in_hand() {
+                    _ if self.spectate.watching().is_some() => {}
                     None => s.renderer.hold(None),
                     Some(_) if predicted.is_some() => s.renderer.hold(predicted.as_deref()),
                     Some(server) => {
@@ -719,6 +735,41 @@ impl App {
                 self.follow = self
                     .follow_id
                     .as_ref()
+                    .and_then(|id| players.iter().position(|(p, _, _)| p == id));
+            }
+            // `SpectateView`: dead in a round, a teammate's eyes after the
+            // corpse, and what decided the round at its end.
+            if let Feed::Play(p, _) = &*feed {
+                let cue = self.spectate.update(
+                    f64::from(dt),
+                    !p.alive,
+                    &p.entity_id,
+                    feed.match_state(),
+                    players.iter().map(|(id, _, _)| id.as_str()),
+                );
+                match cue {
+                    DeathCameraCue::Keep => {}
+                    DeathCameraCue::Focus(at) => {
+                        // From behind wherever we were looking.
+                        self.death_camera.start(at, f64::from(self.camera.yaw));
+                        self.death_follow = None;
+                        self.death_focus = Some(at);
+                    }
+                    DeathCameraCue::Stop => {
+                        self.death_camera.stop();
+                        self.death_focus = None;
+                    }
+                    DeathCameraCue::Resume => {
+                        let at = self.camera.position.as_dvec3()
+                            - DVec3::Y * shagger::physics::player_physics_constants::DEFAULT_VIEWHEIGHT;
+                        self.death_camera.start(at, f64::from(self.camera.yaw));
+                        self.death_follow = None;
+                        self.death_focus = None;
+                    }
+                }
+                self.follow = self
+                    .spectate
+                    .watching()
                     .and_then(|id| players.iter().position(|(p, _, _)| p == id));
             }
             // `FollowedViewWeapon` and `SpectateEyeCamera`: the watched
@@ -831,7 +882,9 @@ impl App {
                 self.death_camera.stop();
             }
             if self.death_camera.is_active() {
-                let target = self.death_follow.and_then(|f| s.renderer.follow_position(f));
+                let target = self
+                    .death_focus
+                    .or_else(|| self.death_follow.and_then(|f| s.renderer.follow_position(f)));
                 let renderer = &mut s.renderer;
                 let mut trace = |from, to| renderer.trace_map(from, to);
                 if let Some((at, look)) = self.death_camera.update(f64::from(dt), target, Some(&mut trace)) {
@@ -843,7 +896,11 @@ impl App {
             }
             // `presentFire` and the reload, for the eyes we look through:
             // the server's shots and weapon state (wash-fps `FPSPlayer`).
-            if let Some(viewed) = view_entity(feed.local_entity(), &players, self.follow) {
+            if let Some(viewed) = view_entity(
+                feed.local_entity().filter(|_| self.spectate.watching().is_none()),
+                &players,
+                self.follow,
+            ) {
                 let viewed = viewed.to_owned();
                 for event in &view.effects {
                     match event {
@@ -903,7 +960,11 @@ impl App {
             }
             s.renderer.play_hit_feedback(
                 &view.effects,
-                view_entity(feed.local_entity(), &players, self.follow),
+                view_entity(
+                    feed.local_entity().filter(|_| self.spectate.watching().is_none()),
+                    &players,
+                    self.follow,
+                ),
                 effect_dt,
             );
             if self.audio.is_none() {
@@ -1969,6 +2030,8 @@ pub fn run(
         followed_aiming: None,
         predicted_weapon: None,
         death_follow: None,
+        death_focus: None,
+        spectate: SpectateView::default(),
         audio,
         leave: false,
         pause_menu: PauseMenu::default(),

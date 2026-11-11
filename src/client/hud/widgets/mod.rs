@@ -17,6 +17,7 @@ pub mod powerup_timer;
 pub mod ready_bar;
 pub mod round_result;
 pub mod scoreboard;
+pub mod spectator_bar;
 pub mod speedometer;
 pub mod timer;
 pub mod vitals_block;

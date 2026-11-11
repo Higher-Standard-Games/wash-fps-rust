@@ -26,6 +26,7 @@ use washoi::client::quad_damage_visual::{get_quad_damage_pulse, mask_has_quad};
 use washoi::client::ragdoll::death_clip::DeathFacts;
 use washoi::client::ragdoll_system::{RagdollSystem, RagdollTrails};
 use washoi::client::remote_player_renderer::{DetachedBody, HandWeapons, update_powerup_glow};
+use washoi::client::slide_dust::{SlideDust, SlideDustRenderer};
 use washoi::client::teleport_effect::{TeamColor, TeleportEffect, TeleportRenderer, legacy_team_color, play_tele_in};
 use washoi::liquid::client::liquid_interaction_system::{LiquidInteractionSystem, Ring, WaterRipples};
 use washoi::liquid::client::liquid_ring_renderer::LiquidRingRenderer;
@@ -213,7 +214,8 @@ pub struct ViewOptions {
 }
 
 /// The HUD's frame of a demo or a match being watched, behind the
-/// followed player (if any).
+/// followed player (if any). In play, `follow` is the teammate watched
+/// while dead, whom the HUD then describes.
 #[allow(clippy::too_many_arguments)]
 pub fn update_watch_hud(
     hud: &mut FpsHud,
@@ -227,9 +229,11 @@ pub fn update_watch_hud(
     height: f32,
 ) {
     let local = feed.local_entity();
-    let view_entity = local.or_else(|| follow.and_then(|i| players.get(i)).map(|(id, _, _)| id.as_str()));
+    let followed = follow.and_then(|i| players.get(i));
+    let view_entity = local.or_else(|| followed.map(|(id, _, _)| id.as_str()));
+    let watched = local.and(followed).map(|(id, _, _)| id.as_str());
     let speed = match feed {
-        Feed::Play(p, _) => {
+        Feed::Play(p, _) if followed.is_none() => {
             let v = p.velocity();
             v.x.hypot(v.z)
         }
@@ -247,6 +251,7 @@ pub fn update_watch_hud(
     hud.update_watching(
         &WatchFrame {
             playing: local.is_some(),
+            watched,
             positions: &positions,
             yaw,
             roster: feed.roster(),
@@ -1067,6 +1072,10 @@ pub struct MapRenderer {
     /// The bomb itself (`BombRenderer`), and its carrier's spine and yaw
     /// when they were drawn last frame.
     bomb: BombRenderer,
+    /// The trails behind sliders (`SlideDust`); ours is emitted by the
+    /// window, everyone else's with their model.
+    pub slide_dust: SlideDust,
+    slide_dust_renderer: SlideDustRenderer,
     bomb_anchor: Option<(String, DVec3, f64)>,
     bomb_carrier: Option<String>,
     /// Blast sounds the detonation asked for, not yet played.
@@ -1490,6 +1499,12 @@ impl MapRenderer {
         self.live_draws.clear();
         self.bomb_anchor = None;
         self.live_actors.clear();
+        // `RemotePlayerRenderer` emits everyone's dust; `Game` steps it.
+        for (id, p, _) in players {
+            let sliding = p.sliding && p.grounded && p.water_level.unwrap_or(0) == 0 && !p.on_ladder.unwrap_or(false);
+            self.slide_dust.emit(id, DVec3::new(p.x, p.y, p.z), p.vx, p.vz, sliding);
+        }
+        self.slide_dust.step(effect_dt);
         let Some(renderer) = &mut self.remote_players else {
             return;
         };
@@ -1665,6 +1680,7 @@ impl MapRenderer {
             }
         }
         self.gibs.clear();
+        self.slide_dust.reset();
         self.bomb_debris.clear();
         self.damage_numbers.clear();
     }
@@ -2316,6 +2332,8 @@ impl MapRenderer {
         }
         self.gib_renderer.draws(&self.gibs, &mut self.frame_draws);
         self.bomb.draws(&mut self.frame_draws);
+        self.slide_dust.eye = Some(camera.position.as_dvec3());
+        self.slide_dust_renderer.draws(&self.slide_dust, &mut self.frame_draws);
         for fragment in self.bomb_debris.fragments() {
             if let Some(model) = self.debris_models.get(&fragment.path) {
                 model.draws(fragment.world(), self.item_time, &mut self.frame_draws);
@@ -2838,6 +2856,7 @@ pub fn build_renderer(gpu: &Gpu, map: &mut LoadedMap, output_format: wgpu::Textu
     }
     let gib_renderer = GibRenderer::new(gpu, &mut models);
     let bomb = BombRenderer::new(gpu, &mut models);
+    let slide_dust_renderer = SlideDustRenderer::new(gpu, &mut models);
     // The `func_explosive` brush models (`BrushModelState`), and in a demo
     // or a match the debris models they throw (`BombSiteDebris.preload`).
     let brush_models = BrushModelState::new(extract_brush_models(&map.bsp.entities, &map.bsp.models));
@@ -3180,6 +3199,8 @@ pub fn build_renderer(gpu: &Gpu, map: &mut LoadedMap, output_format: wgpu::Textu
         bomb_debris: BombSiteDebris::default(),
         debris_models,
         bomb,
+        slide_dust: SlideDust::default(),
+        slide_dust_renderer,
         bomb_anchor: None,
         bomb_carrier: None,
         blast_sounds: 0,

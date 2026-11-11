@@ -80,6 +80,8 @@ pub struct HudState {
     pub local_player_id: String,
     /// The player whose eyes the view is behind, or "" for our own.
     pub spectating: String,
+    /// Their name, for the spectator bar.
+    pub spectating_name: String,
     /// A spectator rather than a player.
     pub watcher: bool,
     /// A recording, not a match we are in.
@@ -113,6 +115,7 @@ impl Default for HudState {
             scoreboard: Vec::new(),
             local_player_id: String::new(),
             spectating: String::new(),
+            spectating_name: String::new(),
             watcher: false,
             playback: false,
             gametype_name: String::new(),

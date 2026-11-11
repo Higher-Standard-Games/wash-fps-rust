@@ -36,6 +36,7 @@ use crate::client::hud::widgets::powerup_timer::PowerupTimer;
 use crate::client::hud::widgets::ready_bar::ReadyBar;
 use crate::client::hud::widgets::round_result::RoundResult;
 use crate::client::hud::widgets::scoreboard::Scoreboard;
+use crate::client::hud::widgets::spectator_bar::SpectatorBar;
 use crate::client::hud::widgets::speedometer::Speedometer;
 use crate::client::hud::widgets::timer::Timer;
 use crate::client::hud::widgets::vitals_block::VitalsBlock;
@@ -72,6 +73,7 @@ pub struct FpsHud {
     powerup_timer: PowerupTimer,
     air: AirMeter,
     ready: ReadyBar,
+    spectator_bar: SpectatorBar,
     round_result: RoundResult,
     bomb_status: BombStatus,
     death: DeathScreen,
@@ -100,6 +102,9 @@ pub struct WatchFrame<'a> {
     pub playback: bool,
     /// We are in the match, and `view_entity` is our own.
     pub playing: bool,
+    /// Dead in a round, the teammate whose eyes we watch through
+    /// (`SpectateView._spectatingEntityId`): the HUD describes them.
+    pub watched: Option<&'a str>,
     /// The view entity's horizontal speed, units a second.
     pub speed: f64,
     /// Where the players are (entity id, position), for which way damage
@@ -141,6 +146,7 @@ impl FpsHud {
             air: AirMeter::default(),
             ready: ReadyBar::default(),
             round_result: RoundResult::default(),
+            spectator_bar: SpectatorBar::default(),
             bomb_status: BombStatus::default(),
             death: DeathScreen::default(),
             damage: DamageOverlay::default(),
@@ -166,20 +172,38 @@ impl FpsHud {
         let state = &mut self.state;
         state.watcher = !frame.playing;
         state.playback = frame.playback;
-        if frame.playing {
-            state.spectating.clear();
+        let local = if frame.playing {
             state.local_player_id = frame.view_entity.unwrap_or_default().to_owned();
+            state.spectating = frame.watched.unwrap_or_default().to_owned();
+            frame.view_entity
         } else {
             state.spectating = frame.view_entity.unwrap_or_default().to_owned();
-        }
+            None
+        };
+        state.spectating_name = if state.spectating.is_empty() {
+            String::new()
+        } else {
+            HudState::resolve_player_name(frame.roster, &state.spectating)
+        };
         state.update_from_game_state(frame.roster, frame.match_state);
         (state.air, state.drowning) = frame.air.unwrap_or((1.0, false));
-        let view = frame.view_entity.unwrap_or_default();
+        // `viewEntityId = spectatingEntityId ?? localEntityId`.
+        let view = frame
+            .watched
+            .filter(|_| frame.playing)
+            .or(frame.view_entity)
+            .unwrap_or_default();
         // `keepOnlyLocalPowerups` runs per snapshot; the subject's
         // `combat_state`, sent in every one, says a snapshot arrived.
         let mut snapshot_arrived = false;
         let mut running_powerups = std::collections::BTreeSet::new();
         for event in frame.events {
+            // Our own death, whoever the HUD describes.
+            if let SnapshotEvent::CombatState { entity_id, dead, .. } = event
+                && Some(entity_id.as_str()) == local
+            {
+                state.local_dead = *dead;
+            }
             match event {
                 // The HUD describes whoever the camera is behind.
                 SnapshotEvent::CombatState {
@@ -190,9 +214,6 @@ impl FpsHud {
                 } if entity_id == view => {
                     snapshot_arrived = true;
                     state.process_combat_state(*health, *armor, *dead);
-                    if frame.playing {
-                        state.local_dead = *dead;
-                    }
                 }
                 SnapshotEvent::WeaponState {
                     entity_id,
@@ -399,6 +420,8 @@ impl FpsHud {
                 .draw(&mut self.hud, &fonts, (vw - speed_w) / 2.0, bottom - speed_h);
             self.pickup.draw(&mut self.hud, &fonts, vw / 2.0, bottom - speed_h);
         }
+        // `.fps-spectator-bar`: 210 px up, centred.
+        self.spectator_bar.draw(&mut self.hud, &fonts, vw / 2.0, vh - 210.0 * s);
         self.scoreboard.draw(&mut self.hud, &fonts, 0.0, 0.0);
         // `.fps-chat`: clear of the bottom bar, over the scoreboard's veil.
         self.chat.draw(
@@ -438,8 +461,9 @@ impl FpsHud {
         }
     }
 
-    fn widgets_mut(&mut self) -> [&mut dyn FpsHudWidget; 18] {
+    fn widgets_mut(&mut self) -> [&mut dyn FpsHudWidget; 19] {
         [
+            &mut self.spectator_bar,
             &mut self.powerup_timer,
             &mut self.air,
             &mut self.ready,
