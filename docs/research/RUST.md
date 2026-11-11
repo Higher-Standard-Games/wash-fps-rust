@@ -2712,6 +2712,24 @@ whole areas rather than single items. 0.2.0 closes them in two steps.
 
 Newest first. Each entry names the commits and what proves them.
 
+### 1.0.0-beta9 review (November 11, 2026)
+
+SHAG `v1.0.0-beta.9.1` and wash-fps `0abb874` against the staging review
+below (SHAG `432cce3`, wash-fps `247cafe`), in slices.
+
+- **Protocol (shagger `1af7a1b`).** A beta9 server's free-for-all snapshots
+  carry a look byte in each player record (flag 0x40); without it the
+  native client misread every FFA snapshot from the first player on.
+  `PlayerState.look`, the Pause, PausedChat and CallPause messages, demo
+  version 7, the 60 s resume grace, `SnapshotBuffer.hold`, and a paused
+  match is not a stall. Golden vectors regenerated from SHAG `2a48175`.
+- **Timeouts.** `MatchStateManager.setPause` (movement frozen while
+  paused), `LivePlay` stops predicting and sending commands and holds both
+  snapshot buffers, paused chat reaches the chat, the `timeout` and
+  `timein` commands and `/timeout`, `/timein` in chat, the phase message's
+  timeout banner, its count back in and "Fight!", and the announcer's
+  timeout, time in, 1 and fight, holding every other call.
+
 ### Staging review: player models, layered animation, items (November 10, 2026)
 
 SHAG and wash-fps `staging` against main, ported in full except what is

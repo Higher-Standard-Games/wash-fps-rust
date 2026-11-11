@@ -19,6 +19,8 @@ pub enum ConsoleRequest {
         team: bool,
     },
     Disconnect,
+    /// `timeout` (`true`) or `timein`: `Game.callPause`.
+    CallPause(bool),
     /// `demoplay`: the demo from its start, without a reel.
     DemoPlay,
     /// `demoplay cinematic`: a highlight reel of the demo.
@@ -54,6 +56,8 @@ pub fn register_fps_commands(registry: &mut CommandRegistry<ConsoleContext>) {
     registry.register(Box::new(commands::demo_play_command::DemoPlayCommand::default()));
     registry.register(Box::new(commands::disconnect_command::DisconnectCommand::default()));
     registry.register(Box::new(commands::say_team_command::SayTeamCommand::default()));
+    registry.register(Box::new(commands::timein_command::TimeinCommand::default()));
+    registry.register(Box::new(commands::timeout_command::TimeoutCommand::default()));
 }
 
 /// The console, its commands and their context.

@@ -392,6 +392,9 @@ impl App {
                 if let Some((text, team_only)) = chat.submit() {
                     play.say(&text, team_only);
                 }
+                for command in chat.take_console_commands() {
+                    self.console.run(&command);
+                }
             }
             KeyCode::Escape => chat.close_input(),
             KeyCode::Backspace => chat.backspace(),
@@ -1296,6 +1299,11 @@ impl App {
                 ConsoleRequest::Say { text, team } => {
                     if let Some(Feed::Play(p, _)) = &self.feed {
                         p.say(&text, team);
+                    }
+                }
+                ConsoleRequest::CallPause(timeout) => {
+                    if let Some(Feed::Play(p, _)) = &self.feed {
+                        p.call_pause(timeout);
                     }
                 }
                 ConsoleRequest::Disconnect | ConsoleRequest::DemoStop => self.leave = true,

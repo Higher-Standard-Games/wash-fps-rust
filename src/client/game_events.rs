@@ -7,6 +7,7 @@
 //! Not yet: another player's blade slash animation.
 
 use shagger::rendering::glam::{DVec3, Vec3};
+use shagger::shared::net::message_codec::MatchPauseState;
 use shagger::weapon::hitscan_effects::{
     HitscanEffects, PelletConfig, ShotWorld, TracerConfig, server_pellet_directions,
 };
@@ -529,6 +530,8 @@ impl GameAudio {
             ready: match_state.is_ready(),
             lead,
             team_based: match_state.team_based(),
+            pause: match_state.pause().map_or(MatchPauseState::Running, |p| p.state),
+            pause_seconds_left: match_state.pause_seconds_left(),
         };
         self.announcer.update(&mut self.sfx, &moment, dt, now);
         let phase = match_state.phase();

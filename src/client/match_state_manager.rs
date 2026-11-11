@@ -10,8 +10,10 @@
 //! Search and Destroy needs them.
 
 use std::collections::BTreeMap;
+use std::time::{Duration, Instant};
 
 use shagger::shared::json::Value;
+use shagger::shared::net::message_codec::{MatchPauseNotice, MatchPauseState};
 
 /// `MatchPhase`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -48,6 +50,16 @@ pub struct Standing {
     pub ping: f64,
 }
 
+/// `MatchPause`: a timeout as the client shows it, until `ends_at`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MatchPause {
+    /// `Timeout` or `Timein`, never `Running`.
+    pub state: MatchPauseState,
+    pub ends_at: Instant,
+    pub caller: String,
+    pub for_drop: bool,
+}
+
 /// A spectator row.
 #[derive(Debug, Clone, PartialEq, Default)]
 pub struct Spectator {
@@ -82,6 +94,8 @@ pub struct MatchStateManager {
     round_result: Option<Value>,
     explosion: Option<Value>,
     is_ready: bool,
+    /// A timeout holding the match, or its count back in; `None` while it runs.
+    pause: Option<MatchPause>,
 }
 
 fn number(v: &Value, key: &str) -> Option<f64> {
@@ -302,10 +316,49 @@ impl MatchStateManager {
         }
     }
 
-    /// `isMovementFrozen`: the post-game, and a round mode's countdown and
-    /// round end.
+    /// `setPause`: the server's pause state, from its Pause message.
+    pub fn set_pause(&mut self, notice: &MatchPauseNotice) {
+        self.set_pause_at(notice, Instant::now());
+    }
+
+    /// [`Self::set_pause`] as of `now`.
+    pub fn set_pause_at(&mut self, notice: &MatchPauseNotice, now: Instant) {
+        self.pause = (notice.state != MatchPauseState::Running).then(|| MatchPause {
+            state: notice.state,
+            ends_at: now + Duration::from_millis(u64::from(notice.ms_left)),
+            caller: notice.caller.clone(),
+            for_drop: notice.for_drop,
+        });
+    }
+
+    /// `pause`: the timeout holding the match, or `None` while it runs.
+    #[must_use]
+    pub fn pause(&self) -> Option<&MatchPause> {
+        self.pause.as_ref()
+    }
+
+    /// `pauseSecondsLeft`: until the timeout runs out or the count ends; 0
+    /// while running.
+    #[must_use]
+    pub fn pause_seconds_left(&self) -> f64 {
+        self.pause_seconds_left_at(Instant::now())
+    }
+
+    /// [`Self::pause_seconds_left`] as of `now`.
+    #[must_use]
+    pub fn pause_seconds_left_at(&self, now: Instant) -> f64 {
+        self.pause
+            .as_ref()
+            .map_or(0.0, |p| p.ends_at.saturating_duration_since(now).as_secs_f64())
+    }
+
+    /// `isMovementFrozen`: a timeout, the post-game, and a round mode's
+    /// countdown and round end.
     #[must_use]
     pub fn is_movement_frozen(&self) -> bool {
+        if self.pause.is_some() {
+            return true;
+        }
         match self.phase {
             MatchPhase::PostGame => true,
             MatchPhase::RoundEnd | MatchPhase::Countdown => self.round > 0,
@@ -368,6 +421,31 @@ mod tests {
 
     fn json(text: &str) -> Value {
         parse(text).unwrap()
+    }
+
+    #[test]
+    fn a_timeout_freezes_movement_and_counts_down() {
+        let mut m = MatchStateManager::new();
+        m.process_event(&json(r#"{"phase": 2}"#));
+        assert!(!m.is_movement_frozen());
+        let t0 = Instant::now();
+        m.set_pause_at(
+            &MatchPauseNotice {
+                state: MatchPauseState::Timeout,
+                ms_left: 120_000,
+                caller: "Alice".into(),
+                for_drop: false,
+            },
+            t0,
+        );
+        assert!(m.is_movement_frozen());
+        assert_eq!(m.pause().map(|p| p.caller.as_str()), Some("Alice"));
+        assert_eq!(m.pause_seconds_left_at(t0 + Duration::from_secs(30)), 90.0);
+        assert_eq!(m.pause_seconds_left_at(t0 + Duration::from_secs(300)), 0.0);
+        m.set_pause_at(&MatchPauseNotice::default(), t0);
+        assert!(m.pause().is_none());
+        assert!(!m.is_movement_frozen());
+        assert_eq!(m.pause_seconds_left_at(t0), 0.0);
     }
 
     #[test]

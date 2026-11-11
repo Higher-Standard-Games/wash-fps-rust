@@ -97,6 +97,20 @@ impl SnapshotFeed {
         Self::default()
     }
 
+    /// `Game.onPause`: while the match is paused, players and projectiles
+    /// stand at the newest snapshot instead of being extrapolated past it
+    /// (`RemotePlayerRenderer.holdSnapshots`, `projectiles.buffer.hold`).
+    pub fn hold(&mut self, held: bool) {
+        self.buffer.hold(held);
+        self.projectile_buffer.hold(held);
+    }
+
+    /// An event that came outside a snapshot (a chat line while paused),
+    /// presented with the next frame's effects.
+    pub fn push_effect(&mut self, event: SnapshotEvent) {
+        self.effects.push(event);
+    }
+
     /// Takes a snapshot that arrived (or was recorded) at `now` ms; the
     /// local player's own body is left out.
     pub fn push(&mut self, now: f64, state: &GameState<SnapshotEvent>, local_entity_id: &str) {

@@ -2,7 +2,8 @@
 //! `.fps-chat`): the last five messages float over the game and fade after
 //! eight seconds; talk mode (T, or Y for the team) opens the history and a
 //! line to type in. Enter sends (no local echo), Escape cancels. `/mute`
-//! and `/unmute` stay local; `/say_team` sends to the team.
+//! and `/unmute` stay local; `/say_team` sends to the team; `/timeout` and
+//! `/timein` run the console commands of those names.
 
 use shagger::ui::hud_2d::{Align, Hud2d};
 
@@ -38,6 +39,8 @@ pub struct Chat {
     team_input: bool,
     muted: Vec<String>,
     now: f64,
+    /// Console commands typed in the chat, for the game to run.
+    console_commands: Vec<String>,
 }
 
 /// What Enter asks to send: the text and whether to the team only.
@@ -148,9 +151,21 @@ impl Chat {
         Some((text, self.team_input))
     }
 
-    /// `localCommand`: `/mute` and `/unmute`.
+    /// The console commands typed since the last call (`/timeout`,
+    /// `/timein`), for the game to run (`CommandRegistry.executeChecked`).
+    pub fn take_console_commands(&mut self) -> Vec<String> {
+        std::mem::take(&mut self.console_commands)
+    }
+
+    /// `localCommand`: `/mute` and `/unmute`, and the timeouts.
     fn local_command(&mut self, text: &str) -> bool {
         let lower = text.to_lowercase();
+        // Timeouts are typed where the talking is: the console commands, from chat.
+        let bare = lower.trim_end();
+        if bare == "/timeout" || bare == "/timein" {
+            self.console_commands.push(bare[1..].to_owned());
+            return true;
+        }
         let (command, rest) = match lower.split_once(char::is_whitespace) {
             Some((c, _)) => (c.to_owned(), text[c.len()..].trim()),
             None => (lower.clone(), ""),
@@ -394,5 +409,15 @@ mod tests {
         // No team: team chat refuses with a notice.
         chat.open_input(true);
         assert!(!chat.is_input_active());
+        // Timeouts run the console's commands; anything after them is chat.
+        for line in ["/timeout", "/TimeIn"] {
+            chat.open_input(false);
+            chat.type_text(line);
+            assert_eq!(chat.submit(), None);
+        }
+        assert_eq!(chat.take_console_commands(), ["timeout", "timein"]);
+        chat.open_input(false);
+        chat.type_text("/timeout now");
+        assert_eq!(chat.submit(), Some(("/timeout now".to_owned(), false)));
     }
 }

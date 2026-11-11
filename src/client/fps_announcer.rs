@@ -1,11 +1,14 @@
 //! wash-fps `client/FPSAnnouncer.ts`: the voice that calls the match, one
 //! line at a time: the countdown, "fight", the lead, overtime, "game over",
-//! and the warmup's ready-up reminder.
+//! and the warmup's ready-up reminder; a timeout: "timeout" when it is
+//! called, "time in" as the count back in starts, 1 on its last second, and
+//! "fight" when play resumes. A pause holds every other call, in every mode.
 
 use std::collections::VecDeque;
 
 use shagger::audio::audio_v2_sfx::{AudioV2Sfx, SfxPlayOptions};
 use shagger::audio::mixer::SfxChannel;
+use shagger::shared::net::message_codec::MatchPauseState;
 use shagger::shared::spread_utils::mulberry32;
 
 use crate::client::match_state_manager::MatchPhase;
@@ -31,6 +34,8 @@ const OVERTIME: [&str; 2] = [
     "sounds/announcer/overtime/overtime02.ogg",
 ];
 const READY_UP: &str = "sounds/announcer/pleasereadyup.ogg";
+const TIMEOUT: &str = "sounds/announcer/timeout/timeout0";
+const TIMEIN: &str = "sounds/announcer/timeout/timein0";
 
 /// Where a score stands against the others.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -83,6 +88,8 @@ pub fn fps_announcer_sound_paths() -> Vec<String> {
         .collect();
     paths.extend(OVERTIME.map(str::to_owned));
     paths.push(READY_UP.to_owned());
+    paths.extend(all(TIMEOUT, 2));
+    paths.extend(all(TIMEIN, 2));
     for lead in [Lead::Alone, Lead::Tied, Lead::Behind] {
         for team in [false, true] {
             let (stem, reads) = lead_line(lead, team);
@@ -106,6 +113,11 @@ pub struct MatchMoment {
     pub ready: bool,
     pub lead: Option<Lead>,
     pub team_based: bool,
+    /// A timeout holding the match, or its count back in (`Timeout`,
+    /// `Timein`); `Running` otherwise.
+    pub pause: MatchPauseState,
+    /// Seconds until the timeout runs out or the count ends.
+    pub pause_seconds_left: f64,
 }
 
 pub struct FpsAnnouncer {
@@ -116,6 +128,11 @@ pub struct FpsAnnouncer {
     last_overtime: u32,
     warmup_seconds: f64,
     last_lead: Option<Lead>,
+    last_pause: MatchPauseState,
+    last_pause_second: Option<i64>,
+    /// Every line said, for tests.
+    #[cfg(test)]
+    said: Vec<String>,
     random: Box<dyn FnMut() -> f64 + Send>,
 }
 
@@ -129,6 +146,10 @@ impl Default for FpsAnnouncer {
             last_overtime: 0,
             warmup_seconds: 0.0,
             last_lead: None,
+            last_pause: MatchPauseState::Running,
+            last_pause_second: None,
+            #[cfg(test)]
+            said: Vec::new(),
             random: Box::new(mulberry32(0x0A11_0CE5)),
         }
     }
@@ -152,6 +173,8 @@ impl FpsAnnouncer {
             },
         );
         self.held_until = now + VOICE_HOLD_MS;
+        #[cfg(test)]
+        self.said.push(path.to_owned());
     }
 
     /// `queue`: speaks when the voice is free.
@@ -169,13 +192,54 @@ impl FpsAnnouncer {
         self.last_overtime = 0;
         self.warmup_seconds = 0.0;
         self.last_lead = None;
+        self.last_pause = MatchPauseState::Running;
+        self.last_pause_second = None;
     }
 
     /// `update`, every frame: calls the match and releases queued lines.
     /// `dt` in seconds, `now` in ms.
     pub fn update(&mut self, audio: &mut AudioV2Sfx, moment: &MatchMoment, dt: f64, now: f64) {
-        self.call_match(audio, moment, dt, now);
+        if !self.call_pause(audio, moment, now) {
+            self.call_match(audio, moment, dt, now);
+        }
         self.release(audio, now);
+    }
+
+    /// `callPause`: true while a pause holds the match, and with it every
+    /// other call.
+    fn call_pause(&mut self, audio: &mut AudioV2Sfx, moment: &MatchMoment, now: f64) -> bool {
+        let previous = self.last_pause;
+        self.last_pause = moment.pause;
+        match moment.pause {
+            MatchPauseState::Timeout => {
+                if previous != MatchPauseState::Timeout {
+                    let line = self.read(TIMEOUT, 2);
+                    self.say(audio, &line, now);
+                }
+                true
+            }
+            MatchPauseState::Timein => {
+                let second = moment.pause_seconds_left.ceil() as i64;
+                if previous != MatchPauseState::Timein {
+                    let line = self.read(TIMEIN, 2);
+                    self.say(audio, &line, now);
+                } else if Some(second) != self.last_pause_second && second == 1 {
+                    // "time in" fills the first two seconds of the count
+                    let line = self.read(COUNT[1].unwrap_or(FIGHT), 2);
+                    self.say(audio, &line, now);
+                }
+                self.last_pause_second = Some(second);
+                true
+            }
+            MatchPauseState::Running => {
+                self.last_pause_second = None;
+                if previous == MatchPauseState::Timein {
+                    let line = self.read(FIGHT, 2);
+                    self.say(audio, &line, now);
+                }
+                false
+            }
+        }
     }
 
     fn release(&mut self, audio: &mut AudioV2Sfx, now: f64) {
@@ -286,6 +350,8 @@ mod tests {
             ready: false,
             lead: None,
             team_based: false,
+            pause: MatchPauseState::Running,
+            pause_seconds_left: 0.0,
         }
     }
 
@@ -296,6 +362,51 @@ mod tests {
         assert_eq!(lead_of(&[3.0, 3.0], 3.0), Some(Lead::Tied));
         assert_eq!(lead_of(&[3.0, 4.0], 3.0), Some(Lead::Behind));
         assert!(fps_announcer_sound_paths().contains(&"sounds/announcer/score/team_tied_lead03.ogg".to_owned()));
+    }
+
+    #[test]
+    fn a_timeout_is_called_counted_back_in_and_fought_holding_everything_else() {
+        let mut audio = AudioV2Sfx::offline(48_000);
+        let mut a = FpsAnnouncer::default();
+        let (dt, mut now) = (0.016, 0.0);
+        let mut frames = |a: &mut FpsAnnouncer, seconds: f64, m: &dyn Fn(f64) -> MatchMoment| {
+            let mut t = 0.0;
+            while t < seconds {
+                a.update(&mut audio, &m(t), dt, now);
+                t += dt;
+                now += dt * 1000.0;
+            }
+        };
+        frames(&mut a, 1.0, &|_| moment(MatchPhase::Active, 0.0));
+        a.said.clear();
+        // Overtime starting under a timeout is not called until play resumes.
+        let paused = |state, left| MatchMoment {
+            overtime: 1,
+            pause: state,
+            pause_seconds_left: left,
+            ..moment(MatchPhase::Active, 0.0)
+        };
+        frames(&mut a, 5.0, &|_| paused(MatchPauseState::Timeout, 100.0));
+        frames(&mut a, 3.0, &|t| paused(MatchPauseState::Timein, 3.0 - t));
+        frames(&mut a, 2.0, &|_| paused(MatchPauseState::Running, 0.0));
+        let lines: Vec<&str> = a
+            .said
+            .iter()
+            .map(|p| {
+                let p = p.trim_start_matches("sounds/announcer/");
+                p.trim_end_matches(".ogg").trim_end_matches(char::is_numeric)
+            })
+            .collect();
+        assert_eq!(
+            lines,
+            [
+                "timeout/timeout",
+                "timeout/timein",
+                "countdown/1_",
+                "countdown/fight",
+                "overtime/overtime"
+            ]
+        );
     }
 
     #[test]
