@@ -2710,6 +2710,18 @@ whole areas rather than single items. 0.2.0 closes them in two steps.
 
 ## 24. Progress log
 
+### 0.2.0 released (November 11, 2026)
+
+- **The goal's two steps** (section 23's 0.2.0 list): the fixes and the
+  review against the browser, area by area, landed between November 4 and
+  November 11, with the staging port (player models, layered animation,
+  items), the beta9 protocol and the public beta QA rounds.
+- **Install and update**: the Windows installer, self-update on Windows,
+  Linux (AppImage) and macOS, launch options in `washoi.args`, and the
+  lobby page's minimum native client.
+- **Engine**: shagger a37d429.
+- **Version 0.2.0.**
+
 Newest first. Each entry names the commits and what proves them.
 
 ### Linux AppImage and macOS self-update (November 11, 2026)
