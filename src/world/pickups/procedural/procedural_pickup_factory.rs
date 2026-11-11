@@ -326,8 +326,16 @@ impl ProceduralPickups {
     /// Every part's draw `elapsed` seconds after the visuals were built;
     /// `camera_rotation` turns camera axes into world axes, for billboards.
     /// Only the pickups the server says are up are drawn (`setActive`), and
-    /// the bursts of those just taken.
-    pub fn draws(&self, elapsed: f64, camera_rotation: DMat3, out: &mut Vec<ModelDraw>) {
+    /// the bursts of those just taken. A pickup whose spot fails `in_view`
+    /// (`FPSPickup.isInView`, the PVS) is left out but its burst is not:
+    /// `setInView` hides only the cosmetic meshes.
+    pub fn draws(
+        &self,
+        elapsed: f64,
+        camera_rotation: DMat3,
+        in_view: impl Fn(DVec3) -> bool,
+        out: &mut Vec<ModelDraw>,
+    ) {
         for (i, (visual, model, _)) in self.visuals.iter().enumerate() {
             let state = &self.states[i];
             let anchor = DMat4::from_translation(visual.position);
@@ -340,7 +348,7 @@ impl ProceduralPickups {
                 draw.alpha = Some(piece.alpha);
                 out.push(draw);
             }
-            if !state.visible {
+            if !state.visible || !in_view(visual.position) {
                 continue;
             }
             let pose = visual.pose_assembling(elapsed, self.assembly[i]);

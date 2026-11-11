@@ -30,7 +30,7 @@ use shagger::rendering::wgpu;
 use shagger::viewport::ViewCvars;
 use shagger::weapon::weapon_view_manager::{ViewModelCvars, ViewModelInput};
 use std::cell::Cell;
-use washoi::client::fps_actions::{fps, weapon_slot_pressed};
+use washoi::client::fps_actions::{action_key_label, fps, weapon_slot_pressed};
 use washoi::client::fps_hud::FpsHud;
 use washoi::client::fps_movement_audio::play_jumppad_launch;
 use washoi::client::game_events::canonical_weapon_id;
@@ -68,6 +68,7 @@ use washoi::client::demo_service::analysis_report;
 use washoi::client::first_person_view::{BodyFrame, FirstPersonView, ViewKeys, ViewOffset};
 use washoi::client::game_events::GameAudio;
 use washoi::client::hud::widgets::pause_menu::{PauseMenu, PauseMenuAction};
+use washoi::client::hud::widgets::pickup_prompt::{asks_to_swap, swap_text};
 use washoi::client::spectate_view::{DeathCameraCue, SpectateView};
 use washoi::client::teleport_effect::TeamColor;
 use washoi::client::washoi_style::install_style;
@@ -704,17 +705,26 @@ impl App {
                     }
                 }
             }
-            let (players, models) = styled_players(
-                view.players,
-                &mut self.appearance,
-                &AppearanceView {
-                    teams: &view.teams,
-                    looks: &view.looks,
-                    perspective: self.pov_entity.as_deref(),
-                    own: feed.local_entity(),
-                    team_based: feed.match_state().team_based(),
-                },
-            );
+            let appearance_view = AppearanceView {
+                teams: &view.teams,
+                looks: &view.looks,
+                perspective: self.pov_entity.as_deref(),
+                own: feed.local_entity(),
+                team_based: feed.match_state().team_based(),
+            };
+            let (players, models) = styled_players(view.players, &mut self.appearance, &appearance_view);
+            // Our own body is never drawn; its corpse wears our style.
+            let local_style = match feed {
+                Feed::Play(..) => feed.local_entity().map(|id| {
+                    self.appearance.style(
+                        id,
+                        &appearance_view,
+                        washoi::client::remote_player_renderer::MODEL_SCALE,
+                    )
+                }),
+                _ => None,
+            };
+            s.renderer.set_local_style(local_style);
             s.renderer.live_models = models;
             let base_fov = self.camera.fov_y;
             let eyes = self.reel.as_ref().and_then(|r| {
@@ -999,6 +1009,28 @@ impl App {
                     let now = h.state.now;
                     h.state.powerups.is_active("quad", now)
                 });
+            // `FPSPickup`'s and `DroppedWeaponRenderer`'s swap prompts: in
+            // play, alive, with the mouse ours; asked for under each owner.
+            if let Some(hud) = &mut s.hud {
+                let at = match &*feed {
+                    Feed::Play(p, _) if !self.pause_menu.open && !self.settings_open => p.feet(),
+                    _ => None,
+                };
+                let (map, floor) = match at {
+                    Some(at) => s.renderer.weapons_in_reach(DVec3::new(at.x, at.y, at.z)),
+                    None => (None, None),
+                };
+                let key = with_input(|i| action_key_label(i, fps::USE));
+                let state = &hud.state;
+                let ask = |weapon: Option<&str>| {
+                    weapon
+                        .filter(|w| asks_to_swap(w, &state.weapons, &state.current_weapon))
+                        .map(|w| swap_text(&key, w))
+                };
+                let (pickup, dropped) = (ask(map), ask(floor));
+                hud.pickup_prompt.set("pickup", pickup);
+                hud.pickup_prompt.set("dropped", dropped);
+            }
             let outline = quad.then(|| quad_view_weapon_outline(s.renderer.item_time));
             if let Some(view_model) = &mut s.renderer.view_model {
                 view_model.powerup_outline = outline;
@@ -1204,7 +1236,7 @@ impl App {
             .map(|(id, _, _)| id.as_str());
         let mut demo_action = None;
         let mut menu_action = None;
-        let pause_menu = &self.pause_menu;
+        let pause_menu = &mut self.pause_menu;
         let (kicker, player) = match feed {
             Some(Feed::Play(p, _)) if pause_menu.open || self.settings_open => {
                 let state = p.match_state();
@@ -1224,7 +1256,7 @@ impl App {
             _ => (String::new(), String::new()),
         };
         self.pause_menu.settings = crate::lobby_webview::match_settings_available();
-        let pause_menu = &self.pause_menu;
+        let pause_menu = &mut self.pause_menu;
         let demo_hud = self.demo_hud.as_ref().filter(|_| cards);
         let ui = s.egui.run(&s.window, |ui| {
             if let (Some(reel), Some(Feed::Demo(demo)), true) = (reel, feed, cards) {

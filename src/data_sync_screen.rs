@@ -1,5 +1,7 @@
 //! The first thing a player sees: the game's data brought up to date
-//! before the menu, with a bar for the download (the startup half of
+//! before the menu, drawn as the lobby's twin like the match loading screen
+//! (`LobbyTwin`, `ConnectingOverlay`'s stage and bar), with the download in
+//! the bar (the startup half of
 //! wash-fps `client/LobbyAssetPreparation.ts` and SHAG's
 //! `PackageDownloadStatus.ts`: the phase, the package, megabytes so far of
 //! the whole and the speed).
@@ -24,6 +26,8 @@ use std::time::{Duration, Instant};
 use shagger::loader::pk3::package_store::{SyncProgress, has_packages, is_synced, sync_packages};
 use shagger::rendering::gpu::Gpu;
 use shagger::rendering::wgpu;
+use shagger::ui::components::connecting_overlay::{BarFill, OverlayStage, StageState, paint_twin};
+use shagger::ui::components::lobby_twin::{TwinRail, TwinStepState, clamp_css};
 use shagger::ui::egui_layer::{EguiLayer, egui};
 use washoi::client::washoi_style::install_style;
 use washoi::update_check::{self, UpdateProgress};
@@ -33,6 +37,7 @@ use winit::event_loop::ActiveEventLoop;
 use winit::keyboard::{KeyCode, PhysicalKey};
 use winit::window::{Window, WindowId};
 
+use crate::match_loading_screen::twin_style;
 use crate::window::{OpenWindow, next_frame, open_window, present, run_on_event_loop};
 
 /// The music's playlists, served beside the packages.
@@ -165,6 +170,8 @@ struct SyncApp {
     /// Bytes at the start of the speed window, and when.
     speed_from: (u64, Instant),
     speed: f64,
+    /// The lobby's twin, as the match loading screen draws it.
+    screen: DataScreen,
     open: Option<SyncWindow>,
     outcome: Option<SyncOutcome>,
     error: Option<String>,
@@ -242,68 +249,11 @@ impl SyncApp {
             .create_view(&wgpu::TextureViewDescriptor::default());
         let mut choice = None;
         let speed = self.speed;
+        let screen = &mut self.screen;
+        screen.dress(&phase, speed);
         let ui = m.layer.run(&m.window, |ui| {
-            egui::CentralPanel::default().frame(egui::Frame::NONE).show(ui, |ui| {
-                ui.add_space(ui.available_height() * 0.35);
-                ui.vertical_centered(|ui| {
-                    ui.set_max_width(520.0);
-                    // The bar's track, which the menu's style leaves as dark as the page.
-                    ui.visuals_mut().extreme_bg_color = egui::Color32::from_rgb(40, 36, 58);
-                    ui.heading("WASHOI");
-                    ui.add_space(16.0);
-                    match &phase {
-                        Phase::Updating(UpdateProgress::Checking) => {
-                            ui.label("Checking for updates…");
-                            ui.add(egui::ProgressBar::new(0.0).desired_width(520.0).animate(true));
-                        }
-                        Phase::Updating(UpdateProgress::Downloading {
-                            version,
-                            received,
-                            total,
-                        }) => {
-                            ui.label(format!("Updating to Washoi {version}"));
-                            ui.add(
-                                egui::ProgressBar::new(*received as f32 / (*total).max(1) as f32)
-                                    .desired_width(520.0)
-                                    .text(format!("{} / {}", megabytes(*received), megabytes(*total))),
-                            );
-                        }
-                        Phase::Install(..) => {
-                            ui.label("Installing the update…");
-                        }
-                        Phase::Running(p) if p.total == 0 => {
-                            ui.label("Checking the game data…");
-                            ui.add(egui::ProgressBar::new(0.0).desired_width(520.0).animate(true));
-                        }
-                        Phase::Running(p) => {
-                            ui.label(format!("Downloading {}", p.package));
-                            ui.add(
-                                egui::ProgressBar::new(p.received as f32 / p.total as f32)
-                                    .desired_width(520.0)
-                                    .text(format!("{} / {}", megabytes(p.received), megabytes(p.total))),
-                            );
-                            ui.label(format!("{}/s", megabytes(speed as u64)));
-                        }
-                        Phase::Failed(why, held) => {
-                            ui.label("The game data could not be downloaded.");
-                            ui.small(why);
-                            if *held == OnDisk::Partial {
-                                ui.small("The data on disk is incomplete: some maps or sounds may be missing.");
-                            }
-                            ui.add_space(12.0);
-                            ui.horizontal(|ui| {
-                                if ui.button("Try again").clicked() {
-                                    choice = Some(false);
-                                }
-                                if *held != OnDisk::Nothing && ui.button("Play with the data on disk").clicked() {
-                                    choice = Some(true);
-                                }
-                            });
-                        }
-                        Phase::Done => {}
-                    }
-                });
-            });
+            let now = ui.ctx().input(|i| i.time);
+            choice = screen.paint(ui, now);
         });
         let mut encoder = m.gpu.device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
             label: Some("data sync"),
@@ -333,6 +283,197 @@ impl SyncApp {
             Some(false) => self.restart(update_check::self_update_target()),
             None => {}
         }
+    }
+}
+
+/// The data screen as the lobby's twin (`LobbyTwin`, the match loading
+/// screen's look): the rail with the start-up's steps, and on the stage the
+/// phase as the title, the package in the status plate, and the transfer
+/// bar (`PackageDownloadStatus`'s phase, package, megabytes and speed).
+struct DataScreen {
+    rail: TwinRail,
+    stage: OverlayStage,
+    /// The phase last dressed, to log a change once.
+    last: String,
+    /// What the directory holds, after a failure.
+    on_disk: OnDisk,
+}
+
+impl DataScreen {
+    fn new(base_url: &str) -> Self {
+        let mut rail = TwinRail::new("Starting up", &["Update", "Game data", "Lobby"], "Game data");
+        let host = base_url.split("://").nth(1).unwrap_or(base_url);
+        rail.set_fact("source", "Source", host.split('/').next().unwrap_or(host));
+        let stage = OverlayStage::new(
+            "GAME DATA",
+            vec!["CHECKING".into(), "DATA".into()],
+            "",
+            "DOWNLOAD STATUS",
+        );
+        Self {
+            rail,
+            stage,
+            last: String::new(),
+            on_disk: OnDisk::Nothing,
+        }
+    }
+
+    /// Sets the rail and the stage for `phase`.
+    fn dress(&mut self, phase: &Phase, speed: f64) {
+        use TwinStepState::{Active, Done, Error, Pending};
+        let percent = |received: u64, total: u64| (received as f64 * 100.0 / total.max(1) as f64).floor() as u32;
+        let stage = &mut self.stage;
+        stage.error = None;
+        stage.footer = String::new();
+        let (kicker, title, lead, status, bar, state, steps, log): (_, [&str; 2], String, String, _, _, _, String) =
+            match phase {
+                Phase::Updating(UpdateProgress::Checking) => (
+                    "GAME UPDATE",
+                    ["CHECKING", "UPDATES"],
+                    "Looking for a newer Washoi before the game data.".into(),
+                    "CHECKING".into(),
+                    BarFill::Sweep,
+                    StageState::Preparing,
+                    [Active, Pending, Pending],
+                    "Checking for updates".into(),
+                ),
+                Phase::Updating(UpdateProgress::Downloading {
+                    version,
+                    received,
+                    total,
+                }) => {
+                    stage.footer = format!("{} of {}", megabytes(*received), megabytes(*total));
+                    (
+                        "GAME UPDATE",
+                        ["UPDATING", "WASHOI"],
+                        format!("Washoi {version} is downloading. The game starts again once it is in place."),
+                        format!("UPDATE {}%", percent(*received, *total)),
+                        BarFill::Fill(*received as f32 / (*total).max(1) as f32),
+                        StageState::Loading,
+                        [Active, Pending, Pending],
+                        format!("Updating to {version}"),
+                    )
+                }
+                Phase::Install(..) => (
+                    "GAME UPDATE",
+                    ["INSTALLING", "UPDATE"],
+                    "Putting the new game in place.".into(),
+                    "INSTALLING".into(),
+                    BarFill::Fill(1.0),
+                    StageState::SettingUp,
+                    [Active, Pending, Pending],
+                    "Installing the update".into(),
+                ),
+                Phase::Running(p) if p.total == 0 => (
+                    "GAME DATA",
+                    ["CHECKING", "DATA"],
+                    "Comparing the game data on disk with the servers.".into(),
+                    "CHECKING".into(),
+                    BarFill::Sweep,
+                    StageState::Preparing,
+                    [Done, Active, Pending],
+                    "Checking the game data".into(),
+                ),
+                Phase::Running(p) => {
+                    stage.footer = format!(
+                        "{} of {} · {}/s",
+                        megabytes(p.received),
+                        megabytes(p.total),
+                        megabytes(speed as u64)
+                    );
+                    (
+                        "GAME DATA",
+                        ["DOWNLOADING", "DATA"],
+                        format!(
+                            "Fetching {}. Only what changed since the last start comes down.",
+                            p.package
+                        ),
+                        format!("DOWNLOADING {}%", percent(p.received, p.total)),
+                        BarFill::Fill(p.received as f32 / p.total.max(1) as f32),
+                        StageState::Loading,
+                        [Done, Active, Pending],
+                        format!("Downloading {}", p.package),
+                    )
+                }
+                Phase::Failed(why, held) => {
+                    self.on_disk = *held;
+                    let stop = if why.ends_with(['.', '!', '?']) { "" } else { "." };
+                    let mut error = format!("The game data could not be downloaded: {why}{stop}");
+                    if *held == OnDisk::Partial {
+                        error.push_str(" The data on disk is incomplete: some maps or sounds may be missing.");
+                    }
+                    stage.error = Some(error);
+                    (
+                        "GAME DATA",
+                        ["DOWNLOAD", "FAILED"],
+                        "Try again, or play with the data already on disk.".into(),
+                        "FAILED".into(),
+                        BarFill::Fill(0.0),
+                        StageState::Failed,
+                        [Done, Error, Pending],
+                        why.clone(),
+                    )
+                }
+                Phase::Done => (
+                    "GAME DATA",
+                    ["DATA", "READY"],
+                    "Opening the lobby.".into(),
+                    "READY".into(),
+                    BarFill::Fill(1.0),
+                    StageState::Ready,
+                    [Done, Done, Active],
+                    "Ready".into(),
+                ),
+            };
+        kicker.clone_into(&mut stage.kicker);
+        stage.set_title(title.iter().map(|l| (*l).to_owned()).collect());
+        stage.lead = lead;
+        stage.status = status;
+        stage.bar = bar;
+        stage.state = state;
+        self.rail.set_steps(&steps);
+        if let Phase::Running(p) = phase
+            && p.total > 0
+        {
+            self.rail.set_fact("package", "Package", &p.package);
+        }
+        if log != self.last {
+            self.rail.log(&log);
+            self.last = log;
+        }
+    }
+
+    /// Paints the screen; on a failure, the choice: `Some(true)` to play
+    /// with the data on disk, `Some(false)` to try again.
+    fn paint(&mut self, ui: &mut egui::Ui, now: f64) -> Option<bool> {
+        let rect = ui.max_rect();
+        let painter = ui.painter_at(rect);
+        paint_twin(&painter, rect, &twin_style(), &self.rail, &mut self.stage, now);
+        if self.stage.state != StageState::Failed {
+            return None;
+        }
+        // The keys, where the stage's content starts.
+        let (vw, vh) = (rect.width() / 100.0, rect.height() / 100.0);
+        let at = egui::pos2(
+            rect.min.x + TwinRail::width(rect.width()) + clamp_css(40.0, 5.0 * vw, 96.0) + 44.0,
+            rect.min.y + clamp_css(28.0, 5.0 * vh, 64.0),
+        );
+        let can_play = self.on_disk != OnDisk::Nothing;
+        let mut choice = None;
+        egui::Area::new(egui::Id::unique("data-sync-keys"))
+            .order(egui::Order::Foreground)
+            .fixed_pos(at)
+            .show(ui.ctx(), |ui| {
+                ui.horizontal(|ui| {
+                    if ui.button("Try again").clicked() {
+                        choice = Some(false);
+                    }
+                    if can_play && ui.button("Play with the data on disk").clicked() {
+                        choice = Some(true);
+                    }
+                });
+            });
+        choice
     }
 }
 
@@ -420,6 +561,7 @@ pub fn run(base_url: &str, dir: &Path) -> Result<SyncOutcome, String> {
         phase: Arc::new(Mutex::new(Phase::Done)),
         speed_from: (0, Instant::now()),
         speed: 0.0,
+        screen: DataScreen::new(base_url),
         open: None,
         outcome: None,
         error: None,
@@ -470,5 +612,75 @@ pub fn run_headless(base_url: &str, dir: &Path) -> Result<(), String> {
             Phase::Running(_) | Phase::Updating(_) | Phase::Install(..) => {}
         }
         std::thread::sleep(Duration::from_millis(100));
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use shagger::rendering::offscreen::{OFFSCREEN_FORMAT, render_encoded_to_rgba};
+
+    /// The screen for `phase`, `seconds` in, as RGBA at 1280x720.
+    fn render(phase: &Phase, seconds: f64) -> Option<Vec<u8>> {
+        let gpu = Gpu::headless().ok()?;
+        let (width, height) = (1280u32, 720u32);
+        let mut layer = EguiLayer::offscreen(&gpu, OFFSCREEN_FORMAT);
+        install_style(&layer.ctx);
+        let mut screen = DataScreen::new("https://eu.washoi.net/data");
+        let mut pixels = Vec::new();
+        for t in [0.0, seconds] {
+            screen.dress(phase, 6_800_000.0);
+            let input = egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(
+                    egui::Pos2::ZERO,
+                    egui::vec2(width as f32, height as f32),
+                )),
+                time: Some(t),
+                ..Default::default()
+            };
+            let frame = layer.run_input(input, |ui| {
+                screen.paint(ui, t);
+            });
+            pixels = render_encoded_to_rgba(&gpu, width, height, BACKGROUND, |encoder, target| {
+                layer.paint(&gpu, encoder, target, [width, height], frame);
+            });
+        }
+        Some(pixels)
+    }
+
+    #[test]
+    fn a_download_draws_the_twin_and_its_bar() {
+        let phase = Phase::Running(SyncProgress {
+            package: "map_washoi_dm12.pk3".into(),
+            received: 35_800_000,
+            total: 346_900_000,
+        });
+        let mut screen = DataScreen::new("https://eu.washoi.net/data");
+        screen.dress(&phase, 6_800_000.0);
+        assert_eq!(screen.stage.status, "DOWNLOADING 10%");
+        assert_eq!(screen.stage.footer, "35.8 MB of 346.9 MB · 6.8 MB/s");
+        assert_eq!(screen.stage.title, ["DOWNLOADING", "DATA"]);
+        let Some(pixels) = render(&phase, 1.5) else {
+            eprintln!("skipped: no GPU adapter");
+            return;
+        };
+        if let Ok(path) = std::env::var("DATA_SYNC_PNG") {
+            image::save_buffer(&path, &pixels, 1280, 720, image::ColorType::Rgba8).unwrap();
+        }
+    }
+
+    #[test]
+    fn a_failure_offers_both_ways_on() {
+        let phase = Phase::Failed("the server did not answer".into(), OnDisk::Partial);
+        let mut screen = DataScreen::new("https://eu.washoi.net/data");
+        screen.dress(&phase, 0.0);
+        assert_eq!(screen.stage.state, StageState::Failed);
+        assert!(screen.stage.error.as_deref().is_some_and(|e| e.contains("incomplete")));
+        let Some(pixels) = render(&phase, 1.5) else {
+            return;
+        };
+        if let Ok(path) = std::env::var("DATA_SYNC_FAILED_PNG") {
+            image::save_buffer(&path, &pixels, 1280, 720, image::ColorType::Rgba8).unwrap();
+        }
     }
 }

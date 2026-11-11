@@ -20,6 +20,7 @@ use washoi::client::dropped_weapon_renderer::{DropThrow, DroppedWeaponInfo, Drop
 use washoi::client::fps_liquid_audio::play_liquid_crossing;
 use washoi::client::fps_player_audio::{player_voice_for_entity, set_local_player_voice};
 use washoi::client::gib_system::{GibRenderer, GibSystem};
+use washoi::client::hud::widgets::pickup_prompt::{horizontal_distance_sq, in_pickup_range};
 use washoi::client::player_appearance::{AppearanceView, PlayerAppearance};
 use washoi::client::player_model_selection::{PlayerModelSide, player_model_choice};
 use washoi::client::quad_damage_visual::{get_quad_damage_pulse, mask_has_quad};
@@ -43,6 +44,7 @@ use shagger::core::cvar::with_cvars;
 use shagger::lighting::sky_light_system::bsp_mode_lights;
 use shagger::loader::bsp::bsp_loader::{BspFile, BspLightVol, LightGrid, load, load_collision};
 use shagger::loader::bsp::light_grid_sampling::{LightSample, sample_light_vols};
+use shagger::loader::bsp::pvs_culler::{PvsCuller, create_pvs_culler};
 use shagger::loader::pk3::node_pk3::ingest_pk3_dir;
 use shagger::loader::pk3::pk3_loader::Pk3Loader;
 use shagger::loader::shader::q3_shader_registry::Q3ShaderRegistry;
@@ -109,7 +111,7 @@ use washoi::shared::net::snapshot_events::SnapshotEvent;
 
 use washoi::client::player_model_visual_settings::{PlayerTeamSlot, get_player_model_visual_style};
 use washoi::client::remote_player_renderer::{MODEL_SCALE, RemotePlayerRenderer};
-use washoi::shared::bsp::pickup_table::{PickupEntry, extract_pickups};
+use washoi::shared::bsp::pickup_table::{PickupEntry, PickupType, extract_pickups};
 use washoi::shared::items::item_throw::land_map_pickups;
 use washoi::world::fps_pickup::{ItemModels, build_item_models, build_weapon_pickups};
 use washoi::world::pickups::procedural::procedural_pickup_factory::{ProceduralPickups, build_procedural_pickups};
@@ -986,11 +988,16 @@ pub struct MapRenderer {
     /// The server's word on which pickups are up, by id
     /// (`reconcileActiveSet`); a pickup it has not named is drawn.
     pub pickup_active: Vec<bool>,
+    /// Each map weapon's id, weapon and resting spot, for the swap prompt.
+    weapon_pickup_spots: Vec<(u32, &'static str, DVec3)>,
     /// Seconds since the items were built (`visualElapsed`).
     pub item_time: f64,
     /// Weapons on the floor (`DroppedWeaponRenderer`), drawn with
     /// `hand_weapons`' models.
     pub dropped_weapons: DroppedWeaponRenderer,
+    /// The map's PVS from the camera, for things that are not world batches:
+    /// pickups and weapons on the floor (`BspManager.getPvsCuller`).
+    item_pvs: Option<PvsCuller>,
     /// This frame's draws.
     frame_draws: Vec<ModelDraw>,
     /// Projectile models and where they are held.
@@ -1097,8 +1104,12 @@ pub struct MapRenderer {
     bomb_carrier: Option<String>,
     /// Blast sounds the detonation asked for, not yet played.
     blast_sounds: usize,
-    /// Each live player's tint, for the colour their shards take.
-    live_tints: HashMap<String, Vec3>,
+    /// Each live player's style: their shards take its colour, their
+    /// corpse its colour and outline.
+    live_styles: HashMap<String, PlayerModelVisualStyle>,
+    /// The local player's style (their own body is not drawn), which
+    /// their corpse takes.
+    local_style: Option<PlayerModelVisualStyle>,
     /// Non-gib deaths fall as ragdolls (`RagdollSystem`); none without the
     /// player model.
     pub ragdolls: Option<RagdollSystem>,
@@ -1200,6 +1211,12 @@ pub fn shag_image_processing() -> ImageProcessingConfiguration {
 /// A pickup the server has not named is there (the map's own state).
 fn pickup_shown(active: &[bool], id: u32) -> bool {
     active.get(id as usize).copied().unwrap_or(true)
+}
+
+/// `PVSCuller.isPositionVisible` from the last frame's camera; with no vis
+/// data, or culling off, everything is in view.
+fn in_pvs(pvs: Option<&PvsCuller>, at: DVec3) -> bool {
+    pvs.is_none_or(|p| p.is_position_visible(at.as_vec3()))
 }
 
 /// The weapons a player can hold (`WeaponsTable`'s ids).
@@ -1535,18 +1552,14 @@ impl MapRenderer {
         let departed = &self.departed;
         self.live_worlds
             .retain(|id, _| departed.contains_key(id) || players.iter().any(|(p, _, _)| p == id));
-        self.live_tints
+        self.live_styles
             .retain(|id, _| departed.contains_key(id) || players.iter().any(|(p, _, _)| p == id));
         self.remote_muzzles.clear();
         for (id, interp, style) in players {
             if self.ragdolled.contains(id) {
                 continue;
             }
-            if let Some(tint) = style.tint_color {
-                self.live_tints.insert(id.clone(), tint);
-            } else {
-                self.live_tints.remove(id);
-            }
+            self.live_styles.insert(id.clone(), *style);
             // The body `styled_players` chose (`modelChoiceFor`).
             let choice = self
                 .live_models
@@ -1959,12 +1972,18 @@ impl MapRenderer {
                 };
                 let kind = if damage_type.is_empty() { weapon_id } else { damage_type };
                 let gib = kind == "rail" || kind == "bomb" || (kind == "explosion" && *final_damage >= 50);
-                let color = self.live_tints.get(entity_id).copied();
                 let local = self
                     .local_player
                     .as_ref()
                     .filter(|(id, _)| id == entity_id)
                     .map(|(_, yaw)| *yaw);
+                let style = match local {
+                    Some(_) => self.local_style.as_ref(),
+                    None => None,
+                }
+                .or_else(|| self.live_styles.get(entity_id))
+                .cloned();
+                let color = style.as_ref().and_then(|s| s.tint_color);
                 let death_pos = DVec3::new(at.x, at.y, at.z);
                 if gib {
                     // With gibs off (`r_gibs 0`) nothing flies, but the view
@@ -2002,7 +2021,7 @@ impl MapRenderer {
                             instance,
                             world,
                             DVec3::new(kb_dir.x, kb_dir.y, kb_dir.z),
-                            color,
+                            style.as_ref(),
                             Some(&facts),
                         )
                     {
@@ -2028,7 +2047,7 @@ impl MapRenderer {
                             instance,
                             world,
                             DVec3::new(kb_dir.x, kb_dir.y, kb_dir.z),
-                            color,
+                            style.as_ref(),
                             Some(&facts),
                         );
                     }
@@ -2076,6 +2095,12 @@ impl MapRenderer {
         self.local_player = id.map(|id| (id.to_owned(), yaw));
     }
 
+    /// The style the local player's corpse is drawn in: their own body,
+    /// never drawn, has no entry among the live players'.
+    pub fn set_local_style(&mut self, style: Option<PlayerModelVisualStyle>) {
+        self.local_style = style;
+    }
+
     /// The local player's death this frame: what to follow, where they died
     /// and their yaw (the death camera's `start`).
     pub fn take_local_death(&mut self) -> Option<(DeathFollow, DVec3, f64)> {
@@ -2119,6 +2144,38 @@ impl MapRenderer {
         let mask = &self.pickup_active;
         self.items
             .reconcile(self.item_time, dt, |id| mask.get(id as usize).copied());
+    }
+
+    /// The weapons a player at `at` (the physics origin) stands at, for the
+    /// swap prompt: the nearest map weapon that is up
+    /// (`FPSPickup.onProximity`) and the nearest weapon on the floor
+    /// (`checkPickupProximity`).
+    #[must_use]
+    pub fn weapons_in_reach(&self, at: DVec3) -> (Option<&'static str>, Option<&str>) {
+        let nearest = |spots: &mut dyn Iterator<Item = (DVec3, usize)>| {
+            spots
+                .filter(|(p, _)| in_pickup_range(at, *p))
+                .min_by(|(a, _), (b, _)| horizontal_distance_sq(at, *a).total_cmp(&horizontal_distance_sq(at, *b)))
+                .map(|(_, i)| i)
+        };
+        let map = nearest(
+            &mut self
+                .weapon_pickup_spots
+                .iter()
+                .enumerate()
+                .filter(|(_, (id, _, _))| pickup_shown(&self.pickup_active, *id))
+                .map(|(i, (_, _, p))| (*p, i)),
+        )
+        .map(|i| self.weapon_pickup_spots[i].1);
+        let dropped: Vec<_> = self.dropped_weapons.visuals().map(|(_, w)| w).collect();
+        let floor = nearest(
+            &mut dropped
+                .iter()
+                .enumerate()
+                .map(|(i, w)| (DVec3::from_array(w.position), i)),
+        )
+        .map(|i| dropped[i].weapon_id.as_str());
+        (map, floor)
     }
 
     /// `GameEvents`' dropped weapons, after [`Self::play_effects`] this
@@ -2291,6 +2348,9 @@ impl MapRenderer {
             view_model.view.aspect_ratio = f64::from(aspect);
         }
         self.culling.update(camera, aspect);
+        if let Some(pvs) = &mut self.item_pvs {
+            pvs.update(Some(camera.position));
+        }
         // `r_dynamiclight 0` (the Ultralow preset): no pool lights.
         let dynamic = self.dynamic_lights && with_cvars(|c| render_toggle(c, "r_dynamiclight"));
         let lights: Vec<DynamicLight> = if dynamic {
@@ -2345,15 +2405,22 @@ impl MapRenderer {
         // The weapon pickups lead `model_draws`; the taken ones stay out.
         self.frame_draws.clear();
         let mut next = 0;
+        let pvs = self.cull.then_some(self.item_pvs.as_ref()).flatten();
         for (id, span) in &self.weapon_pickup_spans {
-            if !pickup_shown(&self.pickup_active, *id) {
+            let spot = self.weapon_pickup_spots.iter().find(|(i, _, _)| i == id).map(|s| s.2);
+            if !pickup_shown(&self.pickup_active, *id) || spot.is_some_and(|at| !in_pvs(pvs, at)) {
                 self.frame_draws.extend_from_slice(&self.model_draws[next..span.start]);
                 next = span.end;
             }
         }
         self.frame_draws.extend_from_slice(&self.model_draws[next..]);
         self.frame_draws.extend_from_slice(&self.live_draws);
-        for (_, weapon) in self.dropped_weapons.visuals() {
+        // `DroppedWeaponRenderer.update` step 3: PVS decides what is drawn.
+        for (_, weapon) in self
+            .dropped_weapons
+            .visuals()
+            .filter(|(_, w)| in_pvs(pvs, DVec3::from(w.position)))
+        {
             self.hand_weapons.world_draws(
                 &weapon.weapon_id,
                 weapon.position,
@@ -2380,6 +2447,7 @@ impl MapRenderer {
         self.items.draws(
             self.item_time,
             camera_rotation(camera.view().as_dmat4()),
+            |at| in_pvs(pvs, at),
             &mut self.frame_draws,
         );
         let active = &self.pickup_active;
@@ -2387,7 +2455,7 @@ impl MapRenderer {
             self.item_time,
             camera.position.as_dvec3(),
             camera_rotation(camera.view().as_dmat4()),
-            |id| pickup_shown(active, id),
+            |id, at| pickup_shown(active, id) && in_pvs(pvs, at),
             &mut self.frame_draws,
         );
         for (model, world) in &self.projectiles {
@@ -2816,6 +2884,7 @@ pub fn build_renderer(gpu: &Gpu, map: &mut LoadedMap, output_format: wgpu::Textu
         );
     }
     let culling = WorldCulling::new(&map.bsp, &geometry);
+    let item_pvs = create_pvs_culler(&map.bsp);
     let mut models = ModelRenderer::new(gpu, format);
     // SHAG's lights for a BSP map, with r_bsp_pbr at its default.
     models.set_lights(bsp_mode_lights(true));
@@ -2825,6 +2894,12 @@ pub fn build_renderer(gpu: &Gpu, map: &mut LoadedMap, output_format: wgpu::Textu
     }
     let mut model_draws = pickups.draws;
     let weapon_pickup_spans = pickups.spans;
+    let weapon_pickup_spots = map
+        .pickups
+        .iter()
+        .filter(|e| e.kind_type == PickupType::Weapon)
+        .map(|e| (e.id, e.kind, DVec3::new(e.position.x, e.position.y, e.position.z)))
+        .collect();
     let item_models = build_item_models(gpu, &mut map.pk3, &mut models, &map.pickups);
     if !item_models.is_empty() || item_models.failures.is_empty() {
         println!("items: {} packaged models", item_models.len());
@@ -3186,6 +3261,8 @@ pub fn build_renderer(gpu: &Gpu, map: &mut LoadedMap, output_format: wgpu::Textu
         items,
         item_models,
         weapon_pickup_spans,
+        weapon_pickup_spots,
+        item_pvs,
         pickup_active: Vec::new(),
         item_time: 0.0,
         dropped_weapons: DroppedWeaponRenderer::default(),
@@ -3235,7 +3312,8 @@ pub fn build_renderer(gpu: &Gpu, map: &mut LoadedMap, output_format: wgpu::Textu
         bomb_anchor: None,
         bomb_carrier: None,
         blast_sounds: 0,
-        live_tints: HashMap::new(),
+        live_styles: HashMap::new(),
+        local_style: None,
         ragdolls,
         ragdoll_trails: RagdollTrails::default(),
         slash_trails: SlashTrailRenderer::default(),
@@ -3312,7 +3390,7 @@ pub fn build_renderer(gpu: &Gpu, map: &mut LoadedMap, output_format: wgpu::Textu
             players.go_to_frame(&id, held.player.frame);
             let world = players.world_of(&id, &interp);
             if let (Some(DetachedBody { body, instance }), Some(world)) = (players.take(&id), world) {
-                ragdolls.spawn(body, instance, world, babylon(held.dir), style.tint_color, None);
+                ragdolls.spawn(body, instance, world, babylon(held.dir), Some(&style), None);
             }
         }
         if let Some(age) = map.ragdolls.iter().map(|r| r.age).reduce(f64::min) {

@@ -2732,6 +2732,63 @@ whole areas rather than single items. 0.2.0 closes them in two steps.
 
 Newest first. Each entry names the commits and what proves them.
 
+### The data screen as the lobby's twin (November 11, 2026)
+
+`data_sync_screen.rs` drew a plain centred egui progress bar. It now draws
+the lobby's twin as the match loading screen does (shagger's
+`paint_twin`): the rail with the start-up's steps (Update, Game data,
+Lobby), its source and package as facts and the phases in its log; on the
+stage the phase as the title (CHECKING DATA, DOWNLOADING DATA, UPDATING
+WASHOI, DOWNLOAD FAILED), the gold status plate with the percentage, the
+browser's slanted cyan-violet-gold bar, and the megabytes and speed under
+it. A failure shows the error notice and the two keys, Try again and Play
+with the data on disk. Unit tests dress a download and a failure and draw
+them (`DATA_SYNC_PNG`, `DATA_SYNC_FAILED_PNG`).
+
+### The Esc menu as the browser's gold rail (November 11, 2026)
+
+`client/hud/widgets/pause_menu.rs` now draws `FPSPauseMenu` as
+`MatchMenu.css` does instead of a centred box: the lobby's gold rail down
+the left (`clamp(300px, 26vw, 520px)`, its slanted violet edge and the
+radial glow at its head), the lobby's logo (washoi.net's
+`src/assets/washoi.png`, embedded as `assets/brand/washoi.png`), the
+kicker and note, SHAG's `RaisedKey` (`nav`, `ink` for the first key, `sm
+cream` for Leave, the violet lift on hover and the press), the name plate
+and Leave at the foot, the veil over the match, and the slide-in. Under
+1500 points a key's hint sits under its label, as the stylesheet's media
+query sets it. **Not yet:** Spectate and Join (the native match has no
+spectator state to go to), the mode's Loadout key (no kit picker yet),
+and the veil's `blur(3px)`, which egui cannot draw over the frame.
+`tests/pause_menu_render.rs` draws it (`PAUSE_MENU_PNG`,
+`PAUSE_MENU_BACKDROP`, `PAUSE_MENU_SIZE`).
+
+### Corpses keep their outline and our own colour (November 11, 2026)
+
+The rest of the old colour review (#2, whose FFA colours and sides came
+with the staging port): a ragdoll now takes the whole style its body was
+drawn in (`RagdollSystem::spawn`), its outline as well as its tint, as
+Babylon's corpse keeps its meshes and with them `renderOutline`; a fading
+body, drawn blended, drops the outline. The local player's corpse is made
+from a fresh body, never drawn alive, so `MapRenderer::set_local_style`
+hands it our own style (`PlayerAppearance::style` for our entity) where
+it came out white before. Checked with `washoi view washoi_dm2 --ragdoll`.
+
+### The console in washoi.log (November 11, 2026)
+
+A game started from its icon has no console: the Windows build is a GUI
+program, and an AppImage or app bundle started from the desktop prints
+nowhere a player can see. So a match that failed while loading left no
+trace beyond the lobby's notice. Now, when the game itself is started
+(no mode: the icon, the Start menu, the AppImage) and standard output is
+not a terminal, `main` points standard output and error at `washoi.log` in the
+config folder (shagger `afa3c7a`, `core::console_log`: `dup2` on Unix,
+`SetStdHandle` on Windows), new each run with the run before kept as
+`washoi.old.log`. `fatal` no longer appends to the file itself then, its
+message already landing there. Started from a terminal, or in a tool
+mode (`view`, `demo`, `sync` and the rest, whose output scripts pipe),
+nothing changes. Checked on Linux with the output piped: the log holds
+the run's lines and a second run moves it to `washoi.old.log`.
+
 ### Linux AppImage and macOS self-update (November 11, 2026)
 
 The other two platforms now update themselves at start the way Windows
@@ -3119,9 +3176,27 @@ Map items, dropped weapons and their effects, compared with wash-fps
   first mask in a match or demo (`startHidden`), first word silent, the
   burst on collection, the 0.35-to-1 scale-in on respawn. Checked on screen
   in the dm14 golden demo (two health pickups taken at 2.9 and 3.0 s).
-- **Not yet.** The weapon pickup and swap prompt (`PickupPrompt.ts`, "PRESS
-  [F] TO SWAP TO ..."), PVS culling of items (the depth test hides them
-  behind walls), the far-detail cut on dropped weapons.
+- **The swap prompt** (November 9): `client/hud/widgets/pickup_prompt.rs`
+  ports `PickupPrompt.ts` and the `.fps-pickup-prompt` styles (the gold
+  WEAPON cell, the dark slab, the key cap, the weapon in cyan), with when
+  it asks (`FPSPickup.onProximity`, `checkPickupProximity`): standing within
+  the pickup cylinder of a map weapon that is up or a weapon on the floor,
+  with a full inventory and a gun (not the blade) in hand, in play with
+  the mouse ours. Each owner asks under its own name, the newest shown.
+  Unit tests on the rules; `tests/hud_render.rs` draws it.
+- **PVS culling** (November 9): map pickups (`FPSPickup.isInView`, the
+  procedural ones' `setInView`, the weapon models' `applyModelInView`) and
+  weapons on the floor (`DroppedWeaponRenderer.update` step 3) are left
+  out when their spot's cluster is not in the camera's PVS; a collect burst
+  still plays, as `setInView` hides only the cosmetic meshes. `view.rs`
+  keeps its own `PvsCuller` for this, as shagger's `WorldCulling` does not
+  expose its culler; moving the position test into `WorldCulling` would
+  share one. Off with `--no-cull`.
+- **Golden vectors for the shipped maps** (November 9): regenerated at the
+  same SHAG and wash-fps commits after dm5 and dm7 were republished and
+  amphi2, dm1, dm3, dm12, snd4 and snd6 went up; the ports pass on all 15.
+- **Not yet.** The far-detail cut on dropped weapons; PVS culling of remote
+  players (`RemotePlayerRenderer.isInView`).
 
 ### 0.2.0 review: world shader features against the browser (November 4, 2026)
 

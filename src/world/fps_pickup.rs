@@ -453,7 +453,7 @@ impl ItemModels {
         seconds: f64,
         camera_position: DVec3,
         camera: DMat3,
-        shown: impl Fn(u32) -> bool,
+        shown: impl Fn(u32, DVec3) -> bool,
         draws: &mut Vec<ModelDraw>,
     ) {
         let now_ms = seconds * 1000.0;
@@ -478,7 +478,7 @@ impl ItemModels {
                 .iter()
                 .zip(&placed)
                 .map(|(item, (at, _))| {
-                    (item.sparkles.is_some() && shown(item.id)).then(|| camera_position.distance(*at))
+                    (item.sparkles.is_some() && shown(item.id, *at)).then(|| camera_position.distance(*at))
                 })
                 .collect();
             for item in &mut self.items {
@@ -493,7 +493,7 @@ impl ItemModels {
             }
         }
         for (item, (at, yaw)) in self.items.iter_mut().zip(placed) {
-            if !shown(item.id) {
+            if !shown(item.id, at) {
                 continue;
             }
             let asset = &self.assets[item.asset];
