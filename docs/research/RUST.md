@@ -2758,9 +2758,20 @@ below (SHAG `432cce3`, wash-fps `247cafe`), in slices.
   new `ItemSparkles.ts`: world-unit sizes and rise, a shell of 0.85 of the
   item's radius, turning with the item, 5 to 16 per item by kind, and only
   the 8 nearest drawn items within 900 units sparkle, chosen every 0.25 s.
+- **Gun size, `cl_gun` and `func_static` (shagger `69c3ba5`).**
+  `WeaponView::is_drawn` reads `cl_gun` (`gunDrawn`) and
+  `apply_gun_size` follows `applyGunSize`: `cl_gunsize` 1 and 2 shrink the
+  whole view to 0.9 and 0.8 into the screen's corner on the gun's side, at
+  its depth, back to full size as the sights come up; the renderer hands it
+  the frame's aspect ratio. Both are `MovementVars` (80 now).
+  `func_static` brush models (`handleStatic`, the "sky tower" of dm1) are
+  built where they stand with the world's batches, their sky faces left
+  out as a brush model's are.
 - **Checked, nothing to port.** beta9.1's gun handed to two players:
   native hand weapons are drawn per frame from one shared model, with no
-  parked instances to hand out twice.
+  parked instances to hand out twice. The freefly camera following
+  `cl_fov`: the native camera already takes `currentBaseFov` every frame,
+  and a reel's fly-by its own field of view or that one.
 
 ### Staging review: player models, layered animation, items (November 10, 2026)
 

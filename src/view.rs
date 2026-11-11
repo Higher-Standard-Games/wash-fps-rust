@@ -2211,6 +2211,10 @@ impl MapRenderer {
     pub fn prepare(&mut self, gpu: &Gpu, camera: &Camera, size: [f32; 2]) {
         let aspect = size[0] / size[1];
         self.frame_height = f64::from(size[1]);
+        // `cl_gunsize` shrinks the gun into the screen's corner, by its shape.
+        if let Some(view_model) = &mut self.view_model {
+            view_model.view.aspect_ratio = f64::from(aspect);
+        }
         self.culling.update(camera, aspect);
         let lights: Vec<DynamicLight> = if self.dynamic_lights {
             self.lights.lights().chain(self.charge_glows.iter().copied()).collect()
@@ -3710,6 +3714,7 @@ pub fn start_prepared(o: &ViewOptions, prepared: Prepared) -> Result<i32, String
     let light = renderer.light_at(camera.position);
     if let Some(view_model) = &mut renderer.view_model {
         view_model.powerup_outline = o.quad.then(|| quad_view_weapon_outline(0.0));
+        view_model.view.aspect_ratio = f64::from(o.width) / f64::from(o.height.max(1));
         view_model
             .view
             .apply_cvars(&shagger::core::cvar::with_cvars(|c| ViewModelCvars::read(c)));
