@@ -11,6 +11,7 @@ use shagger::shared::bsp::brush_model_state::{BrushModelState, extract_brush_mod
 use shagger::shared::js::js_hypot;
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
+use washoi::client::bomb_renderer::{BombRenderer, CARRY_FALLBACK_HEIGHT};
 use washoi::client::bomb_site_debris::BombSiteDebris;
 use washoi::client::bomb_site_markers::{BLAST_SCALE, BLAST_SHAKE_RANGE, BombSiteMarkers, MarkerPose};
 use washoi::client::cartoon_hit_effect::{CartoonHitEffect, CartoonHitRenderer};
@@ -1059,6 +1060,11 @@ pub struct MapRenderer {
     /// and their models by path.
     bomb_debris: BombSiteDebris,
     debris_models: HashMap<String, ProjectileModel>,
+    /// The bomb itself (`BombRenderer`), and its carrier's spine and yaw
+    /// when they were drawn last frame.
+    bomb: BombRenderer,
+    bomb_anchor: Option<(String, DVec3, f64)>,
+    bomb_carrier: Option<String>,
     /// Blast sounds the detonation asked for, not yet played.
     blast_sounds: usize,
     /// Each live player's tint, for the colour their shards take.
@@ -1377,6 +1383,16 @@ impl MapRenderer {
                     .collect()
             })
             .unwrap_or_default();
+        // `BombRenderer.update`: the carrier as drawn last frame.
+        let anchor = self.bomb_anchor.clone();
+        self.bomb.update(dt, match_state.bomb(), |carrier| {
+            anchor.filter(|(id, _, _)| id == carrier).map(|(_, at, yaw)| (at, yaw))
+        });
+        self.bomb_carrier = match_state
+            .bomb()
+            .and_then(|b| b.get("carrier"))
+            .and_then(shagger::shared::json::Value::as_str)
+            .map(str::to_owned);
         if self.applied_disabled.as_ref() != Some(&disabled) {
             // `restore`: the round's reset, then the server's list.
             self.brush_models.restore(&disabled);
@@ -1468,6 +1484,7 @@ impl MapRenderer {
         self.update_charge_glows(players);
         self.joints.truncate(self.static_joints);
         self.live_draws.clear();
+        self.bomb_anchor = None;
         self.live_actors.clear();
         let Some(renderer) = &mut self.remote_players else {
             return;
@@ -1511,6 +1528,15 @@ impl MapRenderer {
             );
             if let Some(world) = renderer.world_of(id, interp) {
                 self.live_worlds.insert(id.clone(), world);
+            }
+            if self.bomb_carrier.as_deref() == Some(id.as_str()) {
+                // `getBoneAnchor(carrier, "Spine1")`, else shoulder height
+                // over the hitbox (`carrierFallback`).
+                let (at, yaw) = renderer.bone_anchor(id, interp, "Spine1").unwrap_or((
+                    DVec3::new(interp.x, interp.y + CARRY_FALLBACK_HEIGHT, interp.z),
+                    interp.yaw,
+                ));
+                self.bomb_anchor = Some((id.clone(), at, yaw));
             }
             let first = self.live_draws.len();
             renderer.draws(id, interp, style, &mut self.joints, &mut self.live_draws);
@@ -2285,6 +2311,7 @@ impl MapRenderer {
             );
         }
         self.gib_renderer.draws(&self.gibs, &mut self.frame_draws);
+        self.bomb.draws(&mut self.frame_draws);
         for fragment in self.bomb_debris.fragments() {
             if let Some(model) = self.debris_models.get(&fragment.path) {
                 model.draws(fragment.world(), self.item_time, &mut self.frame_draws);
@@ -2806,6 +2833,7 @@ pub fn build_renderer(gpu: &Gpu, map: &mut LoadedMap, output_format: wgpu::Textu
         }
     }
     let gib_renderer = GibRenderer::new(gpu, &mut models);
+    let bomb = BombRenderer::new(gpu, &mut models);
     // The `func_explosive` brush models (`BrushModelState`), and in a demo
     // or a match the debris models they throw (`BombSiteDebris.preload`).
     let brush_models = BrushModelState::new(extract_brush_models(&map.bsp.entities, &map.bsp.models));
@@ -3147,6 +3175,9 @@ pub fn build_renderer(gpu: &Gpu, map: &mut LoadedMap, output_format: wgpu::Textu
         bomb_sites: BombSiteMarkers::default(),
         bomb_debris: BombSiteDebris::default(),
         debris_models,
+        bomb,
+        bomb_anchor: None,
+        bomb_carrier: None,
         blast_sounds: 0,
         live_tints: HashMap::new(),
         ragdolls,

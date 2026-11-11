@@ -4,6 +4,7 @@
 pub mod ammo_status;
 pub mod attached_blade;
 pub mod attached_gun;
+pub mod bomb_renderer;
 pub mod bomb_site_debris;
 pub mod bomb_site_markers;
 pub mod cartoon_hit_effect;
