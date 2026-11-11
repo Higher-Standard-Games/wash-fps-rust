@@ -2753,6 +2753,12 @@ client. What was missing is ported; what is left is listed at the end.
   is baked into the shaped buffer, the mixer playing at one rate. The
   browser holds a voice by server ticks since the last fire; the native
   frame has none, so the same 0.12 s is measured on the effect clock.
+- **The app icon.** `assets/icon` is now washoi.net's icon (the site's
+  `android-chrome-512x512.png`): the window's icon, the macOS bundle's,
+  and new, the Windows executable's (`build.rs` writes `washoi.ico` as a
+  compiled resource for the MSVC linker, byte for byte what `llvm-rc`
+  makes of `1 ICON "washoi.ico"`) and the Linux tarball's, with a
+  `.desktop` launcher entry matching the window's app id.
 - **Not ported, for later.** The hint coach (`HintCoach`, `HintPanel`:
   first-match tips), gamepad input (`InputDevice`, the pad bindings and
   the pad's cues), and the spectator's freefly cue card.
