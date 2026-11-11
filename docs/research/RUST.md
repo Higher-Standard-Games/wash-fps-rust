@@ -2732,6 +2732,23 @@ whole areas rather than single items. 0.2.0 closes them in two steps.
 
 Newest first. Each entry names the commits and what proves them.
 
+### The Esc menu as the browser's gold rail (November 11, 2026)
+
+`client/hud/widgets/pause_menu.rs` now draws `FPSPauseMenu` as
+`MatchMenu.css` does instead of a centred box: the lobby's gold rail down
+the left (`clamp(300px, 26vw, 520px)`, its slanted violet edge and the
+radial glow at its head), the lobby's logo (washoi.net's
+`src/assets/washoi.png`, embedded as `assets/brand/washoi.png`), the
+kicker and note, SHAG's `RaisedKey` (`nav`, `ink` for the first key, `sm
+cream` for Leave, the violet lift on hover and the press), the name plate
+and Leave at the foot, the veil over the match, and the slide-in. Under
+1500 points a key's hint sits under its label, as the stylesheet's media
+query sets it. **Not yet:** Spectate and Join (the native match has no
+spectator state to go to), the mode's Loadout key (no kit picker yet),
+and the veil's `blur(3px)`, which egui cannot draw over the frame.
+`tests/pause_menu_render.rs` draws it (`PAUSE_MENU_PNG`,
+`PAUSE_MENU_BACKDROP`, `PAUSE_MENU_SIZE`).
+
 ### Corpses keep their outline and our own colour (November 11, 2026)
 
 The rest of the old colour review (#2, whose FFA colours and sides came

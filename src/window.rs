@@ -1236,7 +1236,7 @@ impl App {
             .map(|(id, _, _)| id.as_str());
         let mut demo_action = None;
         let mut menu_action = None;
-        let pause_menu = &self.pause_menu;
+        let pause_menu = &mut self.pause_menu;
         let (kicker, player) = match feed {
             Some(Feed::Play(p, _)) if pause_menu.open || self.settings_open => {
                 let state = p.match_state();
@@ -1256,7 +1256,7 @@ impl App {
             _ => (String::new(), String::new()),
         };
         self.pause_menu.settings = crate::lobby_webview::match_settings_available();
-        let pause_menu = &self.pause_menu;
+        let pause_menu = &mut self.pause_menu;
         let demo_hud = self.demo_hud.as_ref().filter(|_| cards);
         let ui = s.egui.run(&s.window, |ui| {
             if let (Some(reel), Some(Feed::Demo(demo)), true) = (reel, feed, cards) {
