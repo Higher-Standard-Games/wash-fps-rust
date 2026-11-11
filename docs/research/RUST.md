@@ -2759,6 +2759,12 @@ Newest first. Each entry names the commits and what proves them.
 - The lobby page's menu music played on under the match: the page is only
   hidden. That is fixed in the page (wash-fps `client/native/PageMusic.ts`),
   so it reaches 0.2.1 too once deployed.
+- **The water's actor reflection is culled (shagger 49c5133).** It drew
+  every part of each chosen player through the mirrored view.
+  `set_second_view` now tests the frame's draws against that view's
+  frustum, as the main view does, and `draw_opaque_view` skips the rest.
+  Only draws outside the mirrored clip volume go, so the picture cannot
+  change; not measured on a pool.
 
 ### The data screen as the lobby's twin (November 11, 2026)
 
