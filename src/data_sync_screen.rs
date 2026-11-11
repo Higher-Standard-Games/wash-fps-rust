@@ -9,6 +9,11 @@
 //! all here, once, and afterwards only what a deployment changed
 //! (`shagger::loader::pk3::package_store`). Without the network, a data
 //! directory a sync completed before is used as it is.
+//!
+//! An installed Windows game first updates itself here
+//! (`update_check::self_update`): with a newer installer downloaded and
+//! checked, the screen starts it and the game ends, and the installer starts
+//! the new version. A failed update is printed and the game plays on.
 
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -20,6 +25,7 @@ use shagger::rendering::gpu::Gpu;
 use shagger::rendering::wgpu;
 use shagger::ui::egui_layer::{EguiLayer, egui};
 use washoi::client::washoi_style::install_style;
+use washoi::update_check::{self, UpdateProgress};
 use winit::application::ApplicationHandler;
 use winit::event::{ElementState, WindowEvent};
 use winit::event_loop::ActiveEventLoop;
@@ -40,6 +46,10 @@ const BACKGROUND: wgpu::Color = wgpu::Color {
 /// How a sync ended, or that it is still running.
 #[derive(Debug, Clone, PartialEq)]
 enum Phase {
+    /// The game's own update, before the data.
+    Updating(UpdateProgress),
+    /// A newer installer, downloaded and checked: to be started.
+    Install(PathBuf),
     Running(SyncProgress),
     Done,
     /// Why, and what the directory holds: a complete set, some packages, or none.
@@ -71,17 +81,34 @@ pub enum SyncOutcome {
     Ready,
     /// The window closed first.
     Quit,
+    /// The installer is replacing the game: end it, without the menu.
+    Updating,
 }
 
 /// Brings `dir` up to `base_url`'s packages and playlists on a thread of
 /// its own, reporting into `phase`.
-fn start(base_url: String, dir: PathBuf, cancel: Arc<AtomicBool>, phase: Arc<Mutex<Phase>>) {
+fn start(base_url: String, dir: PathBuf, update: bool, cancel: Arc<AtomicBool>, phase: Arc<Mutex<Phase>>) {
     std::thread::spawn(move || {
         let set = |p: Phase| {
             if let Ok(mut slot) = phase.lock() {
                 *slot = p;
             }
         };
+        if update && let Some(updates) = washoi::cache_dir().map(|d| d.join("updates")) {
+            match update_check::self_update(&updates, &cancel, &mut |p| set(Phase::Updating(p))) {
+                Ok(Some(installer)) => {
+                    set(Phase::Install(installer));
+                    return;
+                }
+                Ok(None) => {}
+                Err(why) => eprintln!("{why}"),
+            }
+            set(Phase::Running(SyncProgress {
+                package: String::new(),
+                received: 0,
+                total: 0,
+            }));
+        }
         // A panic in the sync is a failure the screen can offer a retry
         // for, not a spinner forever.
         let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
@@ -140,16 +167,22 @@ fn megabytes(bytes: u64) -> String {
 }
 
 impl SyncApp {
-    fn restart(&mut self) {
+    /// The sync from the start, after the game's own update when `update`.
+    fn restart(&mut self, update: bool) {
         self.cancel = Arc::new(AtomicBool::new(false));
-        self.phase = Arc::new(Mutex::new(Phase::Running(SyncProgress {
-            package: String::new(),
-            received: 0,
-            total: 0,
-        })));
+        self.phase = Arc::new(Mutex::new(if update {
+            Phase::Updating(UpdateProgress::Checking)
+        } else {
+            Phase::Running(SyncProgress {
+                package: String::new(),
+                received: 0,
+                total: 0,
+            })
+        }));
         start(
             self.base_url.clone(),
             self.dir.clone(),
+            update,
             self.cancel.clone(),
             self.phase.clone(),
         );
@@ -160,6 +193,21 @@ impl SyncApp {
         if phase == Phase::Done {
             self.outcome = Some(SyncOutcome::Ready);
             return;
+        }
+        if let Phase::Install(installer) = &phase {
+            match update_check::run_installer(installer) {
+                Ok(()) => {
+                    println!("update: started {}", installer.display());
+                    self.outcome = Some(SyncOutcome::Updating);
+                    return;
+                }
+                // Played on: the data sync follows on the next try.
+                Err(why) => {
+                    eprintln!("{why}");
+                    self.restart(false);
+                    return;
+                }
+            }
         }
         if let Phase::Running(p) = &phase {
             // `bytesPerSecond` over about two seconds.
@@ -195,6 +243,25 @@ impl SyncApp {
                     ui.heading("WASHOI");
                     ui.add_space(16.0);
                     match &phase {
+                        Phase::Updating(UpdateProgress::Checking) => {
+                            ui.label("Checking for updates…");
+                            ui.add(egui::ProgressBar::new(0.0).desired_width(520.0).animate(true));
+                        }
+                        Phase::Updating(UpdateProgress::Downloading {
+                            version,
+                            received,
+                            total,
+                        }) => {
+                            ui.label(format!("Updating to Washoi {version}"));
+                            ui.add(
+                                egui::ProgressBar::new(*received as f32 / (*total).max(1) as f32)
+                                    .desired_width(520.0)
+                                    .text(format!("{} / {}", megabytes(*received), megabytes(*total))),
+                            );
+                        }
+                        Phase::Install(_) => {
+                            ui.label("Installing the update…");
+                        }
                         Phase::Running(p) if p.total == 0 => {
                             ui.label("Checking the game data…");
                             ui.add(egui::ProgressBar::new(0.0).desired_width(520.0).animate(true));
@@ -254,7 +321,7 @@ impl SyncApp {
         present(&m.gpu, &m.window, &mut m.surface, &m.config, frame);
         match choice {
             Some(true) => self.outcome = Some(SyncOutcome::Ready),
-            Some(false) => self.restart(),
+            Some(false) => self.restart(update_check::self_updates()),
             None => {}
         }
     }
@@ -348,7 +415,7 @@ pub fn run(base_url: &str, dir: &Path) -> Result<SyncOutcome, String> {
         outcome: None,
         error: None,
     };
-    app.restart();
+    app.restart(update_check::self_updates());
     let ran = run_on_event_loop(&mut app);
     app.cancel.store(true, Ordering::Relaxed);
     if let Some(m) = &app.open {
@@ -375,7 +442,7 @@ pub fn run_headless(base_url: &str, dir: &Path) -> Result<(), String> {
         received: 0,
         total: 0,
     });
-    start(base_url.to_owned(), dir.to_path_buf(), cancel, phase.clone());
+    start(base_url.to_owned(), dir.to_path_buf(), false, cancel, phase.clone());
     let mut last = String::new();
     loop {
         let now = phase.lock().expect("sync phase").clone();
@@ -391,7 +458,7 @@ pub fn run_headless(base_url: &str, dir: &Path) -> Result<(), String> {
                 );
                 last = p.package;
             }
-            Phase::Running(_) => {}
+            Phase::Running(_) | Phase::Updating(_) | Phase::Install(_) => {}
         }
         std::thread::sleep(Duration::from_millis(100));
     }
