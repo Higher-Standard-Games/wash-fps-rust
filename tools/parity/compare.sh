@@ -18,7 +18,8 @@
 # beams in both, with washoi view's --tracer, --muzzle, --impact, --rail and
 # --lightning arguments. LIGHTS=1 keeps the projectiles' and explosions'
 # dynamic lights in both (they are off otherwise). WEAPON=<id> holds that
-# first-person weapon at the hip in both.
+# first-person weapon at the hip in both. DATA=<dir> gives washoi view its
+# packages (the shipped ones by default).
 set -e
 HERE=$(cd "$(dirname "$0")" && pwd)
 ROOT=$(cd "$HERE/../.." && pwd)
@@ -50,7 +51,7 @@ i=0
 IFS=';' read -ra list <<< "$views"
 for v in "${list[@]}"; do
   IFS=',' read -r x y z yaw pitch <<< "$v"
-  (cd "$ROOT" && ./target/release/washoi view "$map" --at " $x,$y,$z,$yaw" --pitch " $pitch" "${player_args[@]}" --screenshot "${prefix}_r_$i.png" >/dev/null)
+  (cd "$ROOT" && ./target/release/washoi view "$map" ${DATA:+--data "$DATA"} --at " $x,$y,$z,$yaw" --pitch " $pitch" "${player_args[@]}" --screenshot "${prefix}_r_$i.png" >/dev/null)
   python3 - "${prefix}" "$i" <<'PY'
 import sys
 from PIL import Image, ImageChops, ImageStat

@@ -12,7 +12,7 @@
 //! washoi sync [--region eu|us] [--data DIR]
 //! washoi --version
 //! washoi loading <map> --screenshot FILE.png [--levelshot FILE.jpg] [--seconds N] [--size WxH]
-//! washoi view <map> [--data DIR] [--spawn N] [--screenshot FILE.png] [--size WxH] [--time T] [--at X,Y,Z,YAW] [--pitch DEG] [--player X,Y,Z,YAW[,CLIP[,FRAME[,quad][,WEAPON]]]]... [--projectile ID,X,Y,Z,YAW[,PITCH]]... [--explosion ID,X,Y,Z,AGE]... [--tracer X,Y,Z,X2,Y2,Z2,R,G,B,AGE]... [--muzzle X,Y,Z,R,G,B,STYLE,SCALE,DURATION,AGE]... [--impact X,Y,Z,NX,NY,NZ,IX,IY,IZ,R,G,B,HEAVY,AGE]... [--rail X,Y,Z,X2,Y2,Z2,R,G,B,KIND,NX,NY,NZ,AGE]... [--lightning MODE,X,Y,Z,X2,Y2,Z2,R,G,B,KIND,AGE]... [--hit X,Y,Z,DAMAGE,AGE[,head]]... [--teleport X,Y,Z,X2,Y2,Z2,YAW,AGE]... [--gib X,Y,Z,AGE]... [--ring X,Y,Z,KIND,RADIUS,ALPHA]... [--ragdoll X,Y,Z,YAW,DX,DY,DZ,AGE]... [--weapon ID [--aim] [--quad] [--fire AGE]] [--no-cull] [--no-lights] [--seconds N]
+//! washoi view <map> [--data DIR] [--spawn N] [--screenshot FILE.png] [--size WxH] [--time T] [--at X,Y,Z,YAW] [--pitch DEG] [--player X,Y,Z,YAW[,CLIP[,FRAME[,quad][,WEAPON][,BODY]]]]... [--projectile ID,X,Y,Z,YAW[,PITCH]]... [--explosion ID,X,Y,Z,AGE]... [--tracer X,Y,Z,X2,Y2,Z2,R,G,B,AGE]... [--muzzle X,Y,Z,R,G,B,STYLE,SCALE,DURATION,AGE]... [--impact X,Y,Z,NX,NY,NZ,IX,IY,IZ,R,G,B,HEAVY,AGE]... [--rail X,Y,Z,X2,Y2,Z2,R,G,B,KIND,NX,NY,NZ,AGE]... [--lightning MODE,X,Y,Z,X2,Y2,Z2,R,G,B,KIND,AGE]... [--hit X,Y,Z,DAMAGE,AGE[,head]]... [--teleport X,Y,Z,X2,Y2,Z2,YAW,AGE]... [--gib X,Y,Z,AGE]... [--ring X,Y,Z,KIND,RADIUS,ALPHA]... [--ragdoll X,Y,Z,YAW,DX,DY,DZ,AGE]... [--weapon ID [--aim] [--quad] [--fire AGE]] [--no-cull] [--no-lights] [--seconds N]
 //! washoi demo <file.shagdemo> [--data DIR] [--screenshot FILE.png] [--size WxH] [--time T] [--at X,Y,Z,YAW] [--pitch DEG] [--follow N] [--reel MINUTES] [--audio-out FILE.wav] [--scoreboard] [--seconds N]
 //! washoi watch <ws://game-server> [--name NAME] [--ticket TICKET] [--data DIR] [--screenshot FILE.png] [--time T] [--at X,Y,Z,YAW] [--follow N] [--seconds N]
 //! washoi play <ws://game-server> [--name NAME] [--ticket TICKET] [--data DIR] [--screenshot FILE.png] [--time T] [--say TEXT] [--seconds N]
@@ -104,6 +104,7 @@ use washoi::client::prediction;
 use washoi::client::v2_network_client::{ClientInput, V2NetworkClient};
 use washoi::shared::entities::definitions::weapons::weapons_table::weapon_speed_bonus;
 use washoi::shared::net::snapshot_events::{SnapshotEvent, WashoiEvents};
+use washoi::shared::players::player_look::LOOK_MODELS;
 
 fn usage() -> ! {
     eprintln!(
@@ -114,7 +115,7 @@ fn usage() -> ! {
          \x20      washoi loading <map> --screenshot FILE.png [--levelshot FILE.jpg] [--seconds N] [--size WxH]\n\
          \x20      washoi bench <file.shagdemo> [--data DIR] [--frames N] [--warmup N] [--follow N] [--out FILE.json]\n\
          \x20      washoi --version\n\
-         \x20      washoi view <map> [--data DIR] [--spawn N] [--screenshot FILE.png] [--size WxH] [--time T] [--at X,Y,Z,YAW] [--pitch DEG] [--player X,Y,Z,YAW[,CLIP[,FRAME[,quad][,WEAPON]]]]... [--projectile ID,X,Y,Z,YAW[,PITCH]]... [--explosion ID,X,Y,Z,AGE]... [--weapon ID [--aim] [--quad] [--fire AGE]] [--no-cull] [--no-lights] [--seconds N]\n\
+         \x20      washoi view <map> [--data DIR] [--spawn N] [--screenshot FILE.png] [--size WxH] [--time T] [--at X,Y,Z,YAW] [--pitch DEG] [--player X,Y,Z,YAW[,CLIP[,FRAME[,quad][,WEAPON][,BODY]]]]... [--projectile ID,X,Y,Z,YAW[,PITCH]]... [--explosion ID,X,Y,Z,AGE]... [--weapon ID [--aim] [--quad] [--fire AGE]] [--no-cull] [--no-lights] [--seconds N]\n\
          \x20      washoi demo <file.shagdemo> [--data DIR] [--screenshot FILE.png] [--size WxH] [--time T] [--at X,Y,Z,YAW] [--pitch DEG] [--follow N] [--reel MINUTES] [--audio-out FILE.wav] [--scoreboard] [--seconds N]\n\
          \x20      washoi watch <ws://game-server> [--name NAME] [--ticket TICKET] [--data DIR] [--screenshot FILE.png] [--time T] [--at X,Y,Z,YAW] [--follow N] [--seconds N]\n\
          \x20      washoi play <ws://game-server> [--name NAME] [--ticket TICKET] [--data DIR] [--screenshot FILE.png] [--time T] [--say TEXT] [--seconds N]\n\
@@ -233,8 +234,12 @@ fn parse_options(args: impl Iterator<Item = String>) -> Options {
                     quad: parts.get(6..).is_some_and(|rest| rest.contains(&"quad")),
                     weapon: parts
                         .get(6..)
-                        .and_then(|rest| rest.iter().find(|p| **p != "quad"))
+                        .and_then(|rest| rest.iter().find(|p| **p != "quad" && !LOOK_MODELS.contains(p)))
                         .map(|w| (*w).to_owned()),
+                    body: parts
+                        .get(6..)
+                        .and_then(|rest| rest.iter().find(|p| LOOK_MODELS.contains(p)))
+                        .map(|b| (*b).to_owned()),
                 });
             }
             "--projectile" => {
@@ -280,6 +285,7 @@ fn parse_options(args: impl Iterator<Item = String>) -> Options {
                         frame: 0.0,
                         quad: false,
                         weapon: None,
+                        body: None,
                     },
                     dir: [n(4), n(5), n(6)],
                     age: n(7),

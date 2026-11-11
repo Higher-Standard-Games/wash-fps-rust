@@ -5,7 +5,7 @@ puts them side by side.
 
 The browser half drives SHAG's fps game headless in Playwright's Chromium
 (SwiftShader WebGL2). It plays a demo to load the map, pauses it, holds the
-camera at each view (FOV 0.8 rad, as the Rust camera has it), hides every mesh
+camera at each view (the `cl_fov` camera, as the Rust camera has it), hides every mesh
 but the world, the sky and the map's weapon pickups (`bsp*`, `skybox*`, or the
 regex given as the fifth argument of `views.cjs`), and hides the HUD. Weapon
 pickups the demo has taken are shown again, as `washoi view` draws them all.

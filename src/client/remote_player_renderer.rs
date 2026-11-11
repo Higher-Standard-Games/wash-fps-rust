@@ -368,11 +368,20 @@ impl RemotePlayerRenderer {
     }
 
     /// Moves one player on by `dt` seconds in a forced clip, as a pose
-    /// held for a screenshot or a fresh corpse is, on the default body.
-    pub fn update(&mut self, id: &str, interp: &InterpolatedEntity, dt: f64, time_scale: f64, clip: Option<&str>) {
+    /// held for a screenshot or a fresh corpse is, on `body` (the default
+    /// body when `None`).
+    pub fn update(
+        &mut self,
+        id: &str,
+        interp: &InterpolatedEntity,
+        dt: f64,
+        time_scale: f64,
+        clip: Option<&str>,
+        body: Option<&str>,
+    ) {
         let anim = clip.unwrap_or_else(|| derive_animation(interp));
         let (run_legs, _) = run_rates();
-        let (model, remote) = self.ensure(id, "police");
+        let (model, remote) = self.ensure(id, body.unwrap_or("police"));
         let instance = &mut remote.instance;
         model.play_animation(instance, anim);
         instance.speed_ratio = animation_speed_ratio(anim, interp, time_scale, run_legs);

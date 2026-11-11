@@ -837,6 +837,8 @@ pub struct PlayerView {
     pub quad: bool,
     /// The weapon in hand, if any.
     pub weapon: Option<String>,
+    /// The body (`LOOK_MODELS`); Police when `None`.
+    pub body: Option<String>,
 }
 
 impl PlayerView {
@@ -1992,7 +1994,7 @@ impl MapRenderer {
                         ..InterpolatedEntity::default()
                     };
                     let id = format!("{entity_id}#corpse");
-                    renderer.update(&id, &interp, 0.0, 1.0, Some("idle"));
+                    renderer.update(&id, &interp, 0.0, 1.0, Some("idle"), None);
                     let world = renderer.world_of(&id, &interp);
                     if let (Some(DetachedBody { body, instance }), Some(world)) = (renderer.take(&id), world)
                         && let Some(serial) = ragdolls.spawn(
@@ -2854,7 +2856,7 @@ pub fn build_renderer(gpu: &Gpu, map: &mut LoadedMap, output_format: wgpu::Textu
                 for (i, player) in map.players.iter().enumerate() {
                     let id = format!("player{i}");
                     let interp = player.interpolated();
-                    players.update(&id, &interp, 0.0, 1.0, Some(&player.clip));
+                    players.update(&id, &interp, 0.0, 1.0, Some(&player.clip), player.body.as_deref());
                     players.go_to_frame(&id, player.frame);
                     let first = model_draws.len();
                     players.draws(&id, &interp, &style, &mut joints, &mut model_draws);
@@ -3299,7 +3301,14 @@ pub fn build_renderer(gpu: &Gpu, map: &mut LoadedMap, output_format: wgpu::Textu
         for (i, held) in map.ragdolls.iter().enumerate() {
             let id = format!("ragdoll{i}");
             let interp = held.player.interpolated();
-            players.update(&id, &interp, 0.0, 1.0, Some(&held.player.clip));
+            players.update(
+                &id,
+                &interp,
+                0.0,
+                1.0,
+                Some(&held.player.clip),
+                held.player.body.as_deref(),
+            );
             players.go_to_frame(&id, held.player.frame);
             let world = players.world_of(&id, &interp);
             if let (Some(DetachedBody { body, instance }), Some(world)) = (players.take(&id), world) {

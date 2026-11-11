@@ -3,8 +3,8 @@ const { open, boot, waitForMap, sleep } = require('./lib.cjs');
 // Q3 position and angles (pitch: positive looks down). Writes <prefix>_<i>.png.
 // Map weapon pickups are shown (all of them, as if available), as washoi view
 // draws them; every other mesh the keep regex does not name is hidden.
-// Players (the last argument) stand at Quake origins as Vanguard models in
-// the FFA style, their clip held at a frame, as washoi view --player draws them.
+// Players (the last argument) stand at Quake origins in the FFA style, as
+// Police or the body named among their trailing fields, their clip held at a frame, as washoi view --player draws them.
 // With item seconds, every procedural pickup is shown, available and in view,
 // posed that many seconds after it was built, as washoi view --time draws it.
 // Projectiles (the last argument) are held at Quake origins, flying along a
@@ -191,11 +191,16 @@ const { open, boot, waitForMap, sleep } = require('./lib.cjs');
       if (players) {
         const { PlayerModelManager } = await import('/src/engine/animation/PlayerModelManager.ts');
         const { getPlayerModelVisualStyle } = await import('/src/games/fps/client/PlayerModelVisualSettings.ts');
+        const assets = await import('/src/engine/animation/PlayerModelAssets.ts');
+        const roots = { female: assets.FEMALE_MODEL_ROOT, robot: assets.ROBOT_MODEL_ROOT, cartel: assets.CARTEL_MODEL_ROOT, riotkitty: assets.RIOTKITTY_MODEL_ROOT };
         const manager = new PlayerModelManager(scene);
         await manager.loadModel();
         for (const [i, p] of players.split(';').entries()) {
-          const [x, y, z, angle, clip = 'idle', frame = '0'] = p.split(',');
-          const inst = manager.createInstance(`probe_player${i}`, 36);
+          const [x, y, z, angle, clip = 'idle', frame = '0', ...rest] = p.split(',');
+          // A body named among the trailing fields (as washoi view takes it).
+          const body = rest.find((r) => roots[r]);
+          if (body) await manager.loadVariant(body, roots[body], `${body}.glb`, assets.PLAYER_ANIMATION_ROOT);
+          const inst = manager.createInstance(`probe_player${i}`, 36, body);
           // RemotePlayerRenderer.updateModel: anchor at the feet, turned by yaw.
           inst.anchor.position.set(Number(x), Number(z) - 24, Number(y));
           inst.anchor.rotation.set(0, ((90 - Number(angle)) * Math.PI) / 180, 0);
@@ -217,7 +222,10 @@ const { open, boot, waitForMap, sleep } = require('./lib.cjs');
         view.init(scene, camera);
         for (const l of before) if (/^(weaponLight|bladeLight|muzzleFlash)$/.test(l.name)) l.dispose();
         await view.loadWeapon(weapon);
+        // Barrels and the ammo counter load after the body, under the same root.
+        await view.weaponDetailsReady;
         for (const m of view.currentWeapon?.meshes ?? []) held.add(m);
+        for (const m of view.weaponRoot?.getChildMeshes(false) ?? []) held.add(m);
       }
       const { FPSPickup } = await import('/src/games/fps/world/FPSPickup.ts');
       const weapons = new Set();
@@ -243,7 +251,8 @@ const { open, boot, waitForMap, sleep } = require('./lib.cjs');
         camera.position.set(x, z, y);
         if (camera.rotationQuaternion) camera.rotationQuaternion = null;
         camera.rotation.set((pitch * Math.PI) / 180, ((90 - yaw) * Math.PI) / 180, 0);
-        camera.fov = 0.8;
+        // cl_fov's own (90 at 16:9), as washoi view's camera starts.
+        camera.fov = window.__probeFov ??= camera.fov;
         window.__holdTrails?.();
         for (const m of scene.meshes) if (!keep.test(m.name) && !weapons.has(m) && m.isVisible) m.isVisible = false;
         // The paused demo leaves taken pickups disabled, and a pickup hides its
