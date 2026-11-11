@@ -39,6 +39,7 @@ use shagger::audio::audio_v2_sfx::{AudioV2Sfx, SfxPlayOptions};
 use shagger::babylon::post_processes::image_processing_post_process::{
     ImageProcessingConfiguration, ImageProcessingPostProcess, Vignette, VignetteBlendMode,
 };
+use shagger::core::cvar::with_cvars;
 use shagger::lighting::sky_light_system::bsp_mode_lights;
 use shagger::loader::bsp::bsp_loader::{BspFile, BspLightVol, LightGrid, load, load_collision};
 use shagger::loader::bsp::light_grid_sampling::{LightSample, sample_light_vols};
@@ -59,6 +60,7 @@ use shagger::rendering::hdr_target::HDR_FORMAT;
 use shagger::rendering::hdr_target::HdrTarget;
 use shagger::rendering::model_renderer::{ModelDraw, ModelRenderer};
 use shagger::rendering::offscreen::{OFFSCREEN_FORMAT, render_hdr_scene_with_ui_to_rgba};
+use shagger::rendering::render_toggles::render_toggle;
 use washoi::client::fps_bomb_audio::BOMB_BLAST_SOUND;
 
 use shagger::effects::color_correction_post_process::active_color_matrix;
@@ -669,6 +671,9 @@ pub struct TeleportView {
 pub enum DeathFollow {
     Ragdoll(u64),
     Gibs(u64),
+    /// Nothing to follow (gibs off): the camera pulls back from where the
+    /// body was.
+    Still,
 }
 
 /// A body fallen as a ragdoll, held at an age (`--ragdoll`).
@@ -1912,8 +1917,11 @@ impl MapRenderer {
         // RagdollSystem.update: a ragdoll that has faded bursts here.
         if let Some(ragdolls) = &mut self.ragdolls {
             ragdolls.update(dt);
+            let gibs_on = with_cvars(|c| render_toggle(c, "r_gibs"));
             for (at, color) in ragdolls.take_gibs() {
-                self.gibs.spawn(at, DVec3::ZERO, color);
+                if gibs_on {
+                    self.gibs.spawn(at, DVec3::ZERO, color);
+                }
             }
         }
         for event in events {
@@ -1947,6 +1955,14 @@ impl MapRenderer {
                     .map(|(_, yaw)| *yaw);
                 let death_pos = DVec3::new(at.x, at.y, at.z);
                 if gib {
+                    // With gibs off (`r_gibs 0`) nothing flies, but the view
+                    // still pulls back from where the body was.
+                    if !with_cvars(|c| render_toggle(c, "r_gibs")) {
+                        if let Some(yaw) = local {
+                            self.local_death = Some((DeathFollow::Still, death_pos, yaw));
+                        }
+                        continue;
+                    }
                     let burst = self.gibs.spawn(death_pos, DVec3::new(vel.x, vel.y, vel.z), color);
                     if let (Some(yaw), Some(burst)) = (local, burst) {
                         self.local_death = Some((DeathFollow::Gibs(burst), death_pos, yaw));
@@ -2060,6 +2076,7 @@ impl MapRenderer {
         match follow {
             DeathFollow::Ragdoll(serial) => self.ragdolls.as_ref()?.position_of(serial),
             DeathFollow::Gibs(burst) => self.gibs.burst_position(burst),
+            DeathFollow::Still => None,
         }
     }
 
@@ -2262,7 +2279,9 @@ impl MapRenderer {
             view_model.view.aspect_ratio = f64::from(aspect);
         }
         self.culling.update(camera, aspect);
-        let lights: Vec<DynamicLight> = if self.dynamic_lights {
+        // `r_dynamiclight 0` (the Ultralow preset): no pool lights.
+        let dynamic = self.dynamic_lights && with_cvars(|c| render_toggle(c, "r_dynamiclight"));
+        let lights: Vec<DynamicLight> = if dynamic {
             self.lights.lights().chain(self.charge_glows.iter().copied()).collect()
         } else {
             Vec::new()
@@ -2500,7 +2519,7 @@ impl MapRenderer {
             }
         }
         if let Some(view_model) = &mut self.view_model {
-            view_model.dynamic_lights = self.dynamic_lights;
+            view_model.dynamic_lights = self.dynamic_lights && with_cvars(|c| render_toggle(c, "r_dynamiclight"));
             view_model.prepare(gpu, camera, aspect);
         }
     }

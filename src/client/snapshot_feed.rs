@@ -185,6 +185,11 @@ impl SnapshotFeed {
             }
             Some(_) => true,
         });
+        // A projectile seen without its spawn (joined or sought mid-flight)
+        // has no type to forget it with: its tick goes by age as well.
+        let tick = state.tick;
+        self.seen_ticks
+            .retain(|_, seen| tick.saturating_sub(*seen) <= PROJECTILE_FORGET_TICKS);
         self.projectile_buffer.push(now, state.tick, projectiles, None);
     }
 

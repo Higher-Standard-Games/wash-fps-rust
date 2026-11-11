@@ -453,8 +453,14 @@ pub struct CvarChoice {
 }
 
 /// `valueMatches`, for a wanted number.
+/// The presets here are numbers; a switch the browser writes as `true` or
+/// `false` (`r_fog`) matches 1 or 0, as `valueMatches` takes a flag either way.
 fn value_matches(current: Option<&CvarValue>, wanted: f64) -> bool {
-    matches!(current, Some(CvarValue::Number(n)) if (n - wanted).abs() < 1e-6)
+    match current {
+        Some(CvarValue::Number(n)) => (n - wanted).abs() < 1e-6,
+        Some(CvarValue::Bool(b)) => wanted == f64::from(u8::from(*b)),
+        _ => false,
+    }
 }
 
 /// `currentChoice`: the choice whose every value is set now, or `None` for
@@ -478,7 +484,43 @@ pub fn apply_choice(cvars: &mut Cvars, choice: &CvarChoice) {
 /// `VIDEO_PRESETS`: what costs frames; brightness, outlines and the like are
 /// left alone. Balanced is the game's own defaults. With each preset's line
 /// and meter bars.
-pub const VIDEO_PRESETS: [(CvarChoice, &str, u8); 3] = [
+pub const VIDEO_PRESETS: [(CvarChoice, &str, u8); 4] = [
+    (
+        CvarChoice {
+            id: "ultralow",
+            label: "Ultralow",
+            values: &[
+                ("r_bloom", 0.0),
+                ("r_glow", 0.0),
+                ("r_ssr", 0.0),
+                ("r_ssr_strength", 0.4),
+                ("r_anisotropy", 1.0),
+                // Flat colour: map surfaces lose their pattern and keep their lighting
+                ("r_picmip", 8.0),
+                ("r_godrays", 0.0),
+                ("r_softhalos", 0.0),
+                ("r_water_quality", 1.0),
+                ("r_water_actors", 0.0),
+                ("r_arealights", 0.0),
+                ("r_bsp_pbr", 0.0),
+                ("r_renderscale", 0.5),
+                ("r_msaa", 0.0),
+                ("r_dynamiclight", 0.0),
+                ("r_marks", 0.0),
+                ("r_gibs", 0.0),
+                ("r_teleport_ghost", 0.0),
+                ("r_fog", 0.0),
+                ("r_underwater_distortion", 0.0),
+                ("r_deluxe", 0.0),
+                ("cl_player_pose_hz", 10.0),
+                ("cl_player_outline", 0.0),
+                ("r_cel_outlines", 0.0),
+                ("r_cel_weapon_outlines", 0.0),
+            ],
+        },
+        "Frames above all: half resolution, flat map colours, no antialiasing, lights, gibs, marks, fog or outlines.",
+        0,
+    ),
     (
         CvarChoice {
             id: "smooth",
@@ -496,6 +538,18 @@ pub const VIDEO_PRESETS: [(CvarChoice, &str, u8); 3] = [
                 ("r_water_actors", 0.0),
                 ("r_arealights", 0.0),
                 ("r_bsp_pbr", 0.0),
+                ("r_renderscale", 1.0),
+                ("r_msaa", 1.0),
+                ("r_dynamiclight", 1.0),
+                ("r_marks", 1.0),
+                ("r_gibs", 1.0),
+                ("r_teleport_ghost", 1.0),
+                ("r_fog", 1.0),
+                ("r_underwater_distortion", 1.0),
+                ("r_deluxe", 1.0),
+                ("cl_player_pose_hz", 30.0),
+                ("cl_player_outline", 1.0),
+                ("r_cel_weapon_outlines", 1.0),
             ],
         },
         "The most frames. Plain water, no light shafts, no bloom, hard-edged halos.",
@@ -519,6 +573,18 @@ pub const VIDEO_PRESETS: [(CvarChoice, &str, u8); 3] = [
                 ("r_water_actors", 1.0),
                 ("r_arealights", 1.0),
                 ("r_bsp_pbr", 1.0),
+                ("r_renderscale", 1.0),
+                ("r_msaa", 1.0),
+                ("r_dynamiclight", 1.0),
+                ("r_marks", 1.0),
+                ("r_gibs", 1.0),
+                ("r_teleport_ghost", 1.0),
+                ("r_fog", 1.0),
+                ("r_underwater_distortion", 1.0),
+                ("r_deluxe", 1.0),
+                ("cl_player_pose_hz", 30.0),
+                ("cl_player_outline", 1.0),
+                ("r_cel_weapon_outlines", 1.0),
             ],
         },
         "The look the game ships with.",
@@ -530,8 +596,7 @@ pub const VIDEO_PRESETS: [(CvarChoice, &str, u8); 3] = [
             label: "Pretty",
             values: &[
                 ("r_bloom", 1.3),
-                // A hint of glow on lit strips and signs; more turns every
-                // lamp into a blurred blob.
+                // A hint of glow on lit strips and signs; more turns every lamp into a blurred blob
                 ("r_glow", 0.35),
                 ("r_ssr", 1.0),
                 ("r_ssr_strength", 0.5),
@@ -544,6 +609,18 @@ pub const VIDEO_PRESETS: [(CvarChoice, &str, u8); 3] = [
                 ("r_water_actors", 1.0),
                 ("r_arealights", 1.0),
                 ("r_bsp_pbr", 1.0),
+                ("r_renderscale", 1.0),
+                ("r_msaa", 1.0),
+                ("r_dynamiclight", 1.0),
+                ("r_marks", 1.0),
+                ("r_gibs", 1.0),
+                ("r_teleport_ghost", 1.0),
+                ("r_fog", 1.0),
+                ("r_underwater_distortion", 1.0),
+                ("r_deluxe", 1.0),
+                ("cl_player_pose_hz", 30.0),
+                ("cl_player_outline", 1.0),
+                ("r_cel_weapon_outlines", 1.0),
             ],
         },
         "Adds glow, reflections and see-through water. Wants a strong graphics card.",
@@ -1030,6 +1107,42 @@ pub fn register_client_cvars(cvars: &mut Cvars) {
     register_player_audio_cvars(cvars);
     // RemotePlayerRenderer.ts.
     crate::client::remote_player_renderer::register_remote_player_cvars(cvars);
+    // RenderVars.ts and RemotePlayerRenderer.ts: what the video page's
+    // presets write that the native renderer does not apply yet (render
+    // scale, antialiasing, the reduced pose rate of medium-distance
+    // players). Registered with the browser's defaults, so the page's
+    // presets read back and its choices are kept.
+    cvars.register(
+        "r_renderscale",
+        1.0,
+        CvarOptions {
+            description: "Render resolution as a fraction of the window (not applied by the native client yet)".into(),
+            ..CvarOptions::default()
+        },
+    );
+    int_flag(
+        cvars,
+        "r_msaa",
+        1,
+        "Multisample antialiasing (0/1; not applied by the native client yet)",
+    );
+    cvars.register(
+        "cl_player_pose_hz",
+        30,
+        CvarOptions {
+            description: "Pose rate for medium-distance remote players, in Hz (not applied by the native client yet)"
+                .into(),
+            ..CvarOptions::default()
+        },
+    );
+    // PostProcessingManager.ts: the view weapon's black outline (the
+    // Ultralow preset turns it off; a powerup's or a charge's still shows).
+    int_flag(
+        cvars,
+        "r_cel_weapon_outlines",
+        1,
+        "Enable cel outlines on first-person weapon (0/1)",
+    );
     // FPSController.ts.
     int_flag(
         cvars,
@@ -1151,7 +1264,7 @@ mod tests {
             Some("balanced")
         );
         assert_eq!(load_level(section_load(&cvars, VideoSection::Effects)), FrameCost::Mid);
-        apply_choice(&mut cvars, &VIDEO_PRESETS[2].0);
+        apply_choice(&mut cvars, &VIDEO_PRESETS[3].0);
         assert_eq!(
             current_choice(&cvars, &VIDEO_PRESETS.map(|p| p.0)).map(|c| c.id),
             Some("pretty")

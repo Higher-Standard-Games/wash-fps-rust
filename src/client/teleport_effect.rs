@@ -183,7 +183,10 @@ impl TeleportEffect {
 
     /// `spawnGhost`: a free slot, or none (never stolen mid-fade).
     fn spawn_ghost(&mut self, at: DVec3, yaw: f64, team: TeamColor) {
-        if !self.has_ghosts {
+        let on = shagger::core::cvar::with_cvars(|c| {
+            shagger::rendering::render_toggles::render_toggle(c, "r_teleport_ghost")
+        });
+        if !self.has_ghosts || !on {
             return;
         }
         let Some(slot) = self.busy.iter().position(|b| !b) else {

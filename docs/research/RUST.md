@@ -2712,6 +2712,37 @@ whole areas rather than single items. 0.2.0 closes them in two steps.
 
 Newest first. Each entry names the commits and what proves them.
 
+### Public beta QA, round 2: code quality and data flows (November 11, 2026)
+
+The settings the lobby page writes followed to the code that reads them,
+and the snapshot, event and effect paths read for leaks and stale state.
+
+- **Video settings that did nothing (shagger `2d40247`).** The page's
+  presets write `r_dynamiclight`, `r_gibs`, `r_teleport_ghost` and
+  `r_marks` (Ultralow turns them off); the native client registered none
+  but `r_marks`. They are render vars now, read through
+  `rendering::render_toggles::render_toggle` (an unregistered switch is
+  on): dynamic lights for the world and the view weapon, ragdoll gibs
+  (with gibs off a gibbed player leaves nothing, and our own death camera
+  pulls back from where the body was), the teleport's ghost, wall marks.
+  `r_cel_weapon_outlines` now turns the view weapon's black outline off
+  (the quad and invisibility overlays stay).
+- **Settings the native client does not apply yet.** `r_renderscale`,
+  `r_msaa` and `cl_player_pose_hz` are registered with the browser's
+  defaults, so a preset reads back as chosen and the page keeps them;
+  render scale and antialiasing are not drawn (every pipeline is single
+  sampled), and every remote player is posed every frame.
+- **`VIDEO_PRESETS`** follows beta9's four presets (Ultralow, Smooth,
+  Balanced, Pretty) value for value; a switch the page writes as a flag
+  (`r_fog`) matches a preset's 1 or 0, as `valueMatches` does.
+- **A leak.** `SnapshotFeed`'s projectile tick map dropped nothing; it now
+  forgets a projectile `PROJECTILE_FORGET_TICKS` after it was last seen,
+  as the definitions beside it do.
+- **Read and found sound.** No unwrap on anything the network or a file
+  decides; the network runs on its own thread behind channels; snapshots,
+  events and demos are fuzzed (earlier rounds); every effect resets on a
+  demo seek (`discontinuity`).
+
 ### Public beta QA, round 1: features against the browser (November 11, 2026)
 
 Every client feature of wash-fps `client/` held against the native

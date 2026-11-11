@@ -365,6 +365,10 @@ impl WeaponViewModel {
         // The blade's `BladeEnvironment`, in `WeaponLighting`'s colour.
         let [r, g, b] = self.view.lighting.color;
         let reflection = blade_reflection(name, Vec3::new(r as f32, g as f32, b as f32));
+        // `applyWeaponOutlines`: `enabled = powerup || r_cel_weapon_outlines`.
+        let black_outline = shagger::core::cvar::with_cvars(|c| {
+            !c.exists("r_cel_weapon_outlines") || c.get_bool("r_cel_weapon_outlines")
+        });
         for (i, primitive) in self.model.primitives.iter().enumerate().filter(|_| drawn) {
             let mode = primitive
                 .material
@@ -374,13 +378,15 @@ impl WeaponViewModel {
             // one is on, else the blade's charge (`WeaponCharge`), divided
             // by the root's scale like the black one. The quad wins.
             let over = self.powerup_outline.or(self.view.charge_outline);
-            let outline = weapon_outline(&mode, self.view.scale).map(|black| match over {
-                Some(powerup) => Outline {
-                    color: powerup.color,
-                    width: black.width / WEAPON_OUTLINE_WIDTH * powerup.width,
-                },
-                None => black,
-            });
+            let outline = weapon_outline(&mode, self.view.scale)
+                .filter(|_| over.is_some() || black_outline)
+                .map(|black| match over {
+                    Some(powerup) => Outline {
+                        color: powerup.color,
+                        width: black.width / WEAPON_OUTLINE_WIDTH * powerup.width,
+                    },
+                    None => black,
+                });
             self.draws.push(ModelDraw {
                 outline,
                 reflection,
