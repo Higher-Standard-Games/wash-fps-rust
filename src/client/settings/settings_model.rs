@@ -1108,10 +1108,10 @@ pub fn register_client_cvars(cvars: &mut Cvars) {
     // RemotePlayerRenderer.ts.
     crate::client::remote_player_renderer::register_remote_player_cvars(cvars);
     // RenderVars.ts and RemotePlayerRenderer.ts: what the video page's
-    // presets write that the native renderer does not apply yet (render
-    // scale, antialiasing, the reduced pose rate of medium-distance
-    // players). Registered with the browser's defaults, so the page's
-    // presets read back and its choices are kept.
+    // presets write. Antialiasing is FXAA here (`view::antialias_on`);
+    // render scale and the reduced pose rate of medium-distance players
+    // are not applied. Registered with the browser's defaults, so the
+    // page's presets read back and its choices are kept.
     cvars.register(
         "r_renderscale",
         1.0,
@@ -1120,12 +1120,7 @@ pub fn register_client_cvars(cvars: &mut Cvars) {
             ..CvarOptions::default()
         },
     );
-    int_flag(
-        cvars,
-        "r_msaa",
-        1,
-        "Multisample antialiasing (0/1; not applied by the native client yet)",
-    );
+    int_flag(cvars, "r_msaa", 1, "Antialiasing (0/1; FXAA in the native client)");
     cvars.register(
         "cl_player_pose_hz",
         30,
