@@ -137,6 +137,7 @@ pub fn add_spinning_core(model: &GltfModel) -> Option<SpinningCore> {
             base_color: [1.0; 4],
             metallic_roughness_image: None,
             normal_image: None,
+            emissive: [0.0; 3],
             emissive_image: None,
             ..m.clone()
         })

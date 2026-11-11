@@ -131,6 +131,9 @@ pub fn blue_glow_layer(model: &GltfModel) -> Option<(GltfModel, Vec<Option<Vec3>
             base_color_image: glow.map(|(i, _)| i),
             metallic_roughness_image: None,
             normal_image: None,
+            // The layer is the glow: its own emissive would add a flat
+            // white over the whole model.
+            emissive: [0.0; 3],
             emissive_image: None,
             ..m.clone()
         })

@@ -354,7 +354,18 @@ fn build_item_asset(
             let handle = models.upload(gpu, &symbols, |_| ModelMaterialMode::Standard(symbol_material()));
             (handle, count)
         });
-    let handle = models.upload(gpu, &model, world_weapon_material_mode);
+    // The glow layer adds the materials' emissive light (and breathes it):
+    // the lit model leaves it out, or it would shine twice.
+    let handle = if glow.is_some() {
+        let mut lit = model.clone();
+        for m in &mut lit.materials {
+            m.emissive = [0.0; 3];
+            m.emissive_image = None;
+        }
+        models.upload(gpu, &lit, world_weapon_material_mode)
+    } else {
+        models.upload(gpu, &model, world_weapon_material_mode)
+    };
     let radius = bounding_radius(&model);
     Some(ItemModelAsset {
         handle,
