@@ -2712,6 +2712,43 @@ whole areas rather than single items. 0.2.0 closes them in two steps.
 
 Newest first. Each entry names the commits and what proves them.
 
+### Public beta QA, round 3: rendering performance (November 11, 2026)
+
+The frame's CPU path read for work the browser does not do, and the
+model renderer measured with `washoi bench` (dm14, 1280x720, llvmpipe,
+400 frames).
+
+- **Models are culled (shagger `5b54d70`).** `ModelRenderer` drew every
+  model draw every frame, behind the camera too; Babylon frustum-culls
+  each active mesh. Each draw's primitive box, grown by its outline (a
+  rigged one to its largest half-extent and a quarter more, for its
+  poses), is now tested against the view (`rendering::frustum`). A
+  ragdoll's bones leave its world matrix, so its draws set `cull: false`.
+  The water's actor reflection still draws every actor it selected. In
+  the three golden demos 60 to 85 % of the model draws are culled, and
+  twelve frames from them are pixel for pixel what they were.
+- **State bound once.** A draw sets the pipeline, material and buffers
+  only when they differ from the draw before (an outlined primitive's
+  three passes share all but the pipeline), and `prepare` reuses its
+  sort and upload buffers.
+- **Measured.** Mean frame 99.9 to 88.5 ms on the software rasterizer,
+  the opaque pass 74.8 to 65.8 ms; the CPU's encode 0.52 to 0.42 ms and
+  submit 0.95 to 0.64 ms.
+- **Read and left.** The world is drawn by batch behind PVS and frustum
+  culling, with its pipeline bound once a run; render targets and probes
+  are made at load or on a resize, never a frame. The per-frame strings
+  in `set_live_players` and the water's `actor_draws.contains` are
+  linear in a handful of players.
+- **Not ported: `cl_player_pose_hz`.** The browser poses medium-distance
+  players at 30 Hz and pauses off-screen or tiny ones, to save
+  JavaScript time on Babylon's animation groups. Posing a player
+  natively is a few microseconds; a culled player is no longer drawn,
+  which was the cost that mattered.
+- **No antialiasing.** Every pipeline is single sampled; `r_msaa` is
+  read by nothing. MSAA would touch every pipeline and the passes that
+  read the depth (soft particles, water); a post-process FXAA on the
+  resolve is the smaller step.
+
 ### Public beta QA, round 2: code quality and data flows (November 11, 2026)
 
 The settings the lobby page writes followed to the code that reads them,

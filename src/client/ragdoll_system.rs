@@ -656,6 +656,8 @@ impl RagdollSystem {
                     tint: active.color,
                     skin: Some(offset),
                     alpha: fading.then_some(active.fade() as f32),
+                    // The bones fly free of `world` once limp.
+                    cull: false,
                     ..ModelDraw::new(if fading { fade_handle } else { handle }, index, active.world)
                 });
             }
