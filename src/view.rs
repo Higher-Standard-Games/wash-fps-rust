@@ -1104,8 +1104,12 @@ pub struct MapRenderer {
     bomb_carrier: Option<String>,
     /// Blast sounds the detonation asked for, not yet played.
     blast_sounds: usize,
-    /// Each live player's tint, for the colour their shards take.
-    live_tints: HashMap<String, Vec3>,
+    /// Each live player's style: their shards take its colour, their
+    /// corpse its colour and outline.
+    live_styles: HashMap<String, PlayerModelVisualStyle>,
+    /// The local player's style (their own body is not drawn), which
+    /// their corpse takes.
+    local_style: Option<PlayerModelVisualStyle>,
     /// Non-gib deaths fall as ragdolls (`RagdollSystem`); none without the
     /// player model.
     pub ragdolls: Option<RagdollSystem>,
@@ -1548,18 +1552,14 @@ impl MapRenderer {
         let departed = &self.departed;
         self.live_worlds
             .retain(|id, _| departed.contains_key(id) || players.iter().any(|(p, _, _)| p == id));
-        self.live_tints
+        self.live_styles
             .retain(|id, _| departed.contains_key(id) || players.iter().any(|(p, _, _)| p == id));
         self.remote_muzzles.clear();
         for (id, interp, style) in players {
             if self.ragdolled.contains(id) {
                 continue;
             }
-            if let Some(tint) = style.tint_color {
-                self.live_tints.insert(id.clone(), tint);
-            } else {
-                self.live_tints.remove(id);
-            }
+            self.live_styles.insert(id.clone(), *style);
             // The body `styled_players` chose (`modelChoiceFor`).
             let choice = self
                 .live_models
@@ -1972,12 +1972,18 @@ impl MapRenderer {
                 };
                 let kind = if damage_type.is_empty() { weapon_id } else { damage_type };
                 let gib = kind == "rail" || kind == "bomb" || (kind == "explosion" && *final_damage >= 50);
-                let color = self.live_tints.get(entity_id).copied();
                 let local = self
                     .local_player
                     .as_ref()
                     .filter(|(id, _)| id == entity_id)
                     .map(|(_, yaw)| *yaw);
+                let style = match local {
+                    Some(_) => self.local_style.as_ref(),
+                    None => None,
+                }
+                .or_else(|| self.live_styles.get(entity_id))
+                .cloned();
+                let color = style.as_ref().and_then(|s| s.tint_color);
                 let death_pos = DVec3::new(at.x, at.y, at.z);
                 if gib {
                     // With gibs off (`r_gibs 0`) nothing flies, but the view
@@ -2015,7 +2021,7 @@ impl MapRenderer {
                             instance,
                             world,
                             DVec3::new(kb_dir.x, kb_dir.y, kb_dir.z),
-                            color,
+                            style.as_ref(),
                             Some(&facts),
                         )
                     {
@@ -2041,7 +2047,7 @@ impl MapRenderer {
                             instance,
                             world,
                             DVec3::new(kb_dir.x, kb_dir.y, kb_dir.z),
-                            color,
+                            style.as_ref(),
                             Some(&facts),
                         );
                     }
@@ -2087,6 +2093,12 @@ impl MapRenderer {
 
     pub fn set_local_player(&mut self, id: Option<&str>, yaw: f64) {
         self.local_player = id.map(|id| (id.to_owned(), yaw));
+    }
+
+    /// The style the local player's corpse is drawn in: their own body,
+    /// never drawn, has no entry among the live players'.
+    pub fn set_local_style(&mut self, style: Option<PlayerModelVisualStyle>) {
+        self.local_style = style;
     }
 
     /// The local player's death this frame: what to follow, where they died
@@ -3300,7 +3312,8 @@ pub fn build_renderer(gpu: &Gpu, map: &mut LoadedMap, output_format: wgpu::Textu
         bomb_anchor: None,
         bomb_carrier: None,
         blast_sounds: 0,
-        live_tints: HashMap::new(),
+        live_styles: HashMap::new(),
+        local_style: None,
         ragdolls,
         ragdoll_trails: RagdollTrails::default(),
         slash_trails: SlashTrailRenderer::default(),
@@ -3377,7 +3390,7 @@ pub fn build_renderer(gpu: &Gpu, map: &mut LoadedMap, output_format: wgpu::Textu
             players.go_to_frame(&id, held.player.frame);
             let world = players.world_of(&id, &interp);
             if let (Some(DetachedBody { body, instance }), Some(world)) = (players.take(&id), world) {
-                ragdolls.spawn(body, instance, world, babylon(held.dir), style.tint_color, None);
+                ragdolls.spawn(body, instance, world, babylon(held.dir), Some(&style), None);
             }
         }
         if let Some(age) = map.ragdolls.iter().map(|r| r.age).reduce(f64::min) {

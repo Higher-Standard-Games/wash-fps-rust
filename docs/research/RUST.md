@@ -2732,19 +2732,32 @@ whole areas rather than single items. 0.2.0 closes them in two steps.
 
 Newest first. Each entry names the commits and what proves them.
 
+### Corpses keep their outline and our own colour (November 11, 2026)
+
+The rest of the old colour review (#2, whose FFA colours and sides came
+with the staging port): a ragdoll now takes the whole style its body was
+drawn in (`RagdollSystem::spawn`), its outline as well as its tint, as
+Babylon's corpse keeps its meshes and with them `renderOutline`; a fading
+body, drawn blended, drops the outline. The local player's corpse is made
+from a fresh body, never drawn alive, so `MapRenderer::set_local_style`
+hands it our own style (`PlayerAppearance::style` for our entity) where
+it came out white before. Checked with `washoi view washoi_dm2 --ragdoll`.
+
 ### The console in washoi.log (November 11, 2026)
 
 A game started from its icon has no console: the Windows build is a GUI
 program, and an AppImage or app bundle started from the desktop prints
 nowhere a player can see. So a match that failed while loading left no
-trace beyond the lobby's notice. Now, when standard output is not a
-terminal, `main` points standard output and error at `washoi.log` in the
+trace beyond the lobby's notice. Now, when the game itself is started
+(no mode: the icon, the Start menu, the AppImage) and standard output is
+not a terminal, `main` points standard output and error at `washoi.log` in the
 config folder (shagger `afa3c7a`, `core::console_log`: `dup2` on Unix,
 `SetStdHandle` on Windows), new each run with the run before kept as
 `washoi.old.log`. `fatal` no longer appends to the file itself then, its
-message already landing there. Started from a terminal, nothing changes.
-Checked on Linux with the output piped: the log holds the run's lines and
-a second run moves it to `washoi.old.log`.
+message already landing there. Started from a terminal, or in a tool
+mode (`view`, `demo`, `sync` and the rest, whose output scripts pipe),
+nothing changes. Checked on Linux with the output piped: the log holds
+the run's lines and a second run moves it to `washoi.old.log`.
 
 ### Linux AppImage and macOS self-update (November 11, 2026)
 

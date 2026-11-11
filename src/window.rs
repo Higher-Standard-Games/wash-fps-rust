@@ -705,17 +705,26 @@ impl App {
                     }
                 }
             }
-            let (players, models) = styled_players(
-                view.players,
-                &mut self.appearance,
-                &AppearanceView {
-                    teams: &view.teams,
-                    looks: &view.looks,
-                    perspective: self.pov_entity.as_deref(),
-                    own: feed.local_entity(),
-                    team_based: feed.match_state().team_based(),
-                },
-            );
+            let appearance_view = AppearanceView {
+                teams: &view.teams,
+                looks: &view.looks,
+                perspective: self.pov_entity.as_deref(),
+                own: feed.local_entity(),
+                team_based: feed.match_state().team_based(),
+            };
+            let (players, models) = styled_players(view.players, &mut self.appearance, &appearance_view);
+            // Our own body is never drawn; its corpse wears our style.
+            let local_style = match feed {
+                Feed::Play(..) => feed.local_entity().map(|id| {
+                    self.appearance.style(
+                        id,
+                        &appearance_view,
+                        washoi::client::remote_player_renderer::MODEL_SCALE,
+                    )
+                }),
+                _ => None,
+            };
+            s.renderer.set_local_style(local_style);
             s.renderer.live_models = models;
             let base_fov = self.camera.fov_y;
             let eyes = self.reel.as_ref().and_then(|r| {

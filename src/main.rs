@@ -456,9 +456,10 @@ fn main() {
     if let Some(dir) = config_dir() {
         let version: &'static str = Box::leak(washoi::version_line().into_boxed_str());
         shagger::core::crash_report::install("washoi", version, dir.join("crashes"));
-        // Started from its icon there is no console: what the game prints
+        // The game started from its icon has no console: what it prints
         // goes to `washoi.log`, the run before kept as `washoi.old.log`.
-        if shagger::core::console_log::redirect(&dir.join("washoi.log")) {
+        // The tool modes (view, demo, sync...) keep their output, piped or not.
+        if mode == "game" && shagger::core::console_log::redirect(&dir.join("washoi.log")) {
             CONSOLE_LOGGED.store(true, std::sync::atomic::Ordering::Relaxed);
             let at = std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
