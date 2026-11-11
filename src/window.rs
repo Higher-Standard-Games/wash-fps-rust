@@ -50,10 +50,11 @@ use winit::window::{CursorGrabMode, Fullscreen, Window, WindowId};
 use crate::demo_overlay::{DemoOverlay, DemoOverlayAction};
 use crate::reel_overlay::ReelOverlay;
 use crate::view::{
-    CLEAR, DeathFollow, DemoViewSounds, Feed, LoadedMap, MapRenderer, SceneReelWorld, apply_reel_camera,
+    CLEAR, DeathFollow, DemoViewSounds, Feed, LoadedMap, MapRenderer, SceneReelWorld, antialias_on, apply_reel_camera,
     build_renderer, play_view_sounds, styled_players, update_watch_hud, view_entity,
 };
 use shagger::animation::player_model_manager::PlayerModelVisualStyle;
+use shagger::babylon::post_processes::fxaa_post_process::FxaaPostProcess;
 use shagger::debug::debug_console::LogType;
 use shagger::loader::pk3::pk3_loader::locale_compare;
 use shagger::network::client::snapshot_buffer::InterpolatedEntity;
@@ -86,6 +87,8 @@ struct Surface {
     surface: wgpu::Surface<'static>,
     config: wgpu::SurfaceConfiguration,
     hdr: HdrTarget,
+    /// The image and the view weapon smoothed (`r_msaa`).
+    fxaa: FxaaPostProcess,
     renderer: MapRenderer,
     /// The HUD over a demo or a match.
     hud: Option<FpsHud>,
@@ -210,6 +213,7 @@ impl App {
         let map = self.map.as_mut().expect("the map is loaded before the window opens");
         let renderer = build_renderer(&gpu, map, config.format);
         let hdr = HdrTarget::new(&gpu, config.width, config.height);
+        let fxaa = FxaaPostProcess::new(&gpu, config.format);
         // A reel is in movie mode: its own cards, no HUD (it is kept for
         // `demoplay`, which leaves the reel).
         let hud = self.feed.as_ref().and_then(|_| match FpsHud::new(&gpu, config.format) {
@@ -227,6 +231,7 @@ impl App {
             surface,
             config,
             hdr,
+            fxaa,
             renderer,
             hud,
             egui,
@@ -1159,21 +1164,33 @@ impl App {
             s.renderer.draw_transparent(&mut pass);
         }
         stamp(&mut encoder, "transparent");
+        // With antialiasing on, the image and the weapon go through FXAA on
+        // their way to the output; the HUD draws over it untouched.
+        let smooth = antialias_on();
+        let image = if smooth {
+            s.fxaa.input(&s.gpu, (s.config.width, s.config.height))
+        } else {
+            &target
+        };
         s.hdr.resolve(
             &s.gpu,
             &mut encoder,
             &s.renderer.post,
             &s.renderer.image_processing,
-            &target,
+            image,
         );
         stamp(&mut encoder, "post");
         {
             // The weapon camera draws after the world camera's image
             // processing, straight to the output (`begin_overlay_pass`).
-            let mut pass = begin_overlay_pass(&mut encoder, &target, &s.hdr.depth);
+            let mut pass = begin_overlay_pass(&mut encoder, image, &s.hdr.depth);
             s.renderer.draw_overlay(&mut pass);
         }
         stamp(&mut encoder, "overlay");
+        if smooth {
+            s.fxaa.apply(&mut encoder, &target);
+            stamp(&mut encoder, "fxaa");
+        }
         if let (Some(hud), None) = (&s.hud, &self.reel) {
             let mut pass = begin_ui_pass(&mut encoder, &target);
             hud.draw(&mut pass);

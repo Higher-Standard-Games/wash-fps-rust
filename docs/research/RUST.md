@@ -2712,6 +2712,20 @@ whole areas rather than single items. 0.2.0 closes them in two steps.
 
 Newest first. Each entry names the commits and what proves them.
 
+### Antialiasing: FXAA (November 11, 2026)
+
+shagger `43ce40c` ports Babylon's `FxaaPostProcess` and its WGSL shaders
+(`babylon/post_processes/fxaa_post_process.rs`). With `r_msaa` on (the
+default, read as the browser reads it, `>= 0.5`), image processing
+writes into FXAA's target, the view weapon draws over it there, and FXAA
+writes the output; the HUD draws after, untouched. The browser's world is
+single sampled (round 3 below), so this smooths more than the browser
+does: the world's edges as well as the weapon's. Screenshots and
+`washoi demo --screenshot` go through the same pass. On the software
+rasterizer the pass costs about what image processing does (7 ms at
+1280x720 on llvmpipe); on a GPU a full-screen FXAA is a fraction of a
+millisecond.
+
 ### Public beta QA, round 3: rendering performance (November 11, 2026)
 
 The frame's CPU path read for work the browser does not do, and the
@@ -2749,8 +2763,7 @@ model renderer measured with `washoi bench` (dm14, 1280x720, llvmpipe,
   into `DefaultRenderingPipeline`'s target, single sampled (`samples`
   stays 1) and without FXAA: its world is not antialiased either. Only
   what is drawn straight to the canvas after the pipeline is, the view
-  weapon. The native client's weapon overlay is single sampled; that pass
-  is the one difference left (`r_msaa` is read by nothing).
+  weapon. (Since then, FXAA: the entry above.)
 
 ### Public beta QA, round 2: code quality and data flows (November 11, 2026)
 

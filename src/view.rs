@@ -676,6 +676,16 @@ pub enum DeathFollow {
     Still,
 }
 
+/// Whether the image is antialiased: `r_msaa`, read as the browser reads it
+/// for its canvas (`>= 0.5`, on when unset). The browser's world draws
+/// single sampled into its post-process chain, so only what reaches the
+/// canvas after it (the view weapon) is smoothed there; here FXAA smooths
+/// the image and the weapon together.
+#[must_use]
+pub fn antialias_on() -> bool {
+    with_cvars(|c| c.get("r_msaa").is_none() || c.get_number("r_msaa") >= 0.5)
+}
+
 /// A body fallen as a ragdoll, held at an age (`--ragdoll`).
 #[derive(Debug, Clone, PartialEq)]
 pub struct RagdollView {
@@ -3855,6 +3865,7 @@ pub fn start_prepared(o: &ViewOptions, prepared: Prepared) -> Result<i32, String
         CLEAR,
         &renderer.post,
         &renderer.image_processing,
+        antialias_on(),
         |pass| renderer.draw_opaque(pass),
         |encoder, hdr| renderer.capture(encoder, hdr),
         |pass| renderer.draw_transparent(pass),
