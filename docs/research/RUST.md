@@ -2777,6 +2777,12 @@ below (SHAG `432cce3`, wash-fps `247cafe`), in slices.
   as a template, with `template` lines anywhere in a shader, their
   arguments ending with the line, nesting four deep. The engine's own
   vectors came out unchanged.
+- **`r_anisotropy` (shagger `f0b9d6d`).** The world sampler's anisotropy
+  was fixed at 8, where SHAG sets every texture's
+  `anisotropicFilteringLevel` from `r_anisotropy` (4 by default). It is now
+  read when the map loads, rounded down to the power of two wgpu takes; a
+  change takes effect with the next map, not live as Babylon's does. Found
+  comparing dm7's floor against the browser, which otherwise matched.
 - **Checked, nothing to port.** beta9.1's gun handed to two players:
   native hand weapons are drawn per frame from one shared model, with no
   parked instances to hand out twice. The freefly camera following
