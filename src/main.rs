@@ -1163,6 +1163,10 @@ fn play_match(url: &str, name: &str, ticket: Option<String>, seconds: f64, play:
                 SessionEvent::Host(HostEvent::Recovered { stalled_ms }) => {
                     println!("snapshots resumed after {:.1}s", stalled_ms / 1000.0);
                 }
+                SessionEvent::Host(HostEvent::Pause(n)) => {
+                    println!("pause: {:?} {} ms, {:?}", n.state, n.ms_left, n.caller);
+                }
+                SessionEvent::Host(HostEvent::PausedChat(c)) => println!("chat (paused) {}: {}", c.sender_name, c.text),
                 SessionEvent::Host(HostEvent::BadMessage(why)) => println!("bad message: {why}"),
                 SessionEvent::Host(HostEvent::Failed(why)) => {
                     println!("failed: {why}");

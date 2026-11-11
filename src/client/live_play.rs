@@ -18,6 +18,7 @@ use shagger::network::client::hosts::network_game_host::HostEvent;
 use shagger::network::client::network_session::{NetworkSession, SessionConfig, SessionEvent, SessionRequest};
 use shagger::shared::net::command::Command;
 use shagger::shared::net::game_state::PlayerState;
+use shagger::shared::net::message_codec::MatchPauseState;
 use shagger::shared::server::simulation::types::Vec3;
 
 use crate::client::match_state_manager::MatchStateManager;
@@ -269,6 +270,8 @@ impl LivePlay {
         data: &Path,
         timeout: Duration,
     ) -> Result<Self, String> {
+        // Each game you join draws its own random enemy body.
+        crate::client::player_model_selection::reroll_random_enemy_model();
         let session = NetworkSession::start(
             SessionConfig {
                 url: url.to_owned(),
@@ -410,6 +413,12 @@ impl LivePlay {
         });
     }
 
+    /// `Game.callPause`: call a timeout (`true`) or time in; the server
+    /// answers with the match's pause state.
+    pub fn call_pause(&self, timeout: bool) {
+        self.session.send(SessionRequest::CallPause(timeout));
+    }
+
     /// `Game.sendReady`: ready for the match to start (warmup).
     pub fn send_ready(&mut self) {
         if !self.connected {
@@ -546,6 +555,19 @@ impl LivePlay {
                 SessionEvent::Host(HostEvent::ServerMessage(m)) if !m.message.is_empty() => {
                     self.notices.push(m.message);
                 }
+                // `Game.onPause`: the server stopped the match, began
+                // counting back in, or resumed it.
+                SessionEvent::Host(HostEvent::Pause(notice)) => {
+                    self.feed.match_state.set_pause(&notice);
+                    self.feed.hold(notice.state != MatchPauseState::Running);
+                }
+                // `onPausedChat`: `handleChatEvent`, as a snapshot's chat.
+                SessionEvent::Host(HostEvent::PausedChat(chat)) => self.feed.push_effect(SnapshotEvent::Chat {
+                    sender_id: chat.sender_id,
+                    sender_name: chat.sender_name,
+                    team: chat.team,
+                    text: chat.text,
+                }),
                 SessionEvent::Host(HostEvent::Failed(why)) | SessionEvent::Closed(why) => {
                     self.closed.get_or_insert(why);
                 }
@@ -598,8 +620,11 @@ impl LivePlay {
         // being restored, so the predictor's numbering stays the wire's.
         // A spectator (queued, refused, before the first spawn) sends nothing
         // (`Game.sendInput` returns for spectators).
-        if !self.joined || !self.spawned || self.closed.is_some() || !self.connected {
-            if !self.connected {
+        // A paused match simulates nothing: predicting even a fall here
+        // would put the player somewhere the server never did.
+        let paused = self.feed.match_state.pause().is_some();
+        if !self.joined || !self.spawned || self.closed.is_some() || !self.connected || paused {
+            if !self.connected || paused {
                 self.next_command = now;
             }
             return;

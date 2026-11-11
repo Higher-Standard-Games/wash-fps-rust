@@ -87,7 +87,7 @@ fn far_boxes_load_as_shag_loads_them() {
     };
     let doc = golden();
     let maps = doc.get("maps").and_then(Value::as_array).unwrap();
-    assert_eq!(maps.len(), 7);
+    assert_eq!(maps.len(), 13);
     for m in maps {
         let file = m.get("map").and_then(Value::as_str).unwrap();
         let bsp = load(&std::fs::read(dir.join(file)).unwrap()).unwrap();

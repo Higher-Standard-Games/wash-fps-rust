@@ -1,10 +1,10 @@
 //! wash-fps `shared/entities/definitions/items.ts`: the packaged item models.
 //!
-//! The armor pickups and the megahealth draw packaged models from
-//! `washoi_models.pk3`, which float, bob and turn like classic Quake items.
-//! The other health pickups are procedural
-//! (`world/pickups/procedural/procedural_pickup_recipes.rs`), and so are
-//! these when their package is missing: their recipes stay as the fallback.
+//! Every armor, health, ammo and powerup pickup draws a packaged model from
+//! `washoi_models.pk3` (with the ammo definitions' `ammo/box.ts`), which
+//! floats, bobs and turns like a classic Quake item. The procedural recipes
+//! (`world/pickups/procedural/procedural_pickup_recipes.rs`) stand in while
+//! the package is missing.
 
 use crate::shared::bsp::pickup_table::PickupType;
 
@@ -16,6 +16,15 @@ const ITEM_MODEL_SCALE: f32 = 18.0;
 const ARMOR_MODEL_SCALE: f32 = 19.8;
 const GREEN_ARMOR_SCALE: f32 = ARMOR_MODEL_SCALE * 0.95;
 const RED_ARMOR_SCALE: f32 = ARMOR_MODEL_SCALE * 1.1;
+/// The health bubble is about 0.96 across; the +25 draws it about 26, the
+/// +50 a tenth larger, the +5 a tenth smaller.
+const HEALTH_BUBBLE_MODEL: &str = "/data/models/health.glb";
+const HEALTH_BUBBLE_SCALE: f32 = 27.0;
+/// `ammo/box.ts`: every ammo type draws the packaged ammo box, with its
+/// weapon's symbol on each side. It is about 0.95 units tall; this draws it
+/// about 23.
+const AMMO_BOX_MODEL: &str = "/data/models/ammobox.glb";
+const AMMO_BOX_SCALE: f32 = 24.0;
 /// The armor shard is worth 5 and draws smaller than the armors: about 25
 /// units.
 const SHARD_MODEL_SCALE: f32 = 13.2;
@@ -34,7 +43,7 @@ pub struct ItemModelDef {
     pub float_lift: Option<f64>,
 }
 
-pub const ITEM_MODELS: [ItemModelDef; 5] = [
+pub const ITEM_MODELS: [ItemModelDef; 17] = [
     ItemModelDef {
         id: "armor_shard",
         pickup: PickupType::Armor,
@@ -76,7 +85,58 @@ pub const ITEM_MODELS: [ItemModelDef; 5] = [
         // It floats higher than the armors, the prize it is
         float_lift: Some(10.0),
     },
+    health("health_small", "small", HEALTH_BUBBLE_SCALE * 0.9),
+    health("health_medium", "medium", HEALTH_BUBBLE_SCALE),
+    health("health_large", "large", HEALTH_BUBBLE_SCALE * 1.1),
+    ItemModelDef {
+        id: "health_ultra",
+        pickup: PickupType::Health,
+        kind: "ultra",
+        // The megahealth's model, its core purple (`FPSPickup`)
+        model_path: "/data/models/mega.glb",
+        scale: ITEM_MODEL_SCALE,
+        float_lift: Some(10.0),
+    },
+    ItemModelDef {
+        id: "powerup_quad",
+        pickup: PickupType::Powerup,
+        kind: "quad",
+        model_path: "/data/models/quad.glb",
+        // A tenth larger than the megahealth, and floating as high
+        scale: ITEM_MODEL_SCALE * 1.1,
+        float_lift: Some(10.0),
+    },
+    ammo("ammo_bullets", "bullets"),
+    ammo("ammo_shells", "shells"),
+    ammo("ammo_grenades", "grenades"),
+    ammo("ammo_rockets", "rockets"),
+    ammo("ammo_plasmagun", "cells"),
+    ammo("ammo_lasers", "lasers"),
+    ammo("ammo_bolts", "bolts"),
 ];
+
+const fn health(id: &'static str, kind: &'static str, scale: f32) -> ItemModelDef {
+    ItemModelDef {
+        id,
+        pickup: PickupType::Health,
+        kind,
+        model_path: HEALTH_BUBBLE_MODEL,
+        scale,
+        float_lift: None,
+    }
+}
+
+/// An ammo definition (`definitions/ammo/*.ts`), by its ammo type.
+const fn ammo(id: &'static str, kind: &'static str) -> ItemModelDef {
+    ItemModelDef {
+        id,
+        pickup: PickupType::Ammo,
+        kind,
+        model_path: AMMO_BOX_MODEL,
+        scale: AMMO_BOX_SCALE,
+        float_lift: None,
+    }
+}
 
 /// The packaged model of a map pickup, when it has one.
 #[must_use]
@@ -89,10 +149,16 @@ mod tests {
     use super::*;
 
     #[test]
-    fn the_armors_and_megahealth_have_models() {
+    fn every_item_has_a_model() {
         assert_eq!(item_model(PickupType::Health, "mega").unwrap().float_lift, Some(10.0));
         assert!((item_model(PickupType::Armor, "ra").unwrap().scale - 21.78).abs() < 1e-4);
         assert!((item_model(PickupType::Armor, "ga").unwrap().scale - 18.81).abs() < 1e-4);
-        assert!(item_model(PickupType::Health, "small").is_none());
+        assert!((item_model(PickupType::Health, "small").unwrap().scale - 24.3).abs() < 1e-4);
+        assert!((item_model(PickupType::Powerup, "quad").unwrap().scale - 19.8).abs() < 1e-4);
+        assert_eq!(item_model(PickupType::Ammo, "cells").unwrap().id, "ammo_plasmagun");
+        assert_eq!(
+            item_model(PickupType::Health, "ultra").unwrap().model_path,
+            "/data/models/mega.glb"
+        );
     }
 }

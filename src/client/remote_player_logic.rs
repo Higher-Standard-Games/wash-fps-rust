@@ -81,6 +81,18 @@ pub fn apply_roster<E>(
     local
 }
 
+/// `applyLooks`: each player's server-assigned look (free-for-all body and
+/// colour) by entity id; a player without one, as in team modes and older
+/// demos, has none.
+pub fn apply_looks<E>(looks: &mut HashMap<String, u8>, state: &GameState<E>) {
+    for player in state.players.values() {
+        match player.look {
+            Some(look) => looks.insert(player.entity_id.clone(), look),
+            None => looks.remove(&player.entity_id),
+        };
+    }
+}
+
 pub const IDLE_SPEED_THRESHOLD: f64 = 50.0;
 
 /// Below this 3-D speed a swimmer is treading rather than swimming.

@@ -17,7 +17,9 @@ use washoi::client::cartoon_hit_effect::{CartoonHitEffect, CartoonHitRenderer};
 use washoi::client::damage_numbers::{DamageNumberRenderer, DamageNumbers};
 use washoi::client::dropped_weapon_renderer::{DropThrow, DroppedWeaponInfo, DroppedWeaponRenderer};
 use washoi::client::fps_liquid_audio::play_liquid_crossing;
+use washoi::client::fps_player_audio::{player_voice_for_entity, set_local_player_voice};
 use washoi::client::gib_system::{GibRenderer, GibSystem};
+use washoi::client::player_appearance::{AppearanceView, PlayerAppearance};
 use washoi::client::player_model_selection::{PlayerModelSide, player_model_choice};
 use washoi::client::quad_damage_visual::{get_quad_damage_pulse, mask_has_quad};
 use washoi::client::ragdoll::death_clip::DeathFacts;
@@ -501,7 +503,13 @@ pub fn play_view_sounds(
             .find(|(p, _, _)| p == id)
             .map(|(_, e, _)| DVec3::new(e.x, e.y, e.z))
     };
-    audio.play_event_sounds(effects, view_entity, teams, &position, now * 1000.0);
+    // A player sounds like the body they are drawn with.
+    let looks = view.looks;
+    let voice_of = |id: &str| player_voice_for_entity(teams, looks, id, view_entity);
+    if let Some(local) = view.local {
+        set_local_player_voice(Some(voice_of(local)));
+    }
+    audio.play_event_sounds(effects, view_entity, &voice_of, &position, now * 1000.0);
     for sound in renderer.teleports.take_sounds() {
         play_tele_in(&mut audio.sfx, &sound);
     }
@@ -519,7 +527,7 @@ pub fn play_view_sounds(
             },
         );
     }
-    audio.play_movement_sounds(view.snapshots, view_entity, teams, &mut |at| {
+    audio.play_movement_sounds(view.snapshots, view_entity, &voice_of, &mut |at| {
         renderer.ground_surface_flags(at)
     });
     // A spectator: the match flow is called, never a lead; the bomb's
@@ -535,6 +543,8 @@ pub fn play_view_sounds(
 pub struct DemoViewSounds<'a> {
     pub effects: &'a [SnapshotEvent],
     pub teams: &'a HashMap<String, String>,
+    /// Each free-for-all player's server-assigned look, by entity.
+    pub looks: &'a HashMap<String, u8>,
     pub snapshots: &'a [HashMap<String, EntitySnapshot>],
     pub match_state: &'a MatchStateManager,
     /// Our own entity when playing.
@@ -1062,6 +1072,8 @@ pub struct MapRenderer {
     /// Guns in players' hands (`updateWeaponModel`), and who holds which.
     hand_weapons: HandWeapons,
     live_weapons: HashMap<String, String>,
+    /// Each live player's body (`modelChoiceFor`), from [`styled_players`].
+    pub live_models: HashMap<String, &'static str>,
     /// Players whose body a ragdoll took, hidden until they leave the list.
     ragdolled: HashSet<String>,
     /// Poses of players who left the list this frame, for a death that
@@ -1482,8 +1494,12 @@ impl MapRenderer {
             } else {
                 self.live_tints.remove(id);
             }
-            // Every player takes the FFA slot here (`styled_players`), so the
-            // enemy side's body (`modelChoiceFor`).
+            // The body `styled_players` chose (`modelChoiceFor`).
+            let choice = self
+                .live_models
+                .get(id)
+                .copied()
+                .unwrap_or_else(|| player_model_choice(PlayerModelSide::Enemy));
             renderer.update_live(
                 id,
                 interp,
@@ -1491,7 +1507,7 @@ impl MapRenderer {
                 1.0,
                 self.live_weapons.get(id).map(String::as_str),
                 self.effect_time,
-                player_model_choice(PlayerModelSide::Enemy),
+                choice,
             );
             if let Some(world) = renderer.world_of(id, interp) {
                 self.live_worlds.insert(id.clone(), world);
@@ -2195,6 +2211,10 @@ impl MapRenderer {
     pub fn prepare(&mut self, gpu: &Gpu, camera: &Camera, size: [f32; 2]) {
         let aspect = size[0] / size[1];
         self.frame_height = f64::from(size[1]);
+        // `cl_gunsize` shrinks the gun into the screen's corner, by its shape.
+        if let Some(view_model) = &mut self.view_model {
+            view_model.view.aspect_ratio = f64::from(aspect);
+        }
         self.culling.update(camera, aspect);
         let lights: Vec<DynamicLight> = if self.dynamic_lights {
             self.lights.lights().chain(self.charge_glows.iter().copied()).collect()
@@ -2285,6 +2305,7 @@ impl MapRenderer {
         let active = &self.pickup_active;
         self.item_models.draws(
             self.item_time,
+            camera.position.as_dvec3(),
             camera_rotation(camera.view().as_dmat4()),
             |id| pickup_shown(active, id),
             &mut self.frame_draws,
@@ -3133,6 +3154,7 @@ pub fn build_renderer(gpu: &Gpu, map: &mut LoadedMap, output_format: wgpu::Textu
         slash_trails: SlashTrailRenderer::default(),
         hand_weapons,
         live_weapons: HashMap::new(),
+        live_models: HashMap::new(),
         ragdolled: HashSet::new(),
         departed: HashMap::new(),
         live_worlds: HashMap::new(),
@@ -3211,16 +3233,31 @@ pub fn build_renderer(gpu: &Gpu, map: &mut LoadedMap, output_format: wgpu::Textu
     renderer
 }
 
-/// The players a demo or a match shows, styled as a spectator sees them:
-/// no perspective, so every player takes the FFA slot (wash-fps's per-player
-/// FFA colours are not ported yet).
+/// The players a demo or a match shows, each styled as the viewer sees
+/// them (`visualStyle`), and the body each is drawn with
+/// (`modelChoiceFor`), for [`MapRenderer::live_models`].
 #[must_use]
 pub fn styled_players(
     players: Vec<(String, InterpolatedEntity)>,
-) -> Vec<(String, InterpolatedEntity, PlayerModelVisualStyle)> {
-    let style = get_player_model_visual_style(PlayerTeamSlot::Ffa, MODEL_SCALE);
-    players.into_iter().map(|(id, p)| (id, p, style)).collect()
+    appearance: &mut PlayerAppearance,
+    view: &AppearanceView<'_>,
+) -> StyledPlayers {
+    let models = players.iter().map(|(id, _)| (id.clone(), view.model_for(id))).collect();
+    let players = players
+        .into_iter()
+        .map(|(id, p)| {
+            let style = appearance.style(&id, view, MODEL_SCALE);
+            (id, p, style)
+        })
+        .collect();
+    (players, models)
 }
+
+/// [`styled_players`]: the players with their styles, and their bodies.
+pub type StyledPlayers = (
+    Vec<(String, InterpolatedEntity, PlayerModelVisualStyle)>,
+    HashMap<String, &'static str>,
+);
 
 /// The view, demo or match until its window closes; the exit code.
 pub fn run(o: &ViewOptions) -> i32 {
@@ -3429,6 +3466,7 @@ pub fn start_prepared(o: &ViewOptions, prepared: Prepared) -> Result<i32, String
         // Play up to `--time` at 60 frames a second (live: in real time).
         let steps = (o.time * 60.0).round() as usize;
         let mut players = Vec::new();
+        let mut appearance = PlayerAppearance::default();
         let mut projectiles = Vec::new();
         let live = matches!(feed, Feed::Live(_) | Feed::Play(..));
         // Offline sound at 48 kHz, 800 frames a step.
@@ -3510,7 +3548,19 @@ pub fn start_prepared(o: &ViewOptions, prepared: Prepared) -> Result<i32, String
                     p.say(text, false);
                 }
             }
-            players = styled_players(view.players);
+            let models;
+            (players, models) = styled_players(
+                view.players,
+                &mut appearance,
+                &AppearanceView {
+                    teams: &view.teams,
+                    looks: &view.looks,
+                    perspective: followed.as_deref(),
+                    own: feed.local_entity(),
+                    team_based: feed.match_state().team_based(),
+                },
+            );
+            renderer.live_models = models;
             projectiles = view.projectiles;
             let eyes = reel
                 .as_ref()
@@ -3565,6 +3615,7 @@ pub fn start_prepared(o: &ViewOptions, prepared: Prepared) -> Result<i32, String
                     &DemoViewSounds {
                         effects: &view.effects,
                         teams: &view.teams,
+                        looks: &view.looks,
                         snapshots: &view.snapshots,
                         match_state: feed.match_state(),
                         local: feed.local_entity(),
@@ -3663,6 +3714,7 @@ pub fn start_prepared(o: &ViewOptions, prepared: Prepared) -> Result<i32, String
     let light = renderer.light_at(camera.position);
     if let Some(view_model) = &mut renderer.view_model {
         view_model.powerup_outline = o.quad.then(|| quad_view_weapon_outline(0.0));
+        view_model.view.aspect_ratio = f64::from(o.width) / f64::from(o.height.max(1));
         view_model
             .view
             .apply_cvars(&shagger::core::cvar::with_cvars(|c| ViewModelCvars::read(c)));

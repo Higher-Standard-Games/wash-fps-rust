@@ -25,7 +25,7 @@ fn pvs_culls_as_shag_culls() {
     };
     let doc = json::parse(include_str!("golden/pvs.json")).unwrap();
     let maps = doc.get("maps").and_then(Value::as_array).unwrap();
-    assert_eq!(maps.len(), 7);
+    assert_eq!(maps.len(), 13);
     let mut frames_checked = 0;
     for m in maps {
         let file = m.get("map").and_then(Value::as_str).unwrap();
@@ -75,5 +75,5 @@ fn pvs_culls_as_shag_culls() {
             frames_checked += 1;
         }
     }
-    assert_eq!(frames_checked, 2800);
+    assert_eq!(frames_checked, 5200);
 }

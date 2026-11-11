@@ -47,7 +47,7 @@ fn map_pickups_land_where_wash_fps_lands_them() {
     };
     let doc = golden();
     let maps = doc.get("maps").and_then(Value::as_array).unwrap();
-    assert_eq!(maps.len(), 7);
+    assert_eq!(maps.len(), 13);
     let mut checked = 0;
     for m in maps {
         let file = m.get("map").and_then(Value::as_str).unwrap();
@@ -73,5 +73,5 @@ fn map_pickups_land_where_wash_fps_lands_them() {
             checked += 1;
         }
     }
-    assert_eq!(checked, 187);
+    assert_eq!(checked, 388);
 }

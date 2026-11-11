@@ -9,7 +9,7 @@ use shagger::network::client::snapshot_buffer::EntitySnapshot;
 use shagger::physics::content_flags::surface;
 use shagger::rendering::glam::DVec3;
 
-use crate::client::fps_player_audio::{player_voice_for_entity, player_voice_sound};
+use crate::client::fps_player_audio::player_voice_sound;
 
 const NORMAL_FOOTSTEPS: [&str; 3] = [
     "sounds/world/ft_step1.ogg",
@@ -108,7 +108,7 @@ impl FpsMovementAudio {
         audio: &mut AudioV2Sfx,
         players: &HashMap<String, EntitySnapshot>,
         local_entity_id: Option<&str>,
-        teams: &HashMap<String, String>,
+        voice_of: &dyn Fn(&str) -> &'static str,
         ground_flags: &mut dyn FnMut(DVec3) -> i32,
     ) {
         let mut alive = HashSet::new();
@@ -146,7 +146,7 @@ impl FpsMovementAudio {
                     "jump_2"
                 };
                 self.jump_sequence += 1;
-                let path = player_voice_sound(cue, player_voice_for_entity(teams, entity_id, local_entity_id));
+                let path = player_voice_sound(cue, voice_of(entity_id));
                 play_at_player(
                     audio,
                     &path,
@@ -230,7 +230,7 @@ mod tests {
         let mut audio = AudioV2Sfx::offline(48_000);
         // Nothing loaded: count what would play through the counters.
         let mut movement = FpsMovementAudio::default();
-        let teams = HashMap::new();
+        let teams = |_: &str| "male";
         let mut flags = |_| 0;
         movement.process(&mut audio, &at(0.0, true, 0.0), Some("player_1"), &teams, &mut flags);
         movement.process(&mut audio, &at(130.0, true, 0.0), Some("player_1"), &teams, &mut flags);

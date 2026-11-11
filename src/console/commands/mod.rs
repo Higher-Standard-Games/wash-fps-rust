@@ -4,3 +4,5 @@
 pub mod demo_play_command;
 pub mod disconnect_command;
 pub mod say_team_command;
+pub mod timein_command;
+pub mod timeout_command;

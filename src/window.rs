@@ -12,6 +12,7 @@
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use washoi::client::fps_liquid_audio::{play_drown_gasp, play_drown_tick};
+use washoi::client::player_appearance::{AppearanceView, PlayerAppearance};
 use washoi::liquid::client::local_air_tracker::AirEvent;
 
 use shagger::rendering::camera::Camera;
@@ -149,6 +150,8 @@ struct App {
     /// their reconstructed view (`DemoPovState`).
     pov_entity: Option<String>,
     pov: DemoPovState,
+    /// The free-for-all colours of this session (`ffaColors`).
+    appearance: PlayerAppearance,
     /// The watched player's aim this frame, for their weapon.
     followed_aiming: Option<bool>,
     /// A weapon picked this frame, slid into the hand before the server
@@ -391,6 +394,9 @@ impl App {
             KeyCode::Enter | KeyCode::NumpadEnter => {
                 if let Some((text, team_only)) = chat.submit() {
                     play.say(&text, team_only);
+                }
+                for command in chat.take_console_commands() {
+                    self.console.run(&command);
                 }
             }
             KeyCode::Escape => chat.close_input(),
@@ -677,7 +683,18 @@ impl App {
                     }
                 }
             }
-            let players = styled_players(view.players);
+            let (players, models) = styled_players(
+                view.players,
+                &mut self.appearance,
+                &AppearanceView {
+                    teams: &view.teams,
+                    looks: &view.looks,
+                    perspective: self.pov_entity.as_deref(),
+                    own: feed.local_entity(),
+                    team_based: feed.match_state().team_based(),
+                },
+            );
+            s.renderer.live_models = models;
             let base_fov = self.camera.fov_y;
             let eyes = self.reel.as_ref().and_then(|r| {
                 self.follow = None;
@@ -900,6 +917,7 @@ impl App {
                     &DemoViewSounds {
                         effects: &view.effects,
                         teams: &view.teams,
+                        looks: &view.looks,
                         snapshots: &view.snapshots,
                         match_state: feed.match_state(),
                         local: feed.local_entity(),
@@ -1296,6 +1314,11 @@ impl App {
                 ConsoleRequest::Say { text, team } => {
                     if let Some(Feed::Play(p, _)) = &self.feed {
                         p.say(&text, team);
+                    }
+                }
+                ConsoleRequest::CallPause(timeout) => {
+                    if let Some(Feed::Play(p, _)) = &self.feed {
+                        p.call_pause(timeout);
                     }
                 }
                 ConsoleRequest::Disconnect | ConsoleRequest::DemoStop => self.leave = true,
@@ -1942,6 +1965,7 @@ pub fn run(
         on_ladder: false,
         pov_entity: None,
         pov: DemoPovState::default(),
+        appearance: PlayerAppearance::default(),
         followed_aiming: None,
         predicted_weapon: None,
         death_follow: None,

@@ -2712,6 +2712,77 @@ whole areas rather than single items. 0.2.0 closes them in two steps.
 
 Newest first. Each entry names the commits and what proves them.
 
+### 1.0.0-beta9 review (November 11, 2026)
+
+SHAG `v1.0.0-beta.9.1` and wash-fps `0abb874` against the staging review
+below (SHAG `432cce3`, wash-fps `247cafe`), in slices.
+
+- **Protocol (shagger `1af7a1b`).** A beta9 server's free-for-all snapshots
+  carry a look byte in each player record (flag 0x40); without it the
+  native client misread every FFA snapshot from the first player on.
+  `PlayerState.look`, the Pause, PausedChat and CallPause messages, demo
+  version 7, the 60 s resume grace, `SnapshotBuffer.hold`, and a paused
+  match is not a stall. Golden vectors regenerated from SHAG `2a48175`.
+- **Timeouts.** `MatchStateManager.setPause` (movement frozen while
+  paused), `LivePlay` stops predicting and sending commands and holds both
+  snapshot buffers, paused chat reaches the chat, the `timeout` and
+  `timein` commands and `/timeout`, `/timein` in chat, the phase message's
+  timeout banner, its count back in and "Fight!", and the announcer's
+  timeout, time in, 1 and fight, holding every other call.
+- **Free-for-all looks.** `shared/players/player_look.rs` decodes the look
+  byte; `client/player_appearance.rs` ports `RemotePlayerRenderer`'s
+  `resolvePlayerTeamSlot`, `visualStyle`, `assignedLook`, `assignedModel`
+  and `modelChoiceFor`: a free-for-all player wears the server's body and
+  colour (yours its body, your colour stays yours), a team mode the side
+  colours seen from the followed player or your own team, which the native
+  client did not draw before (every player took the FFA slot).
+  `FfaColors` steps around your own colour and keeps a pick for the
+  session. Enemies start White, untinted (`cl_player_tint 0`), and their
+  model is `random`, drawn again for each game joined, never your own
+  side's. A player sounds like the body they are drawn with
+  (`playerVoiceForEntity` reads the look; `setLocalPlayerVoice` for your
+  own drowning).
+- **Items.** Every armor, health, ammo and powerup pickup draws its
+  packaged model now (`definitions/items.rs`, the ammo box at 24), with
+  the procedural recipes left as the fallback while `washoi_models.pk3` is
+  missing. `pickups/health_tint.rs` (`HealthTint.ts`): the bubble's tier
+  colour, the cross fullbright (its innermost part, masked in the texture),
+  and a steady glow at 1.6; the ultra health is the megahealth with its
+  blue turned purple (hue 285), breathing. `pickups/quad_core.rs`
+  (`QuadCore.ts`): the quad's Q split out as a primitive of its own,
+  turning every 3 s in its ring and glowing at 1.4. Babylon's emissive
+  textures are added-light layers, as for the megahealth's blue glow.
+  `pickups/ammo_box_symbols.rs` (`AmmoBoxSymbols.ts`): the weapon symbols
+  from `washoi_gfx.pk3` on four unlit quads, wound clockwise seen from
+  outside (Babylon's front faces). `pickups/item_sparkles.rs` follows the
+  new `ItemSparkles.ts`: world-unit sizes and rise, a shell of 0.85 of the
+  item's radius, turning with the item, 5 to 16 per item by kind, and only
+  the 8 nearest drawn items within 900 units sparkle, chosen every 0.25 s.
+- **Gun size, `cl_gun` and `func_static` (shagger `69c3ba5`).**
+  `WeaponView::is_drawn` reads `cl_gun` (`gunDrawn`) and
+  `apply_gun_size` follows `applyGunSize`: `cl_gunsize` 1 and 2 shrink the
+  whole view to 0.9 and 0.8 into the screen's corner on the gun's side, at
+  its depth, back to full size as the sights come up; the renderer hands it
+  the frame's aspect ratio. Both are `MovementVars` (80 now).
+  `func_static` brush models (`handleStatic`, the "sky tower" of dm1) are
+  built where they stand with the world's batches, their sky faces left
+  out as a brush model's are.
+- **Golden vectors from the beta9 data (shagger `5c0be0c`).** Regenerated
+  with `WASHOI_MAPS` from the published packages, which now hold 13 maps
+  (dm5 and dm7 rebuilt) and ship textures as WebP (only the minimaps stay
+  KTX). They caught three things the staging review had missed, all older
+  than beta9 but never in a regenerated vector: the base ground speed
+  (`maxSpeed`) is 320, not 280, since wash-fps `1ccf041`; a `trigger_push`
+  may aim at a `target_push` (dm3's jump pad); and any shader body serves
+  as a template, with `template` lines anywhere in a shader, their
+  arguments ending with the line, nesting four deep. The engine's own
+  vectors came out unchanged.
+- **Checked, nothing to port.** beta9.1's gun handed to two players:
+  native hand weapons are drawn per frame from one shared model, with no
+  parked instances to hand out twice. The freefly camera following
+  `cl_fov`: the native camera already takes `currentBaseFov` every frame,
+  and a reel's fly-by its own field of view or that one.
+
 ### Staging review: player models, layered animation, items (November 10, 2026)
 
 SHAG and wash-fps `staging` against main, ported in full except what is

@@ -1,15 +1,18 @@
 //! The big centre-top messages (wash-fps
 //! `client/hud/widgets/PhaseMessage.ts`, styles `.fps-phase-*`): warmup,
-//! the countdown's numbers, "Fight!", the result, overtime.
+//! the countdown's numbers, "Fight!", the result, overtime; a timeout, who
+//! called it and the time left, its count back in, and "Fight!" when play
+//! resumes.
 
 use shagger::shared::json::Value;
+use shagger::shared::net::message_codec::MatchPauseState;
 use shagger::ui::hud_2d::{Align, Hud2d};
 
 use crate::client::hud::hud_widget::{FpsHudWidget, HudFrame};
 use crate::client::hud::washiki::{
     Fonts, Gradient, Slab, UI_SCALE, cream, drop_print_md, drop_print_sm, hsla, ink, ink_text_md, ink_text_sm, void,
 };
-use crate::client::match_state_manager::MatchPhase;
+use crate::client::match_state_manager::{MatchPhase, MatchStateManager};
 
 #[derive(Debug, Clone, PartialEq)]
 enum Line {
@@ -21,6 +24,8 @@ enum Line {
     Fight(String),
     /// `.fps-phase-countdown`.
     Countdown(u32),
+    /// `.fps-phase-ready`: a line to act on.
+    Ready(String),
 }
 
 /// `FPSPhaseMessage`.
@@ -33,12 +38,50 @@ pub struct PhaseMessage {
     last_phase: Option<MatchPhase>,
     last_countdown: u32,
     last_overtime: u32,
+    /// The timeout on screen, so its clock ticks without redrawing the rest.
+    shown_pause: Option<String>,
 }
 
 impl PhaseMessage {
     fn show(&mut self, lines: Vec<Line>) {
         self.lines = lines;
         self.hidden = false;
+    }
+
+    /// `updatePause`: the timeout banner and its count back in. True while
+    /// a pause holds the match.
+    fn update_pause(&mut self, m: &MatchStateManager) -> bool {
+        let Some(pause) = m.pause() else {
+            if self.shown_pause.take().is_none() {
+                return false;
+            }
+            self.show(vec![Line::Fight("FIGHT!".into())]);
+            self.hide_in = Some(2.0);
+            return true;
+        };
+        self.hide_in = None;
+        let left = m.pause_seconds_left().ceil() as u64;
+        if pause.state == MatchPauseState::Timein {
+            let key = format!("timein:{left}");
+            if self.shown_pause.as_ref() != Some(&key) && left > 0 {
+                self.shown_pause = Some(key);
+                self.show(vec![Line::Countdown(u32::try_from(left).unwrap_or(u32::MAX))]);
+            }
+            return true;
+        }
+        self.shown_pause = Some(format!("timeout:{}:{}", pause.caller, pause.for_drop));
+        let why = if pause.for_drop {
+            format!("{} dropped. Waiting for them to come back", pause.caller)
+        } else {
+            format!("Called by {}", pause.caller)
+        };
+        let clock = format!("{}:{:02}", left / 60, left % 60);
+        self.show(vec![
+            Line::Title("TIMEOUT".into()),
+            Line::Subtitle(why.to_uppercase()),
+            Line::Ready(format!("{clock} left. Type /timein in chat to resume")),
+        ]);
+        true
     }
 
     fn on_phase_change(&mut self, frame: &HudFrame<'_>, phase: MatchPhase) {
@@ -84,6 +127,9 @@ impl PhaseMessage {
 impl FpsHudWidget for PhaseMessage {
     fn update(&mut self, frame: &HudFrame<'_>) {
         let m = frame.match_state;
+        if self.update_pause(m) {
+            return;
+        }
         let phase = m.phase();
         // `onPhaseChange` fires on a change, not on the first state seen.
         if let Some(last) = self.last_phase
@@ -189,6 +235,16 @@ impl FpsHudWidget for PhaseMessage {
                         .spacing(13.0 * s * 0.24)
                         .align(Align::Center);
                     let h = 13.0 * s * 1.3;
+                    hud.text_in_box(x, top, h, text, &style);
+                    top += h;
+                }
+                Line::Ready(text) => {
+                    let style = fonts
+                        .display(14.0, hsla(186.0, 80.0, 70.0, 1.0))
+                        .spacing(14.0 * s * 0.08)
+                        .align(Align::Center);
+                    let h = 14.0 * s * 1.3;
+                    top += 8.0 * s;
                     hud.text_in_box(x, top, h, text, &style);
                     top += h;
                 }
