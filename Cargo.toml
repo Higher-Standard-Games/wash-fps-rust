@@ -25,6 +25,8 @@ winit = { version = "0.30", default-features = false, features = ["rwh_06", "x11
 image = { version = "0.25", default-features = false, features = ["png"] }
 # The lobby's room and welcome payloads, as the engine passes them on.
 serde_json = "1"
+# The self-update's check of the downloaded installer (update_check).
+sha2 = "0.10"
 
 [lints.rust]
 unsafe_code = "deny"
@@ -34,7 +36,6 @@ all = { level = "warn", priority = -1 }
 
 [dev-dependencies]
 flate2 = { version = "1", default-features = false, features = ["rust_backend"] }
-sha2 = "0.10"
 
 # Line tables only: a crash report's backtrace names functions and lines
 # without full debug info's size.
