@@ -55,7 +55,7 @@ jobs:
       run:
         shell: bash
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - uses: dtolnay/rust-toolchain@stable
       # A tag names the version the game reports: it must be Cargo.toml's.
       - name: Check the tag's version
@@ -177,16 +177,16 @@ jobs:
             rm "$zip"
             (cd "$dir" && ditto -c -k --keepParent Washoi.app "$GITHUB_WORKSPACE/$zip")
           done
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: washoi-${{ matrix.runner }}
           path: dist/*
       # The symbols for reading a crash's backtrace; not for players.
       # In a folder of its own, so the download keeps the bundle's name.
       - if: runner.os == 'macOS'
-        run: mkdir -p symbols && cp -R target/release/washoi.dSYM symbols/
+        run: mkdir -p symbols && cp -RL target/release/washoi.dSYM symbols/
       - if: runner.os == 'macOS'
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: symbols-${{ matrix.runner }}
           path: symbols
@@ -198,7 +198,7 @@ jobs:
     permissions:
       contents: write
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
         with:
           sparse-checkout: Cargo.toml
           sparse-checkout-cone-mode: false
@@ -210,12 +210,12 @@ jobs:
           else
             echo "name=v$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -1)" >> "$GITHUB_OUTPUT"
           fi
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           path: dist
           pattern: washoi-*
           merge-multiple: true
-      - uses: softprops/action-gh-release@v2
+      - uses: softprops/action-gh-release@v3
         with:
           draft: true
           tag_name: ${{ steps.tag.outputs.name }}

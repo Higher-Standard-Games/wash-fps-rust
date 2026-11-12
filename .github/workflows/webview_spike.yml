@@ -30,9 +30,9 @@ jobs:
       run:
         shell: bash
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - uses: dtolnay/rust-toolchain@stable
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v6
         with:
           node-version: 22
       - name: Linux packages
@@ -65,7 +65,7 @@ jobs:
           run $exe --url https://eu.washoi.net/ --seconds 60 --hide-at 40 --show-at 50 \
             --shots out/shots-live --report out/live.json | tee out/live.log | grep -v "page → native" || true
           ls -la target/release/ out out/shots-*
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         if: always()
         with:
           name: spike-${{ matrix.runner }}
