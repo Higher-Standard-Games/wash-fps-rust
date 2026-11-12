@@ -54,21 +54,32 @@ const HELLO_TIMEOUT: Duration = Duration::from_secs(30);
 /// The page's global.
 const GLOBAL: &str = "__washoiNative";
 
-/// With the DMA-BUF renderer off (`main`'s `webkit_environment`), WebKitGTK
-/// has been seen drawing the lobby page at a few frames a second, and
-/// `backdrop-filter` blurs are its most expensive effect. On Linux the page
-/// goes without them; its panels keep their tinted backgrounds, as with
-/// `hud_blur 0` (`HudBlur.ts`).
-const LINUX_NO_BLUR: &str = if cfg!(target_os = "linux") {
-    r#"document.addEventListener("DOMContentLoaded", () => {
+/// NVIDIA's proprietary kernel module is loaded (`main` turns WebKitGTK's
+/// DMA-BUF renderer off for it).
+#[cfg(target_os = "linux")]
+pub fn nvidia_driver_loaded() -> bool {
+    std::path::Path::new("/proc/driver/nvidia/version").exists()
+}
+
+/// With the DMA-BUF renderer off (`main`'s `webkit_environment`, or the
+/// player's own `WEBKIT_DISABLE_DMABUF_RENDERER`), WebKitGTK copies every
+/// frame and has been seen drawing the lobby page at a few frames a second;
+/// `backdrop-filter` blurs are the page's most expensive effect. There the
+/// page goes without them; its panels keep their tinted backgrounds, as
+/// with `hud_blur 0` (`HudBlur.ts`).
+const NO_BLUR: &str = r#"document.addEventListener("DOMContentLoaded", () => {
   const style = document.createElement("style");
   style.id = "washoi-native-no-blur";
   style.textContent = "* { backdrop-filter: none !important; -webkit-backdrop-filter: none !important; }";
   document.head.appendChild(style);
-});"#
-} else {
-    ""
-};
+});"#;
+
+/// The page's extra script: [`NO_BLUR`] on WebKitGTK's copying path.
+fn extra_script() -> String {
+    let copying = cfg!(target_os = "linux")
+        && std::env::var_os("WEBKIT_DISABLE_DMABUF_RENDERER").is_some_and(|v| !v.is_empty() && v != "0");
+    if copying { NO_BLUR.to_owned() } else { String::new() }
+}
 
 /// Behind the page: Washoi's night blue.
 const BACKGROUND: wgpu::Color = wgpu::Color {
@@ -327,7 +338,7 @@ impl LobbyApp {
                 // only the renderer declares (the Video page's).
                 "cvars": with_cvars(|c| c.declarations()),
             }),
-            extra_script: LINUX_NO_BLUR.into(),
+            extra_script: extra_script(),
             data_dir: washoi::cache_dir().map(|d| d.join("webview")),
             devtools: cfg!(debug_assertions),
         }

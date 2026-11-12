@@ -426,15 +426,16 @@ fn parse_options(args: impl Iterator<Item = String>) -> Options {
 static CONSOLE_LOGGED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
 /// WebKitGTK's DMA-BUF renderer draws the lobby page blank (black or white)
-/// on NVIDIA's driver and on some other stacks. Unless the player chose
-/// otherwise, the process starts over with it off. The variable has to be
-/// there before WebKit starts, and setting it in a running process is
+/// on NVIDIA's proprietary driver. With that driver loaded, and unless the
+/// player chose otherwise, the process starts over with the renderer off;
+/// other drivers keep it, since it is the faster path. The variable has to
+/// be there before WebKit starts, and setting it in a running process is
 /// unsafe, so the process replaces itself with one that has it.
 #[cfg(target_os = "linux")]
 fn webkit_environment() {
     use std::os::unix::process::CommandExt;
     const VAR: &str = "WEBKIT_DISABLE_DMABUF_RENDERER";
-    if std::env::var_os(VAR).is_some() {
+    if std::env::var_os(VAR).is_some() || !lobby_webview::nvidia_driver_loaded() {
         return;
     }
     let Ok(exe) = std::env::current_exe() else { return };
