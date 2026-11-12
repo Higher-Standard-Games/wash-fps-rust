@@ -142,6 +142,8 @@ struct Options {
     room: Option<PathBuf>,
     /// `menu --page settings/video`: a page of the lobby to open.
     page: Option<String>,
+    /// `menu --boards FILE.json`: leaderboard pages to show, by `mode:period`.
+    boards: Option<PathBuf>,
     play: bool,
     key_file: Option<PathBuf>,
     data: Option<PathBuf>,
@@ -202,6 +204,7 @@ fn parse_options(args: impl Iterator<Item = String>) -> Options {
             "--seconds" => o.seconds = Some(value().parse().unwrap_or_else(|_| usage())),
             "--room" => o.room = Some(PathBuf::from(value())),
             "--page" => o.page = Some(value()),
+            "--boards" => o.boards = Some(PathBuf::from(value())),
             "--key-file" => o.key_file = Some(PathBuf::from(value())),
             "--lobby" => o.lobby = Some(value()),
             "--play" => o.play = true,
@@ -552,6 +555,7 @@ fn main() {
                     quick_play: o.play,
                     room: o.room.as_deref(),
                     page: o.page.as_deref(),
+                    boards: o.boards.as_deref(),
                 },
             ) {
                 Ok(None) if o.play => {

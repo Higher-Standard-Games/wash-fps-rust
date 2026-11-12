@@ -237,6 +237,8 @@ pub struct Shot<'a> {
     pub quick_play: bool,
     pub room: Option<&'a Path>,
     pub page: Option<&'a str>,
+    /// Leaderboard pages to show, as `{"duel:month": leaderboard:page, ...}`.
+    pub boards: Option<&'a Path>,
 }
 
 /// The lobby `seconds` after it connects to `lobby_url`, saved to `path`
@@ -256,7 +258,27 @@ pub fn screenshot(
     seconds: f64,
     shot: Shot<'_>,
 ) -> Result<Option<LobbyChoice>, String> {
-    let Shot { quick_play, room, page } = shot;
+    let Shot {
+        quick_play,
+        room,
+        page,
+        boards,
+    } = shot;
+    let boards: Vec<(String, String, washoi::client::leaderboard_view::Page)> = match boards {
+        Some(file) => {
+            let text = std::fs::read_to_string(file).map_err(|e| e.to_string())?;
+            let all: serde_json::Map<String, serde_json::Value> =
+                serde_json::from_str(&text).map_err(|e| e.to_string())?;
+            all.iter()
+                .filter_map(|(key, message)| {
+                    let (mode, period) = key.split_once(':')?;
+                    let page = washoi::client::leaderboard_view::read_page(message).ok()?;
+                    Some((mode.to_owned(), period.to_owned(), page))
+                })
+                .collect()
+        }
+        None => Vec::new(),
+    };
     let (width, height) = size;
     let gpu = Gpu::headless().map_err(|e| e.to_string())?;
     let mut layer = EguiLayer::offscreen(&gpu, OFFSCREEN_FORMAT);
@@ -286,6 +308,9 @@ pub fn screenshot(
     let mut choice = None;
     while choice.is_none() && (started.elapsed() < Duration::from_secs_f64(seconds) || pixels.is_empty()) {
         panel.poll();
+        for (mode, period, page) in &boards {
+            panel.leaderboard.seed(mode, period, page.clone());
+        }
         // Without a lobby the dropped connection closes the room: open it again.
         if let Some(state) = &room
             && !panel.in_room()

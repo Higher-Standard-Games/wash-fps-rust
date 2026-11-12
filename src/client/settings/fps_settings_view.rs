@@ -162,7 +162,11 @@ impl FpsSettingsView {
         );
         let ty = rect.top() + kh + 8.0;
         let th = title.size().y;
-        painter.galley(pos2(rect.left() + 5.0, ty + 6.0), title.clone(), hsl(250.0, 50.0, 3.0));
+        painter.galley_with_override_text_color(
+            pos2(rect.left() + 5.0, ty + 6.0),
+            title.clone(),
+            hsl(250.0, 50.0, 3.0),
+        );
         painter.galley(pos2(rect.left(), ty), title, cream());
         let head_bottom = ty + th;
         let key_h = 40.0;

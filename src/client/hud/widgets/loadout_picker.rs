@@ -483,7 +483,7 @@ impl LoadoutPicker {
             text,
             30.0 * k * 0.1,
         );
-        painter.galley(
+        painter.galley_with_override_text_color(
             pos2(left, y) + vec2(2.0, 2.0) * k,
             heading.clone(),
             hsla(0.0, 0.0, 0.0, 0.45),
@@ -658,7 +658,7 @@ fn paint_stand(painter: &egui::Painter, stand: Rect, weapon: &str, k: f32) {
         centre.x - big.size().x / 2.0,
         stand.center().y - big.size().y / 2.0 - 10.0 * k,
     );
-    painter.galley(at + vec2(5.0, 6.0) * k, big.clone(), hsla(250.0, 45.0, 2.0, 0.6));
+    painter.galley_with_override_text_color(at + vec2(5.0, 6.0) * k, big.clone(), hsla(250.0, 45.0, 2.0, 0.6));
     painter.galley(at, big, color);
     // `.fps-loadout-preview-name`.
     let text = hsl(180.0, 100.0, 95.0);
@@ -670,7 +670,7 @@ fn paint_stand(painter: &egui::Painter, stand: Rect, weapon: &str, k: f32) {
         22.0 * k * 0.08,
     );
     let at = pos2(stand.left() + 18.0 * k, stand.bottom() - 14.0 * k - name.size().y);
-    painter.galley(at + vec2(2.0, 2.0) * k, name.clone(), hsla(0.0, 0.0, 0.0, 0.55));
+    painter.galley_with_override_text_color(at + vec2(2.0, 2.0) * k, name.clone(), hsla(0.0, 0.0, 0.0, 0.55));
     painter.galley(at, name, text);
 }
 

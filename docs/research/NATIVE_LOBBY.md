@@ -141,7 +141,14 @@ tests, and can ship.
    `ui_lobby native` the in-match Settings key draws the same view over
    the match (`fps_settings_view::over_match`), with Video locked as in
    the browser and Esc stepping back out of a sheet first.
-4. **Profile, leaderboard, demos.**
+4. **Profile, leaderboard, demos.** *Built so far:* the Leaderboard
+   (`client/leaderboard_view.rs`): the podium and the rest of the top ten,
+   the Top 100 with its search, Jump to me and period keys, and your rank
+   per mode in the rail, from the lobby's `leaderboard:get` with
+   `getLeaderboard`'s checks. The parts it shares with Demos (head with
+   mode keys, board keys, rule, rail list) are `client/lobby_page_parts.rs`.
+   `washoi menu ... --page leaderboard/list --boards FILE.json` draws given
+   pages, keyed `duel:month`, for screenshots.
 5. **The rest and the switch.** Welcome and terms, credits, music, the
    update notice. A parity review against section 2, then the default flips
    to `native`.

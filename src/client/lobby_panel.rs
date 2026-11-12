@@ -16,11 +16,9 @@
 //! for the key file and the retries. Drawn with egui on shagger's
 //! `RaisedKey` and rail at the CSS's sizes (CSS pixels are egui points).
 //!
-//! Not yet (NATIVE_LOBBY.md 5): the Leaderboard, Demos, Settings, Profile
-//! and Console pages, which say so and offer the web lobby; the room view
-//! keeps shagger's plain `MatchLobbyView` until step 2, with its chat; the
-//! welcome dialog and guide, credits, music, deep links and the drop-in
-//! from a spectated match.
+//! Not yet (NATIVE_LOBBY.md 5): the Demos, Profile and Console pages,
+//! which say so and offer the web lobby; the welcome dialog and guide,
+//! credits, music, deep links and the drop-in from a spectated match.
 
 use std::collections::VecDeque;
 use std::path::{Path, PathBuf};
@@ -45,6 +43,7 @@ use shagger::ui::egui_layer::egui;
 
 use egui::{Color32, FontFamily, FontId, Painter, Pos2, Rect, Shape, Stroke, pos2, vec2};
 
+use crate::client::leaderboard_view::LeaderboardView;
 use crate::client::levelshots::{Levelshots, site_base};
 use crate::client::lobby_rooms::{PlayKeysInput, RoomAction, describe_room, play_keys, room_count_label, sort_rooms};
 use crate::client::room_chat_view::RoomChatView;
@@ -335,6 +334,10 @@ pub struct LobbyPanel {
     room_chat: Option<RoomChatView>,
     /// The settings screen, made the first time it is opened.
     settings: Option<FpsSettingsView>,
+    /// The Leaderboard page.
+    pub leaderboard: LeaderboardView,
+    /// The page drawn last frame: a page coming into view asks again.
+    shown_tab: Option<Tab>,
     /// The maps' levelshots, for the room's vote cards.
     levelshots: Levelshots,
     /// The site the game is served from, which invites open.
@@ -391,6 +394,8 @@ impl LobbyPanel {
             room: None,
             room_chat: None,
             settings: None,
+            leaderboard: LeaderboardView::new(),
+            shown_tab: None,
             levelshots: Levelshots::new(url),
             site: site_base(url),
             seat_request: None,
@@ -509,6 +514,7 @@ impl LobbyPanel {
         self.live_matches.clear();
         self.online.clear();
         self.settings_sync = None;
+        self.leaderboard.bind(false, false, None);
         if !deliberate && !self.lobby_full && self.retry_at.is_none() {
             self.login_failures += 1;
             let seconds = offline_retry_delay_sec(self.login_failures, random01());
@@ -619,6 +625,16 @@ impl LobbyPanel {
                     .and_then(|f| f.get("privateLobbies"))
                     .and_then(Value::as_bool)
                     == Some(true);
+                let feature =
+                    |name: &str| w.features.as_ref().and_then(|f| f.get(name)).and_then(Value::as_bool) == Some(true);
+                self.leaderboard.bind(
+                    true,
+                    feature("leaderboard") && feature("skillRatings"),
+                    self.account_id.clone(),
+                );
+                if self.tab == Tab::Leaderboard {
+                    self.leaderboard.refresh(&mut self.client);
+                }
                 self.queue_pending = false;
                 self.notice.clear();
                 self.online = w.online_players.iter().map(|p| p.id.clone()).collect();
@@ -735,6 +751,7 @@ impl LobbyPanel {
             // The lobby is the rematch screen: the room stays.
             "match:ended" => self.system_line("Match ended — ready up to rematch"),
             "queue:left" => self.queue_pending = false,
+            "leaderboard:page" | "leaderboard:error" => self.leaderboard.on_message(kind, message),
             // `recoverSeat`'s answer.
             "match:seat_reissued" => {
                 let Some((request, match_id)) = self.seat_request.take() else {
@@ -966,17 +983,31 @@ impl LobbyPanel {
         &GAME_MODES[self.selected_mode.min(GAME_MODES.len() - 1)]
     }
 
+    /// The mode whose colours the page takes: the Leaderboard's own pick.
+    fn page_mode(&self) -> &'static GameMode {
+        match self.tab {
+            Tab::Leaderboard => self.leaderboard.mode(),
+            _ => self.mode(),
+        }
+    }
+
     /// Draws the lobby over the whole of `ui`.
     pub fn ui(&mut self, ui: &mut egui::Ui, style: &TwinStyle) -> Option<PanelAction> {
         let screen = ui.max_rect();
         let time = self.started.elapsed().as_secs_f64();
         let painter = ui.painter().clone();
-        let accent = self.mode().accent();
+        let accent = self.page_mode().accent();
         paint_backdrop(&painter, screen);
         paint_light_in(&painter, screen, time, accent.face);
         self.levelshots.poll(ui.ctx());
         let mut action = None;
         let layout = Layout::new(screen);
+        if self.shown_tab != Some(self.tab) {
+            self.shown_tab = Some(self.tab);
+            if self.tab == Tab::Leaderboard {
+                self.leaderboard.refresh(&mut self.client);
+            }
+        }
         self.stage(ui, &layout, style, &mut action);
         self.rail(ui, &layout, style);
         // Keep the light drifting.
@@ -1077,6 +1108,9 @@ impl LobbyPanel {
                 view.show_page(p.id);
             }
             view.video.open_section(section);
+        }
+        if self.tab == Tab::Leaderboard {
+            self.leaderboard.open_board(sub);
         }
     }
 
@@ -1221,6 +1255,8 @@ impl LobbyPanel {
         // list gives way to the room's chat.
         if self.tab == Tab::Settings {
             self.settings_nav(ui, l, mid);
+        } else if self.tab == Tab::Leaderboard {
+            self.leaderboard.rail(ui, mid, l.rail_w, &mut self.client);
         } else if self.room_chat.is_some() {
             self.room_chat_panel(ui, l, mid);
         } else if mid.height() > 40.0 {
@@ -1361,7 +1397,7 @@ impl LobbyPanel {
     fn stage(&mut self, ui: &mut egui::Ui, l: &Layout, style: &TwinStyle, action: &mut Option<PanelAction>) {
         let painter = ui.painter().clone();
         let mode = *self.mode();
-        let accent = mode.accent();
+        let accent = self.page_mode().accent();
         let page_left = l.screen.min.x + l.rail_w - RAIL_SKEW;
         let page_w = l.screen.max.x - page_left;
         // `lobby__ghost`: the mode's name, huge and outlined, off the bottom
@@ -1369,6 +1405,7 @@ impl LobbyPanel {
         let ghost = match self.tab {
             Tab::Play => Some(mode.title.to_uppercase()),
             Tab::Settings => Some(self.settings_view().ghost().to_owned()),
+            Tab::Leaderboard => Some("TOP".to_owned()),
             _ => None,
         };
         if let Some(word) = ghost {
@@ -1397,6 +1434,7 @@ impl LobbyPanel {
         match self.tab {
             Tab::Play => self.play_page(ui, l, content, &mode),
             Tab::Settings => self.settings_view().ui(ui, content),
+            Tab::Leaderboard => self.leaderboard.ui(ui, content, &mut self.client),
             other => {
                 if not_yet_page(ui, content, other, &accent) {
                     *action = Some(PanelAction::WebLobby);
@@ -1436,7 +1474,7 @@ impl LobbyPanel {
                 0.16,
             );
             let at = pos2(right - version.size().x, bottom - 22.0 - version.size().y / 2.0);
-            painter.galley(at + vec2(0.0, 2.0), version.clone(), hsla(0.0, 0.0, 0.0, 0.5));
+            painter.galley_with_override_text_color(at + vec2(0.0, 2.0), version.clone(), hsla(0.0, 0.0, 0.0, 0.5));
             painter.galley(at, version, cream());
         }
         action
@@ -1450,7 +1488,7 @@ impl LobbyPanel {
         let size = clamp_css(40.0, l.w * 0.044, 74.0);
         let title = line(painter, title, size, display_family(), cream(), 0.0);
         let ty = at.y + kicker_h + 8.0;
-        painter.galley(pos2(at.x + 5.0, ty + 6.0), title.clone(), hsl(250.0, 50.0, 3.0));
+        painter.galley_with_override_text_color(pos2(at.x + 5.0, ty + 6.0), title.clone(), hsl(250.0, 50.0, 3.0));
         let th = title.size().y;
         painter.galley(pos2(at.x, ty), title, cream());
         ty + th
@@ -2161,7 +2199,7 @@ fn not_yet_page(ui: &mut egui::Ui, content: Rect, tab: Tab, accent: &Accent) -> 
         0.0,
     );
     let ty = content.top() + kh + 8.0;
-    painter.galley(
+    painter.galley_with_override_text_color(
         pos2(content.left() + 5.0, ty + 6.0),
         title.clone(),
         hsl(250.0, 50.0, 3.0),
