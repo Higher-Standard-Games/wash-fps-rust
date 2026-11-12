@@ -147,8 +147,14 @@ tests, and can ship.
    per mode in the rail, from the lobby's `leaderboard:get` with
    `getLeaderboard`'s checks. The parts it shares with Demos (head with
    mode keys, board keys, rule, rail list) are `client/lobby_page_parts.rs`.
-   `washoi menu ... --page leaderboard/list --boards FILE.json` draws given
-   pages, keyed `duel:month`, for screenshots.
+   Demos (`client/demos_view.rs`): the featured match beside the week's
+   picks, Latest and Yours as pages of cards with search and pager, the
+   maps in the rail, and the reel menu. Watch and Highlights download the
+   recording here and hand it to the window as the web lobby's `demo:play`
+   does; the browser's video export is left out. `washoi menu ...
+   --page demos/latest/reel --seed FILE.json` draws given pages
+   (`{"boards": {"duel:month": ...}, "demos": [...], "featured": [...]}`)
+   for screenshots.
 5. **The rest and the switch.** Welcome and terms, credits, music, the
    update notice. A parity review against section 2, then the default flips
    to `native`.

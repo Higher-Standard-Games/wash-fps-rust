@@ -16,7 +16,7 @@
 //! for the key file and the retries. Drawn with egui on shagger's
 //! `RaisedKey` and rail at the CSS's sizes (CSS pixels are egui points).
 //!
-//! Not yet (NATIVE_LOBBY.md 5): the Demos, Profile and Console pages,
+//! Not yet (NATIVE_LOBBY.md 5): the Profile and Console pages,
 //! which say so and offer the web lobby; the welcome dialog and guide,
 //! credits, music, deep links and the drop-in from a spectated match.
 
@@ -43,6 +43,7 @@ use shagger::ui::egui_layer::egui;
 
 use egui::{Color32, FontFamily, FontId, Painter, Pos2, Rect, Shape, Stroke, pos2, vec2};
 
+use crate::client::demos_view::DemosView;
 use crate::client::leaderboard_view::LeaderboardView;
 use crate::client::levelshots::{Levelshots, site_base};
 use crate::client::lobby_rooms::{PlayKeysInput, RoomAction, describe_room, play_keys, room_count_label, sort_rooms};
@@ -336,6 +337,8 @@ pub struct LobbyPanel {
     settings: Option<FpsSettingsView>,
     /// The Leaderboard page.
     pub leaderboard: LeaderboardView,
+    /// The Demos page.
+    pub demos: DemosView,
     /// The page drawn last frame: a page coming into view asks again.
     shown_tab: Option<Tab>,
     /// The maps' levelshots, for the room's vote cards.
@@ -395,6 +398,7 @@ impl LobbyPanel {
             room_chat: None,
             settings: None,
             leaderboard: LeaderboardView::new(),
+            demos: DemosView::new(url),
             shown_tab: None,
             levelshots: Levelshots::new(url),
             site: site_base(url),
@@ -515,6 +519,7 @@ impl LobbyPanel {
         self.online.clear();
         self.settings_sync = None;
         self.leaderboard.bind(false, false, None);
+        self.demos.disconnected();
         if !deliberate && !self.lobby_full && self.retry_at.is_none() {
             self.login_failures += 1;
             let seconds = offline_retry_delay_sec(self.login_failures, random01());
@@ -635,6 +640,12 @@ impl LobbyPanel {
                 if self.tab == Tab::Leaderboard {
                     self.leaderboard.refresh(&mut self.client);
                 }
+                self.demos.connected(
+                    feature("demoOwnership"),
+                    feature("featuredDemos"),
+                    self.tab == Tab::Demos,
+                    &mut self.client,
+                );
                 self.queue_pending = false;
                 self.notice.clear();
                 self.online = w.online_players.iter().map(|p| p.id.clone()).collect();
@@ -749,9 +760,13 @@ impl LobbyPanel {
                 }
             }
             // The lobby is the rematch screen: the room stays.
-            "match:ended" => self.system_line("Match ended — ready up to rematch"),
+            "match:ended" => {
+                self.demos.match_ended();
+                self.system_line("Match ended — ready up to rematch");
+            }
             "queue:left" => self.queue_pending = false,
             "leaderboard:page" | "leaderboard:error" => self.leaderboard.on_message(kind, message),
+            "demos:list_response" | "featured:page" | "featured:error" => self.demos.on_message(kind, message),
             // `recoverSeat`'s answer.
             "match:seat_reissued" => {
                 let Some((request, match_id)) = self.seat_request.take() else {
@@ -983,11 +998,12 @@ impl LobbyPanel {
         &GAME_MODES[self.selected_mode.min(GAME_MODES.len() - 1)]
     }
 
-    /// The mode whose colours the page takes: the Leaderboard's own pick.
-    fn page_mode(&self) -> &'static GameMode {
+    /// The colours the page takes: the Leaderboard's and Demos' own pick.
+    fn page_accent(&self) -> Accent {
         match self.tab {
-            Tab::Leaderboard => self.leaderboard.mode(),
-            _ => self.mode(),
+            Tab::Leaderboard => self.leaderboard.mode().accent(),
+            Tab::Demos => self.demos.accent(),
+            _ => self.mode().accent(),
         }
     }
 
@@ -996,16 +1012,21 @@ impl LobbyPanel {
         let screen = ui.max_rect();
         let time = self.started.elapsed().as_secs_f64();
         let painter = ui.painter().clone();
-        let accent = self.page_mode().accent();
+        let accent = self.page_accent();
         paint_backdrop(&painter, screen);
         paint_light_in(&painter, screen, time, accent.face);
         self.levelshots.poll(ui.ctx());
         let mut action = None;
         let layout = Layout::new(screen);
         if self.shown_tab != Some(self.tab) {
+            if self.shown_tab == Some(Tab::Demos) {
+                self.demos.deactivate();
+            }
             self.shown_tab = Some(self.tab);
-            if self.tab == Tab::Leaderboard {
-                self.leaderboard.refresh(&mut self.client);
+            match self.tab {
+                Tab::Leaderboard => self.leaderboard.refresh(&mut self.client),
+                Tab::Demos => self.demos.show(&mut self.client),
+                _ => {}
             }
         }
         self.stage(ui, &layout, style, &mut action);
@@ -1112,6 +1133,9 @@ impl LobbyPanel {
         if self.tab == Tab::Leaderboard {
             self.leaderboard.open_board(sub);
         }
+        if self.tab == Tab::Demos {
+            self.demos.open_board(sub, section == "reel");
+        }
     }
 
     /// The settings screen, open on `page`.
@@ -1121,7 +1145,11 @@ impl LobbyPanel {
 
     /// Escape: closes what the page has open. True when it did.
     pub fn back(&mut self) -> bool {
-        self.tab == Tab::Settings && self.settings.as_mut().is_some_and(FpsSettingsView::back)
+        match self.tab {
+            Tab::Settings => self.settings.as_mut().is_some_and(FpsSettingsView::back),
+            Tab::Demos => self.demos.back(),
+            _ => false,
+        }
     }
 
     /// The rail and everything on it.
@@ -1257,6 +1285,8 @@ impl LobbyPanel {
             self.settings_nav(ui, l, mid);
         } else if self.tab == Tab::Leaderboard {
             self.leaderboard.rail(ui, mid, l.rail_w, &mut self.client);
+        } else if self.tab == Tab::Demos {
+            self.demos.rail(ui, mid, l.rail_w, &mut self.client);
         } else if self.room_chat.is_some() {
             self.room_chat_panel(ui, l, mid);
         } else if mid.height() > 40.0 {
@@ -1397,7 +1427,7 @@ impl LobbyPanel {
     fn stage(&mut self, ui: &mut egui::Ui, l: &Layout, style: &TwinStyle, action: &mut Option<PanelAction>) {
         let painter = ui.painter().clone();
         let mode = *self.mode();
-        let accent = self.page_mode().accent();
+        let accent = self.page_accent();
         let page_left = l.screen.min.x + l.rail_w - RAIL_SKEW;
         let page_w = l.screen.max.x - page_left;
         // `lobby__ghost`: the mode's name, huge and outlined, off the bottom
@@ -1406,6 +1436,7 @@ impl LobbyPanel {
             Tab::Play => Some(mode.title.to_uppercase()),
             Tab::Settings => Some(self.settings_view().ghost().to_owned()),
             Tab::Leaderboard => Some("TOP".to_owned()),
+            Tab::Demos => Some("REPLAY".to_owned()),
             _ => None,
         };
         if let Some(word) = ghost {
@@ -1435,6 +1466,20 @@ impl LobbyPanel {
             Tab::Play => self.play_page(ui, l, content, &mode),
             Tab::Settings => self.settings_view().ui(ui, content),
             Tab::Leaderboard => self.leaderboard.ui(ui, content, &mut self.client),
+            Tab::Demos => {
+                if let Some(demo) = self.demos.ui(ui, content, &mut self.client, &mut self.levelshots) {
+                    self.choice = Some(LobbyChoice {
+                        server_url: String::new(),
+                        map: demo.path.display().to_string(),
+                        admission_ticket: None,
+                        name: String::new(),
+                        play: false,
+                        demo: Some(demo.path),
+                        reel: demo.reel,
+                        team: None,
+                    });
+                }
+            }
             other => {
                 if not_yet_page(ui, content, other, &accent) {
                     *action = Some(PanelAction::WebLobby);

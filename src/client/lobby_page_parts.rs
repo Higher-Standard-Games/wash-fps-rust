@@ -259,19 +259,19 @@ impl RailKey<'_> {
             painter.add(Shape::closed_line(ring, Stroke::new(2.0, ink())));
         }
         x += 20.0;
-        let name = line(
-            painter,
-            &self.name.to_uppercase(),
-            14.0,
-            display_family(),
-            face.text,
-            0.07,
-        );
-        painter.galley(pos2(x, cy - name.size().y / 2.0), name, face.text);
-        x += self.name_width;
         let right = line(painter, self.right, 13.0, body(), face.sub, 0.12);
         let right_x = r.right() - 16.0 - right.size().x;
         painter.galley(pos2(right_x, cy - right.size().y / 2.0), right, face.sub);
+        // Without a detail the name takes what room there is, cut short.
+        let name_room = if self.detail.is_empty() {
+            right_x - 10.0 - x
+        } else {
+            self.name_width - 6.0
+        };
+        let shown = elide(painter, &self.name.to_uppercase(), 14.0, display_family(), name_room);
+        let name = line(painter, &shown, 14.0, display_family(), face.text, 0.07);
+        painter.galley(pos2(x, cy - name.size().y / 2.0), name, face.text);
+        x += self.name_width;
         let room = right_x - 10.0 - x;
         if room > 20.0 && !self.detail.is_empty() {
             let shown = elide(painter, self.detail, 13.0, body(), room);

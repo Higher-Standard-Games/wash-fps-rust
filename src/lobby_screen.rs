@@ -15,6 +15,7 @@ use shagger::rendering::offscreen::{OFFSCREEN_FORMAT, render_encoded_to_rgba};
 use shagger::rendering::wgpu;
 use shagger::ui::components::lobby_twin::TwinStyle;
 use shagger::ui::egui_layer::{EguiLayer, egui};
+use washoi::client::demos_view::DemoInfo;
 use washoi::client::lobby_panel::{LobbyChoice, LobbyPanel, PanelAction};
 use washoi::client::washoi_style::install_style;
 use winit::application::ApplicationHandler;
@@ -237,8 +238,10 @@ pub struct Shot<'a> {
     pub quick_play: bool,
     pub room: Option<&'a Path>,
     pub page: Option<&'a str>,
-    /// Leaderboard pages to show, as `{"duel:month": leaderboard:page, ...}`.
-    pub boards: Option<&'a Path>,
+    /// What the lobby would say, for the Leaderboard and Demos pages:
+    /// `{"boards": {"duel:month": leaderboard:page, ...}, "demos": [...],
+    /// "featured": [...]}`.
+    pub seed: Option<&'a Path>,
 }
 
 /// The lobby `seconds` after it connects to `lobby_url`, saved to `path`
@@ -262,13 +265,19 @@ pub fn screenshot(
         quick_play,
         room,
         page,
-        boards,
+        seed,
     } = shot;
-    let boards: Vec<(String, String, washoi::client::leaderboard_view::Page)> = match boards {
+    let seed = match seed {
         Some(file) => {
             let text = std::fs::read_to_string(file).map_err(|e| e.to_string())?;
-            let all: serde_json::Map<String, serde_json::Value> =
-                serde_json::from_str(&text).map_err(|e| e.to_string())?;
+            serde_json::from_str::<serde_json::Value>(&text).map_err(|e| e.to_string())?
+        }
+        None => serde_json::Value::Null,
+    };
+    let boards: Vec<(String, String, washoi::client::leaderboard_view::Page)> = seed
+        .get("boards")
+        .and_then(serde_json::Value::as_object)
+        .map(|all| {
             all.iter()
                 .filter_map(|(key, message)| {
                     let (mode, period) = key.split_once(':')?;
@@ -276,9 +285,22 @@ pub fn screenshot(
                     Some((mode.to_owned(), period.to_owned(), page))
                 })
                 .collect()
-        }
-        None => Vec::new(),
-    };
+        })
+        .unwrap_or_default();
+    let read = DemoInfo::read;
+    let demos: Option<Vec<DemoInfo>> = seed
+        .get("demos")
+        .and_then(serde_json::Value::as_array)
+        .map(|a| a.iter().filter_map(read).collect());
+    let featured: Vec<(DemoInfo, String)> = seed
+        .get("featured")
+        .and_then(serde_json::Value::as_array)
+        .map(|a| {
+            a.iter()
+                .filter_map(|e| Some((read(e.get("demo")?)?, String::new())))
+                .collect()
+        })
+        .unwrap_or_default();
     let (width, height) = size;
     let gpu = Gpu::headless().map_err(|e| e.to_string())?;
     let mut layer = EguiLayer::offscreen(&gpu, OFFSCREEN_FORMAT);
@@ -306,10 +328,22 @@ pub fn screenshot(
         panel.open_page(page);
     }
     let mut choice = None;
+    let mut reopened = false;
     while choice.is_none() && (started.elapsed() < Duration::from_secs_f64(seconds) || pixels.is_empty()) {
         panel.poll();
         for (mode, period, page) in &boards {
             panel.leaderboard.seed(mode, period, page.clone());
+        }
+        if let Some(demos) = &demos {
+            panel.demos.seed(demos.clone(), featured.clone());
+        }
+        // Again once the lobby has said hello, which resets the pages.
+        if let Some(page) = page
+            && !reopened
+            && started.elapsed() > Duration::from_millis(1500)
+        {
+            reopened = true;
+            panel.open_page(page);
         }
         // Without a lobby the dropped connection closes the room: open it again.
         if let Some(state) = &room

@@ -145,6 +145,15 @@ impl Levelshots {
         }
     }
 
+    /// The map's texture and its size in pixels, once it is loaded.
+    #[must_use]
+    pub fn texture_sized(&self, map: &str) -> Option<(egui::TextureId, egui::Vec2)> {
+        self.shots
+            .get(map)
+            .and_then(|(_, t)| t.as_ref())
+            .map(|t| (t.id(), t.size_vec2()))
+    }
+
     /// The map's texture, once it is loaded.
     #[must_use]
     pub fn texture(&self, map: &str) -> Option<egui::TextureId> {
