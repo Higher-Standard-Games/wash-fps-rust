@@ -2727,7 +2727,13 @@ whole areas rather than single items. 0.2.0 closes them in two steps.
   settings instead of showing the lobby. That fix is in the web lobby
   (wash-fps: the overlay sat under the lobby's rail panel), so it arrives
   with the web deploy.
-- **Engine**: shagger fb78fa5.
+- **Overall rating pool**: SHAG and wash-fps moved ratings to one Overall
+  pool that rates every match, and the lobby's leaderboard and profile
+  dropped their Public/Private switch. Those views are the web lobby, so
+  they arrive with the web deploy. shagger's lobby client follows the
+  protocol: its stats and leaderboard requests take an optional rating
+  pool and leave the scope out for Overall.
+- **Engine**: shagger 4b7efb1.
 - **Version 0.3.2**: a patch bump for fixes only, and the first release
   that 0.3.1's update check can offer.
 
