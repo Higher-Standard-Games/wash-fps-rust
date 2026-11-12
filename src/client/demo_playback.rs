@@ -304,6 +304,12 @@ impl DemoPlayback {
 
     /// Advances the demo clock by `dt` seconds, delivers the frames recorded
     /// by then, and samples every player and projectile in the newest one.
+    /// A lift's travel by its model index, as the newest snapshot says.
+    #[must_use]
+    pub fn lift_travel(&self, model_index: usize) -> Option<f64> {
+        self.feed.lift_travel.get(&model_index).copied()
+    }
+
     /// The match as the snapshots so far tell it.
     #[must_use]
     pub fn match_state(&self) -> &crate::client::match_state_manager::MatchStateManager {

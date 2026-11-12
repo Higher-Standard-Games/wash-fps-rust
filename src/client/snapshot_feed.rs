@@ -75,6 +75,9 @@ pub struct SnapshotFeed {
     /// The newest snapshot's players (`state.players`): names, scores,
     /// deaths and pings for the HUD.
     pub roster: Vec<(String, PlayerState)>,
+    /// The newest `lift_state`: each lift's travel, by model index, which
+    /// places its brush model (`handleLift` reads the lift system).
+    pub lift_travel: HashMap<usize, f64>,
     /// Effect events waiting for the next frame.
     effects: Vec<SnapshotEvent>,
     weapons: HashMap<String, String>,
@@ -136,6 +139,9 @@ impl SnapshotFeed {
         });
         self.buffer.push(now, state.tick, entities, None);
         for event in &state.events {
+            if let SnapshotEvent::LiftState { lifts } = event {
+                self.lift_travel = lifts.iter().map(|l| (usize::from(l.model_index), l.offset)).collect();
+            }
             match event {
                 SnapshotEvent::ProjectileSpawn { entity_id, def_id } => {
                     self.def_ids.insert(entity_id.clone(), def_id.clone());

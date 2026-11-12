@@ -379,6 +379,21 @@ impl LivePlay {
         &self.feed.roster
     }
 
+    /// A lift's travel by its model index: the predicted lift system's,
+    /// which carries our body, else the newest snapshot's.
+    #[must_use]
+    pub fn lift_travel(&self, model_index: usize) -> Option<f64> {
+        let predicted = self
+            .predictor
+            .collision_world()
+            .and_then(|c| c.backend.backend.lifts.as_ref())
+            .and_then(|l| {
+                let i = l.definitions.iter().position(|d| d.model_index == model_index)?;
+                Some(l.travel_at(i))
+            });
+        predicted.or_else(|| self.feed.lift_travel.get(&model_index).copied())
+    }
+
     /// The feet: the predicted position with its correction smoothing;
     /// `None` while dead or before the first snapshot.
     #[must_use]
