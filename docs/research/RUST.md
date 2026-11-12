@@ -2710,6 +2710,16 @@ whole areas rather than single items. 0.2.0 closes them in two steps.
 
 ## 24. Progress log
 
+### Native lobby proposed (November 12, 2026)
+
+The web view lobby (WEBVIEW_LOBBY.md, decided November 3) has caused a bug
+on every platform: NVIDIA under Linux, the macOS window, the WebKitGTK
+dependency. [NATIVE_LOBBY.md](NATIVE_LOBBY.md) proposes bringing the lobby
+and settings back as native screens, in pieces behind a `ui_lobby` switch,
+on the style of the native loading screen and Esc menu. The removed egui
+lobby's look is not restored; only its logic is reused. It is under review
+and not built yet.
+
 ### 0.3.5 (November 12, 2026)
 
 - **Fixes since 0.3.4**: the lobby page on NVIDIA under Linux still drew at
