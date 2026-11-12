@@ -29,9 +29,13 @@ use crate::shared::entities::definitions::weapons::weapons_table::weapon_speed_b
 use crate::shared::net::snapshot_events::{SnapshotEvent, WashoiEvents};
 use shagger::shared::json::Value;
 
-/// shared/server/gametype/Loadout.ts `DEFAULT_LOADOUT`: the kit the browser's
-/// picker starts on, sent for the player until the native client has a picker.
+/// shared/server/gametype/Loadout.ts `DEFAULT_LOADOUT`: the kit the picker
+/// starts on, and the one sent when the join cannot wait for a choice.
 pub const DEFAULT_LOADOUT: (&str, &str) = ("rlauncher", "machinegun");
+
+/// `MAX_JOIN_GAMETYPE_WAITS` × `JOIN_GAMETYPE_WAIT_MS`: how long the join
+/// waits for the server to say what mode this is.
+const JOIN_GAMETYPE_WAIT_MS: f64 = 3000.0;
 
 /// The request that chooses [`DEFAULT_LOADOUT`].
 #[must_use]
@@ -215,6 +219,11 @@ pub struct LivePlay {
     pub player_id: String,
     pub entity_id: String,
     joined: bool,
+    /// When the server took us as a player (`Joined`): the join is sent once
+    /// the mode is known and, in a mode with kits, a kit chosen.
+    welcomed_at: Option<f64>,
+    /// A kit was chosen in this match (`_loadoutChosen`).
+    loadout_chosen: bool,
     /// The game server's messages for the player, not yet shown.
     pub notices: Vec<String>,
     /// The session has the seat: false from a drop until the resumed
@@ -333,6 +342,8 @@ impl LivePlay {
                         player_id: String::new(),
                         entity_id: String::new(),
                         joined: false,
+                        welcomed_at: None,
+                        loadout_chosen: false,
                         team,
                         disabled_models: Vec::new(),
                         notices: Vec::new(),
@@ -367,6 +378,59 @@ impl LivePlay {
 
     fn now_ms(&self) -> f64 {
         self.started.elapsed().as_secs_f64() * 1000.0
+    }
+
+    /// `joinGame`: not before the server has said what mode this is (or a
+    /// few seconds have passed), and in a mode with kits not before one is
+    /// chosen. A mode with kits refuses the join without one ("Choose a
+    /// loadout before joining."); a kit nobody chose is sent only when the
+    /// mode never said.
+    fn try_join(&mut self) {
+        let Some(welcomed_at) = self.welcomed_at else { return };
+        if self.joined || self.wants_loadout() {
+            return;
+        }
+        let known = !self.feed.match_state.gametype_name().is_empty();
+        if !known && self.now_ms() - welcomed_at < JOIN_GAMETYPE_WAIT_MS {
+            return;
+        }
+        if !known && !self.loadout_chosen {
+            self.session.send(default_loadout());
+        }
+        self.session.send(SessionRequest::JoinGame {
+            team_id: self.team.clone(),
+            manual_pick: false,
+            admission_ticket: None,
+        });
+        self.joined = true;
+        self.next_command = self.now_ms();
+    }
+
+    /// The join waits on a kit: the window shows the picker
+    /// (`requiresLoadoutSelection && !_loadoutChosen`).
+    #[must_use]
+    pub fn wants_loadout(&self) -> bool {
+        self.welcomed_at.is_some()
+            && !self.joined
+            && !self.loadout_chosen
+            && self.feed.match_state.loadout_mode().is_some()
+    }
+
+    /// `sendLoadout`, then the join if it waited on the kit. In play the
+    /// kit applies at the next round or spawn, as the mode says.
+    pub fn choose_loadout(&mut self, primary: &str, secondary: &str) {
+        self.session.send(SessionRequest::Loadout {
+            primary: primary.to_owned(),
+            secondary: secondary.to_owned(),
+        });
+        self.loadout_chosen = true;
+        self.try_join();
+    }
+
+    /// A kit was chosen in this match (`_loadoutChosen`).
+    #[must_use]
+    pub fn loadout_chosen(&self) -> bool {
+        self.loadout_chosen
     }
 
     #[must_use]
@@ -516,17 +580,8 @@ impl LivePlay {
                     println!("joined as {player_id} (entity {entity_id:?})");
                     self.player_id = player_id;
                     self.entity_id = entity_id;
-                    if !self.joined {
-                        // A mode with kits refuses the join until one is chosen
-                        // ("Choose a loadout before joining."); the others ignore it.
-                        self.session.send(default_loadout());
-                        self.session.send(SessionRequest::JoinGame {
-                            team_id: self.team.clone(),
-                            manual_pick: false,
-                            admission_ticket: None,
-                        });
-                        self.joined = true;
-                        self.next_command = self.now_ms();
+                    if !self.joined && self.welcomed_at.is_none() {
+                        self.welcomed_at = Some(self.now_ms());
                     }
                 }
                 SessionEvent::Resuming { .. } => self.connected = false,
@@ -603,6 +658,7 @@ impl LivePlay {
                 _ => {}
             }
         }
+        self.try_join();
         let now = self.now_ms();
         // `MatchStateManager`: the brushes the bomb destroyed are gone from
         // prediction too, before the snapshots replay against them.

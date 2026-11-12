@@ -8,10 +8,12 @@
 //! Settings opens the lobby page's settings over the match, when the page
 //! can (`settings`); Back there returns to this menu.
 //!
+//! In a mode with kits the Loadout key, under Resume, opens the kit picker
+//! ([`super::loadout_picker`]).
+//!
 //! Not yet: Spectate and Join (the native match has no spectator state to
-//! go to), and the mode's keys (Loadout, with no kit picker yet). The
-//! veil's `backdrop-filter: blur(3px)` is not drawn: egui paints over the
-//! frame and cannot read it.
+//! go to). The veil's `backdrop-filter: blur(3px)` is not drawn: egui
+//! paints over the frame and cannot read it.
 
 use std::sync::Arc;
 
@@ -27,6 +29,8 @@ use crate::client::washoi_style::display_family;
 pub enum PauseMenuAction {
     /// Back to the fight: close and take the mouse again.
     Resume,
+    /// The kit picker (`openLoadoutFromMenu`), in a mode with kits.
+    Loadout,
     /// Controls and video: the lobby page's settings over the match.
     Settings,
     /// Back to the lobby.
@@ -39,6 +43,9 @@ pub struct PauseMenu {
     pub open: bool,
     /// The Settings key is offered (the lobby page can show them).
     pub settings: bool,
+    /// The mode's Loadout key (`matchMenuModeKeys`), hinted with the kit
+    /// chosen; `None` in a mode without kits.
+    pub loadout: Option<String>,
     /// When this opening was first drawn (egui seconds), for the slide-in.
     shown_at: Option<f64>,
     /// `buildRailBrand`'s logo, sized for the rail, and the height it was made for.
@@ -55,21 +62,27 @@ pub const PAUSE_MENU_NOTE: &str = "The match keeps going while you're here.";
 const LOGO_PNG: &[u8] = include_bytes!("../../../../assets/brand/washoi.png");
 
 /// `--ink`, the rail's lettering.
-fn ink(a: f32) -> Color32 {
+pub(crate) fn ink(a: f32) -> Color32 {
     hsla(250.0, 45.0, 8.0, a)
 }
 
 /// `--cream`.
-fn cream(a: f32) -> Color32 {
+pub(crate) fn cream(a: f32) -> Color32 {
     hsla(45.0, 100.0, 95.0, a)
 }
 
 /// Text in one face, size and colour, `spacing` points between letters.
-fn galley(painter: &egui::Painter, text: &str, font: egui::FontId, color: Color32, spacing: f32) -> Arc<egui::Galley> {
+pub(crate) fn galley(
+    painter: &egui::Painter,
+    text: &str,
+    font: egui::FontId,
+    color: Color32,
+    spacing: f32,
+) -> Arc<egui::Galley> {
     galley_wrapped(painter, text, font, color, spacing, f32::INFINITY)
 }
 
-fn galley_wrapped(
+pub(crate) fn galley_wrapped(
     painter: &egui::Painter,
     text: &str,
     font: egui::FontId,
@@ -103,13 +116,16 @@ struct KeyLook {
 
 /// `RaisedKey`'s variants this menu uses.
 #[derive(Clone, Copy, PartialEq, Eq)]
-enum KeyKind {
+pub(crate) enum KeyKind {
     /// Gold, the rail's keys (`raised-key--nav`).
     Nav,
     /// Ink at rest, gold lettering: the first key (`raised-key--ink`).
     Ink,
     /// Cream and small: Leave (`raised-key--sm raised-key--cream`).
     Leave,
+    /// The loadout's confirm key (`raised-key--cta` in `.fps-loadout`'s
+    /// gold): deeper, its label centred.
+    Cta,
 }
 
 impl KeyKind {
@@ -165,6 +181,17 @@ impl KeyKind {
                 sub: hsla(46.0, 100.0, 60.0, 0.62),
                 shadow: hsla(28.0, 90.0, 14.0, 0.5),
             },
+            Self::Cta => KeyLook {
+                face: [
+                    (0.0, hsl(51.0, 100.0, 73.0)),
+                    (0.58, hsl(46.0, 100.0, 57.0)),
+                    (1.0, hsl(42.0, 100.0, 50.0)),
+                ],
+                side: [hsl(36.0, 92.0, 40.0), hsl(28.0, 88.0, 25.0)],
+                text: ink(1.0),
+                sub: ink(0.62),
+                shadow: hsla(250.0, 70.0, 3.0, 0.62),
+            },
             Self::Leave => KeyLook {
                 face: [
                     (0.0, hsl(45.0, 100.0, 97.0)),
@@ -181,14 +208,23 @@ impl KeyKind {
 
     /// `--key-d`: how far the face stands off its side.
     fn depth(self) -> f32 {
-        if self == Self::Leave { 3.6 } else { 6.0 }
+        match self {
+            Self::Leave => 3.6,
+            Self::Cta => 9.6,
+            _ => 6.0,
+        }
+    }
+
+    /// `--key-cut`, of the width.
+    fn cut(self) -> f32 {
+        if self == Self::Cta { 0.05 } else { 0.03 }
     }
 }
 
 /// One `RaisedKey` in `rect` (the face at rest); true when clicked.
 /// `stacked` sets the hint under the label, as a narrow rail does.
 #[allow(clippy::too_many_arguments)]
-fn raised_key(
+pub(crate) fn raised_key(
     ui: &mut egui::Ui,
     id: &str,
     rect: Rect,
@@ -215,8 +251,8 @@ fn raised_key(
     } else {
         0.0
     };
-    // `--key-cut`: 3 % of the width off the face's lower left and upper right.
-    let cut = rect.width() * 0.03;
+    // `--key-cut`: off the face's lower left and upper right.
+    let cut = rect.width() * kind.cut();
     let shape = |offset: Vec2| {
         [
             rect.left_top() + vec2(cut, 0.0) + offset,
@@ -281,7 +317,10 @@ fn raised_key(
         rect.min + lift + vec2(pad_left, 0.0),
         rect.max + lift - vec2(pad_right, 0.0),
     );
-    if stacked {
+    if kind == KeyKind::Cta {
+        // `justify-content: center`, no hint.
+        painter.galley(inner.center() - label.size() / 2.0, label, look.text);
+    } else if stacked {
         let gap = 5.0;
         let total = label.size().y + gap + hint.size().y;
         let top = inner.center().y - total / 2.0;
@@ -299,7 +338,7 @@ fn raised_key(
 
 /// The ease of `fps-match-menu-in` (`cubic-bezier(0.2, 0.9, 0.3, 1)`),
 /// close enough: an ease-out that starts fast.
-fn ease_out(t: f32) -> f32 {
+pub(crate) fn ease_out(t: f32) -> f32 {
     let t = t.clamp(0.0, 1.0);
     1.0 - (1.0 - t).powi(3)
 }
@@ -320,6 +359,9 @@ impl PauseMenu {
     /// The rail's keys, in order.
     fn keys(&self) -> Vec<PauseMenuAction> {
         let mut keys = vec![PauseMenuAction::Resume];
+        if self.loadout.is_some() {
+            keys.push(PauseMenuAction::Loadout);
+        }
         if self.settings {
             keys.push(PauseMenuAction::Settings);
         }
@@ -387,6 +429,7 @@ impl PauseMenu {
         let logo_h = clamp(96.0, h * 0.19, 205.0);
         let logo = self.logo(ctx, (logo_h * ctx.pixels_per_point()).round() as u32);
         let settings = self.settings;
+        let loadout = self.loadout.clone();
         let focus = self.focus;
         let leave_at = self.keys().len() - 1;
         let mut action = None;
@@ -527,6 +570,10 @@ impl PauseMenu {
                 let label_size = clamp(15.0, w * 0.011, 21.0);
                 let mut keys: Vec<(&str, &str, &str, PauseMenuAction)> =
                     vec![("resume", "Resume", "Back to the fight", PauseMenuAction::Resume)];
+                // The mode's keys, right under Resume.
+                if let Some(hint) = &loadout {
+                    keys.push(("loadout", "Loadout", hint, PauseMenuAction::Loadout));
+                }
                 if settings {
                     keys.push(("settings", "Settings", "Controls and video", PauseMenuAction::Settings));
                 }
