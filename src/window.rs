@@ -560,6 +560,8 @@ impl App {
             false
         };
         s.window.set_cursor_visible(!grab);
+        // On macOS a locked cursor keeps its arrow without this.
+        shagger::input::native_cursor::set_cursor_hidden(grab);
         if self.captured && !grab {
             // Pointer lock lost: nothing stays held (`releaseHeldInput`).
             self.held.clear();

@@ -29,7 +29,7 @@ use shagger::webview::{
 use washoi::client::demo_download::{DemoDownload, DemoDownloadState};
 use winit::application::ApplicationHandler;
 use winit::event::WindowEvent;
-use winit::event_loop::ActiveEventLoop;
+use winit::event_loop::{ActiveEventLoop, ControlFlow};
 use winit::window::{Window, WindowId};
 
 use crate::window::{OpenWindow, next_frame, open_window, present, run_on_event_loop, toggle_fullscreen};
@@ -51,6 +51,8 @@ const CAPABILITIES: [&str; 8] = [
 
 /// How long the page has to say hello before the screen gives up on it.
 const HELLO_TIMEOUT: Duration = Duration::from_secs(30);
+/// How often the lobby checks on GTK while the page covers the window (Linux).
+const GTK_POLL: Duration = Duration::from_millis(2);
 
 /// The page's global.
 const GLOBAL: &str = "__washoiNative";
@@ -300,6 +302,9 @@ struct Open {
     surface: wgpu::Surface<'static>,
     config: wgpu::SurfaceConfiguration,
     layer: EguiLayer,
+    /// A frame of ours reached the window (under the page, or the problem
+    /// screen).
+    painted: bool,
 }
 
 /// A recording the page asked for, downloading.
@@ -535,6 +540,7 @@ impl LobbyApp {
             .paint(&m.gpu, &mut encoder, &view, [m.config.width, m.config.height], ui);
         m.gpu.queue.submit([encoder.finish()]);
         present(&m.gpu, &m.window, &mut m.surface, &m.config, frame);
+        m.painted = true;
         if retry {
             self.retry();
         }
@@ -614,6 +620,7 @@ impl ApplicationHandler for LobbyApp {
         window.set_title("Washoi");
         window.set_cursor_visible(true);
         let _ = window.set_cursor_grab(winit::window::CursorGrabMode::None);
+        shagger::input::native_cursor::set_cursor_hidden(false);
         let size = window.inner_size();
         let made = HOST.with(|h| {
             let mut slot = h.borrow_mut();
@@ -661,6 +668,7 @@ impl ApplicationHandler for LobbyApp {
             surface,
             config,
             layer,
+            painted: false,
         });
     }
 
@@ -688,7 +696,21 @@ impl ApplicationHandler for LobbyApp {
         }
     }
 
-    fn about_to_wait(&mut self, _event_loop: &ActiveEventLoop) {
+    fn about_to_wait(&mut self, event_loop: &ActiveEventLoop) {
+        // On Linux the page lives on GTK's main loop, which runs only between
+        // our frames (`shagger::webview::pump`). A frame waits for vsync, and
+        // WebKitGTK without DMA-BUF needs several trips through that loop for
+        // each frame of its own: drawing nothing anyone sees under the page
+        // held it to a few frames a second. While the page covers the window,
+        // the loop only checks on GTK every few milliseconds.
+        if cfg!(target_os = "linux") && self.open.as_ref().is_some_and(|m| m.painted) && self.problem.is_none() {
+            self.handle(event_loop);
+            if self.problem.is_none() && self.outcome.is_none() {
+                event_loop.set_control_flow(ControlFlow::WaitUntil(Instant::now() + GTK_POLL));
+                return;
+            }
+        }
+        event_loop.set_control_flow(ControlFlow::Poll);
         if let Some(m) = &self.open {
             m.window.request_redraw();
         }
