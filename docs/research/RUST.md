@@ -2710,7 +2710,7 @@ whole areas rather than single items. 0.2.0 closes them in two steps.
 
 ## 24. Progress log
 
-### Next (unreleased)
+### 0.3.4 (November 12, 2026)
 
 - **Fixes since 0.3.3**: on macOS the arrow stayed drawn over a match.
   winit hides the cursor with cursor rects, which AppKit applies only when
@@ -2728,7 +2728,8 @@ whole areas rather than single items. 0.2.0 closes them in two steps.
   gives it the content view's bounds on every resize and lets AppKit
   resize it with the view. The Esc menu's Loadout key no longer shows
   the kit's name, which ran into the label on a narrow rail.
-- **Engine**: shagger c398eea.
+- **Engine**: shagger caecb6d.
+- **Version 0.3.4**.
 
 ### 0.3.3 (November 12, 2026)
 
