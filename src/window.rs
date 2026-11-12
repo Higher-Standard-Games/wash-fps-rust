@@ -2262,16 +2262,7 @@ pub fn open_window(event_loop: &ActiveEventLoop) -> Result<OpenWindow, String> {
         None
     };
     let window = match kept {
-        Some(window) => {
-            // macOS orders the window out when the last screen's event loop
-            // stops (the app stops running): bring it back to the front.
-            #[cfg(target_os = "macos")]
-            {
-                window.set_visible(true);
-                window.focus_window();
-            }
-            window
-        }
+        Some(window) => window,
         None => {
             let window = create_window(event_loop)?;
             if KEEP_WINDOW.with(Cell::get) {
