@@ -185,7 +185,9 @@ tests, and can ship.
    local storage keeps its own, so it asks once more. `--page guide/N`
    and `credits` draw them. Left out: the lobby music key (the native
    lobby plays no music yet) and the blur behind the card (egui has none;
-   the lobby is only darkened).
+   the lobby is only darkened). The update notice (`ShellControls.ts`'s
+   `installUpdateNotice`) sits in the upper right once `update_check` has
+   found a newer release; `--page update` shows it with a made-up one.
 
 As a rough size, steps 1 and 3 are each about the size of the kit picker plus
 the Esc menu several times over. Steps 2, 4 and 5 are smaller. Each step

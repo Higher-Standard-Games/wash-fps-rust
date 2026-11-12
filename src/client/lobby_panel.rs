@@ -384,6 +384,8 @@ pub struct LobbyPanel {
     pub credits: Option<CreditsDialog>,
     /// A page for the system's browser, asked for from a dialog.
     open_url: Option<String>,
+    /// `--page update`: the notice as if a newer release were out.
+    shown_update: Option<crate::update_check::Update>,
     /// The page drawn last frame: a page coming into view asks again.
     shown_tab: Option<Tab>,
     /// The maps' levelshots, for the room's vote cards.
@@ -453,6 +455,7 @@ impl LobbyPanel {
             guide: LobbyWelcomeGuide::default(),
             credits: None,
             open_url: None,
+            shown_update: None,
             shown_tab: None,
             levelshots: Levelshots::new(url),
             site: site_base(url),
@@ -1164,6 +1167,7 @@ impl LobbyPanel {
         self.rail(ui, &layout, style);
         self.overlays_ui(ui, screen, time, accent.face, style);
         self.dialogs_ui(ui, screen);
+        self.update_notice(ui, screen);
         if let Some(url) = self.open_url.take() {
             action = Some(PanelAction::OpenUrl(url));
         }
@@ -1177,6 +1181,58 @@ impl LobbyPanel {
     /// Whether the welcome guide may be over the lobby (`canOpen`).
     fn guide_can_open(&self) -> bool {
         !self.welcome.is_open() && !self.profile.is_open()
+    }
+
+    /// wash-fps `native/ShellControls.ts`'s `installUpdateNotice`: a newer
+    /// client is out. A notice in the upper right offers the download in
+    /// the system's browser, or Later, which holds for this run.
+    fn update_notice(&mut self, ui: &mut egui::Ui, screen: Rect) {
+        let Some(update) = self.shown_update.clone().or_else(crate::update_check::available) else {
+            return;
+        };
+        let painter = ui.painter().clone();
+        let say = match &update.url {
+            Some(_) => format!("Washoi {} is out.", update.version),
+            None => format!("Washoi {} is out; get it from washoi.net.", update.version),
+        };
+        let g = line(&painter, &say, 15.0, body(), hsl(43.0, 72.0, 89.0), 0.0);
+        let key_g = |label: &str| line(&painter, label, 13.0, display_family(), hsl(43.0, 100.0, 94.0), 0.12);
+        let keys: Vec<(&str, Arc<egui::Galley>)> = update
+            .url
+            .as_ref()
+            .map(|_| ("DOWNLOAD", key_g("DOWNLOAD")))
+            .into_iter()
+            .chain(std::iter::once(("LATER", key_g("LATER"))))
+            .collect();
+        // Padding 10 14, items 10 apart; the keys stand on a 5px base.
+        let keys_w: f32 = keys.iter().map(|(_, k)| k.size().x + 32.0 + 10.0).sum();
+        let w = 14.0 + g.size().x + keys_w + 14.0;
+        let h = 10.0 + 44.0 + 5.0 + 10.0;
+        let r = Rect::from_min_size(pos2(screen.right() - 24.0 - w, screen.top() + 24.0), vec2(w, h));
+        ui.interact(r, egui::Id::NULL.with("update-notice"), egui::Sense::hover());
+        painter.rect_filled(r, 4.0, Color32::from_rgba_unmultiplied(16, 12, 32, 235));
+        let mid = r.top() + 10.0 + 22.0;
+        let gh = g.size().y;
+        painter.galley(pos2(r.left() + 14.0, mid - gh / 2.0), g, cream());
+        let mut x = r.left() + 14.0 + w - 28.0 - keys_w + 10.0;
+        let mut done = false;
+        for (id, label) in keys {
+            let kw = label.size().x + 32.0;
+            let kr = Rect::from_min_size(pos2(x, r.top() + 10.0), vec2(kw, 44.0));
+            x += kw + 10.0;
+            if link_key(ui, &painter, kr, label, id) {
+                if id == "DOWNLOAD"
+                    && let Some(url) = &update.url
+                {
+                    self.open_url = Some(url.clone());
+                }
+                done = true;
+            }
+        }
+        if done {
+            crate::update_check::dismiss();
+            self.shown_update = None;
+        }
     }
 
     /// The welcome guide and the credits, over everything.
@@ -1318,6 +1374,13 @@ impl LobbyPanel {
         }
         if tab == "profile" {
             self.open_profile(ProfileScreen::from_id(sub));
+            return;
+        }
+        if tab == "update" {
+            self.shown_update = Some(crate::update_check::Update {
+                version: "v9.9.9".into(),
+                url: Some("https://washoi.net/".into()),
+            });
             return;
         }
         if tab == "credits" {
