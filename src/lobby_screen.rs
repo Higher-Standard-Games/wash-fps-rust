@@ -231,11 +231,20 @@ pub fn run(panel: &mut LobbyPanel, style: TwinStyle) -> Result<NativeOutcome, St
     Ok(outcome)
 }
 
+/// What [`screenshot`] shows: Quick play pressed, a saved room, or a page.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct Shot<'a> {
+    pub quick_play: bool,
+    pub room: Option<&'a Path>,
+    pub page: Option<&'a str>,
+}
+
 /// The lobby `seconds` after it connects to `lobby_url`, saved to `path`
 /// without a window: for checking its look against the browser's. With
 /// `quick_play` it presses Quick play once the lobby allows it, and returns
 /// the match it is handed as soon as it is, saving that frame. With `room`
 /// it draws that room's state (a `lobby:created` message's `lobby`) instead.
+/// `page` opens a page of the lobby first, such as `settings/video`.
 ///
 /// # Errors
 /// No GPU, or the image could not be written.
@@ -245,9 +254,9 @@ pub fn screenshot(
     path: &Path,
     size: (u32, u32),
     seconds: f64,
-    quick_play: bool,
-    room: Option<&Path>,
+    shot: Shot<'_>,
 ) -> Result<Option<LobbyChoice>, String> {
+    let Shot { quick_play, room, page } = shot;
     let (width, height) = size;
     let gpu = Gpu::headless().map_err(|e| e.to_string())?;
     let mut layer = EguiLayer::offscreen(&gpu, OFFSCREEN_FORMAT);
@@ -271,6 +280,9 @@ pub fn screenshot(
         }
         None => None,
     };
+    if let Some(page) = page {
+        panel.open_page(page);
+    }
     let mut choice = None;
     while choice.is_none() && (started.elapsed() < Duration::from_secs_f64(seconds) || pixels.is_empty()) {
         panel.poll();

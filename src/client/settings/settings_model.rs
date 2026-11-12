@@ -723,7 +723,17 @@ pub const VIDEO_SECTIONS: [(VideoSection, &str); 5] = [
 pub fn section_load(cvars: &Cvars, section: VideoSection) -> f64 {
     let on = |name: &str, points: f64| if number(cvars, name) > 0.0 { points } else { 0.0 };
     match section {
-        VideoSection::Screen => 0.0,
+        // Full resolution is the heavy setting here; antialiasing adds to it.
+        VideoSection::Screen => {
+            let scale = number(cvars, "r_renderscale");
+            (if scale >= 0.95 {
+                2.0
+            } else if scale >= 0.7 {
+                1.0
+            } else {
+                0.0
+            }) + on("r_msaa", 1.0)
+        }
         VideoSection::Effects => {
             on("r_bloom", 1.0)
                 + on("r_glow", 2.0)
@@ -739,6 +749,7 @@ pub fn section_load(cvars: &Cvars, section: VideoSection) -> f64 {
                 } else {
                     0.0
                 }
+                + on("r_dynamiclight", 1.0)
         }
         VideoSection::World => {
             let water = number(cvars, "r_water_quality");
@@ -987,24 +998,47 @@ pub const HIT_COLORS: [(&str, &str); 5] = [
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum SettingsPageId {
     Controls,
+    Controller,
     Gameplay,
     Video,
     Audio,
 }
 
-/// `SETTINGS_PAGES`: id, title, hint.
-pub const SETTINGS_PAGES: [(SettingsPageId, &str, &str); 4] = [
-    (SettingsPageId::Controls, "Controls", "Keys · mouse"),
-    (SettingsPageId::Gameplay, "Gameplay", "Aim · colours"),
-    (SettingsPageId::Video, "Video", "Quality"),
-    (SettingsPageId::Audio, "Audio", "Volume"),
+/// One of `SETTINGS_PAGES`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SettingsPage {
+    pub id: SettingsPageId,
+    pub title: &'static str,
+    pub hint: &'static str,
+    /// The backdrop word.
+    pub ghost: &'static str,
+}
+
+const fn page(id: SettingsPageId, title: &'static str, hint: &'static str, ghost: &'static str) -> SettingsPage {
+    SettingsPage { id, title, hint, ghost }
+}
+
+/// `SETTINGS_PAGES`.
+pub const SETTINGS_PAGES: [SettingsPage; 5] = [
+    page(SettingsPageId::Controls, "Controls", "Keys · mouse", "KEYS"),
+    page(SettingsPageId::Controller, "Controller", "Sticks · buttons", "PAD"),
+    page(SettingsPageId::Gameplay, "Gameplay", "Aim · colours", "AIM"),
+    page(SettingsPageId::Video, "Video", "Quality", "VIDEO"),
+    page(SettingsPageId::Audio, "Audio", "Volume", "SOUND"),
 ];
+
+/// The page `id` (`SETTINGS_PAGES.find`).
+#[must_use]
+pub fn settings_page(id: SettingsPageId) -> &'static SettingsPage {
+    SETTINGS_PAGES.iter().find(|p| p.id == id).unwrap_or(&SETTINGS_PAGES[0])
+}
 
 /// `PAGE_CVARS`: the cvars each page's reset puts back.
 #[must_use]
 pub fn page_cvars(page: SettingsPageId) -> &'static [&'static str] {
     match page {
         SettingsPageId::Controls => &["m_sensitivity", "cl_ads_sensitivity", "cl_autorun"],
+        SettingsPageId::Controller => &crate::client::settings::controller_model::CONTROLLER_CVARS,
         SettingsPageId::Gameplay => &[
             "cl_team_ally_model",
             "cl_team_enemy_model",
@@ -1076,6 +1110,9 @@ pub fn reset_page(cvars: &mut Cvars, input: &mut InputSystem, page: SettingsPage
     }
     if page == SettingsPageId::Controls {
         reset_keys(input);
+    }
+    if page == SettingsPageId::Controller {
+        crate::client::settings::controller_model::reset_controller(input, cvars);
     }
 }
 
@@ -1260,7 +1297,9 @@ mod tests {
             current_choice(&cvars, &VIDEO_PRESETS.map(|p| p.0)).map(|c| c.id),
             Some("balanced")
         );
-        assert_eq!(load_level(section_load(&cvars, VideoSection::Effects)), FrameCost::Mid);
+        // Bloom, glow, light shafts and dynamic lights: heavy, as the
+        // browser's page says of Balanced.
+        assert_eq!(load_level(section_load(&cvars, VideoSection::Effects)), FrameCost::High);
         apply_choice(&mut cvars, &VIDEO_PRESETS[3].0);
         assert_eq!(
             current_choice(&cvars, &VIDEO_PRESETS.map(|p| p.0)).map(|c| c.id),

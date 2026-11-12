@@ -1,6 +1,6 @@
 # Native lobby and settings: plan
 
-Status: steps 1 and 2 built (November 12, 2026), behind `ui_lobby native`
+Status: steps 1 and 2 built, step 3's pages built (November 12, 2026), behind `ui_lobby native`
 (`washoi --lobby native` once; the cvar persists). The defaults for the
 questions in section 7: the welcome guide stays web-only until step 5, the
 native lobby opens straight onto Play, and the web view goes at parity.
@@ -128,7 +128,17 @@ tests, and can ship.
    Deep links and the full-server notice move to step 5.
 3. **Settings.** All five pages on `settings_model.rs`, key capture, the
    controller page, native settings sync, and the in-match Settings key.
-   This is the biggest single step.
+   This is the biggest single step. *Built:* `client/settings/`
+   `fps_settings_view.rs` (head, armed resets, toast, page keys in the
+   rail), `settings_fields.rs` (card, slider, row of keys, swatches,
+   drop-down, notice, cost pips) and a module per page as in the browser.
+   Keys are captured from egui's events under the browser's code names.
+   The Controller page reads the pads itself while shown; the browser's
+   Use controller keys are left out, since the native device follows the
+   last input. Each side's 3D figure on Gameplay is its name in the side's
+   outline for now. `washoi menu ... --page settings/video/effects` opens a
+   page for screenshots. Settings sync was already native (step 1). Still
+   to do: the in-match Settings key, which opens the web page today.
 4. **Profile, leaderboard, demos.**
 5. **The rest and the switch.** Welcome and terms, credits, music, the
    update notice. A parity review against section 2, then the default flips

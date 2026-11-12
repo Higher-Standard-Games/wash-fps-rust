@@ -122,7 +122,7 @@ fn usage() -> ! {
          \x20      washoi watch <ws://game-server> [--name NAME] [--ticket TICKET] [--data DIR] [--screenshot FILE.png] [--time T] [--at X,Y,Z,YAW] [--follow N] [--seconds N]\n\
          \x20      washoi play <ws://game-server> [--name NAME] [--ticket TICKET] [--data DIR] [--screenshot FILE.png] [--time T] [--say TEXT] [--seconds N]\n\
          \x20      washoi connect <ws://game-server> [--name NAME] [--ticket TICKET] [--seconds N] [--play]\n\
-         \x20      washoi menu <ws://lobby> --screenshot FILE.png [--key-file FILE] [--size WxH] [--seconds N] [--play | --room FILE.json]\n\
+         \x20      washoi menu <ws://lobby> --screenshot FILE.png [--key-file FILE] [--size WxH] [--seconds N] [--play | --room FILE.json] [--page settings/audio]\n\
          \x20      washoi lobby <ws://lobby> [--key-file FILE] list\n\
          \x20      washoi lobby <ws://lobby> [--key-file FILE] spectate [--window] [--seconds N]\n\
          \x20      washoi lobby <ws://lobby> [--key-file FILE] queue <gametype> [--seconds N] [--play | --window]\n\
@@ -140,6 +140,8 @@ struct Options {
     seconds: Option<f64>,
     /// `menu --room FILE.json`: a room's state to draw, without a lobby.
     room: Option<PathBuf>,
+    /// `menu --page settings/video`: a page of the lobby to open.
+    page: Option<String>,
     play: bool,
     key_file: Option<PathBuf>,
     data: Option<PathBuf>,
@@ -199,6 +201,7 @@ fn parse_options(args: impl Iterator<Item = String>) -> Options {
             "--ticket" => o.ticket = Some(value()),
             "--seconds" => o.seconds = Some(value().parse().unwrap_or_else(|_| usage())),
             "--room" => o.room = Some(PathBuf::from(value())),
+            "--page" => o.page = Some(value()),
             "--key-file" => o.key_file = Some(PathBuf::from(value())),
             "--lobby" => o.lobby = Some(value()),
             "--play" => o.play = true,
@@ -545,8 +548,11 @@ fn main() {
                 path,
                 size,
                 o.seconds.unwrap_or(3.0),
-                o.play,
-                o.room.as_deref(),
+                lobby_screen::Shot {
+                    quick_play: o.play,
+                    room: o.room.as_deref(),
+                    page: o.page.as_deref(),
+                },
             ) {
                 Ok(None) if o.play => {
                     eprintln!("lobby: no match was handed out");

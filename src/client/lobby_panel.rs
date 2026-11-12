@@ -48,6 +48,8 @@ use egui::{Color32, FontFamily, FontId, Painter, Pos2, Rect, Shape, Stroke, pos2
 use crate::client::levelshots::{Levelshots, site_base};
 use crate::client::lobby_rooms::{PlayKeysInput, RoomAction, describe_room, play_keys, room_count_label, sort_rooms};
 use crate::client::room_chat_view::RoomChatView;
+use crate::client::settings::fps_settings_view::FpsSettingsView;
+use crate::client::settings::settings_model::SETTINGS_PAGES;
 use crate::client::washoi_style::{DISPLAY_FONT, display_family};
 
 /// `GameMode`: a mode's tile on the Play stage.
@@ -331,6 +333,8 @@ pub struct LobbyPanel {
     room: Option<MatchLobbyView>,
     /// The room's own chat, in the rail while the room is open.
     room_chat: Option<RoomChatView>,
+    /// The settings screen, made the first time it is opened.
+    settings: Option<FpsSettingsView>,
     /// The maps' levelshots, for the room's vote cards.
     levelshots: Levelshots,
     /// The site the game is served from, which invites open.
@@ -386,6 +390,7 @@ impl LobbyPanel {
             queue_pending: false,
             room: None,
             room_chat: None,
+            settings: None,
             levelshots: Levelshots::new(url),
             site: site_base(url),
             seat_request: None,
@@ -1049,6 +1054,42 @@ fn cut_panel(painter: &Painter, r: Rect, cut: f32, stops: &[(f32, Color32)], bor
 }
 
 impl LobbyPanel {
+    /// Opens a page by name, as `settings` or `settings/video`: for
+    /// screenshots and the in-match Settings key.
+    pub fn open_page(&mut self, page: &str) {
+        let mut parts = page.split('/');
+        let (tab, sub, section) = (
+            parts.next().unwrap_or_default(),
+            parts.next().unwrap_or_default(),
+            parts.next().unwrap_or_default(),
+        );
+        self.tab = match tab {
+            "leaderboard" => Tab::Leaderboard,
+            "demos" => Tab::Demos,
+            "settings" => Tab::Settings,
+            "profile" => Tab::Profile,
+            "console" => Tab::Console,
+            _ => Tab::Play,
+        };
+        if self.tab == Tab::Settings {
+            let view = self.settings.get_or_insert_with(FpsSettingsView::default);
+            if let Some(p) = SETTINGS_PAGES.iter().find(|p| p.title.eq_ignore_ascii_case(sub)) {
+                view.show_page(p.id);
+            }
+            view.video.open_section(section);
+        }
+    }
+
+    /// The settings screen, open on `page`.
+    pub fn settings_view(&mut self) -> &mut FpsSettingsView {
+        self.settings.get_or_insert_with(FpsSettingsView::default)
+    }
+
+    /// Escape: closes what the page has open. True when it did.
+    pub fn back(&mut self) -> bool {
+        self.tab == Tab::Settings && self.settings.as_mut().is_some_and(FpsSettingsView::back)
+    }
+
     /// The rail and everything on it.
     fn rail(&mut self, ui: &mut egui::Ui, l: &Layout, style: &TwinStyle) {
         let painter = ui.painter().clone();
@@ -1176,8 +1217,11 @@ impl LobbyPanel {
 
         // `lobby__rail-mid--rooms`: what is left between.
         let mid = Rect::from_min_max(pos2(l.screen.min.x, y), pos2(l.screen.min.x + l.rail_w, card_top - 4.0));
-        // In a room, the lobby list gives way to the room's chat.
-        if self.room_chat.is_some() {
+        // On Settings, the page keys take the middle; in a room, the lobby
+        // list gives way to the room's chat.
+        if self.tab == Tab::Settings {
+            self.settings_nav(ui, l, mid);
+        } else if self.room_chat.is_some() {
             self.room_chat_panel(ui, l, mid);
         } else if mid.height() > 40.0 {
             self.rooms(ui, l, mid);
@@ -1224,6 +1268,32 @@ impl LobbyPanel {
         let name_h = name.size().y;
         painter.galley(pos2(text_left, y), name, cream());
         painter.galley(pos2(text_left, y + name_h + 3.0), meta, cream());
+    }
+
+    /// `.lobby__rail .fps-set-pages`: the settings' page keys in the rail.
+    fn settings_nav(&mut self, ui: &mut egui::Ui, l: &Layout, mid: Rect) {
+        let painter = ui.painter().clone();
+        let sub = hsla(250.0, 45.0, 8.0, 0.62);
+        let heading = line(&painter, "SETTINGS", 11.0, body(), sub, 0.26);
+        painter.galley(pos2(mid.left() + 24.0, mid.top() + 6.0), heading, sub);
+        let list = Rect::from_min_max(
+            pos2(mid.left() + 22.0, mid.top() + 6.0 + 11.0 + 14.0),
+            pos2(mid.left() + l.rail_w - RAIL_SKEW - 12.0 - 14.0, mid.bottom()),
+        );
+        let key_h = if l.h <= 900.0 { 44.0 } else { 58.0 };
+        let label_size = clamp_css(14.0, l.w * 0.01, 18.0);
+        let view = self.settings.get_or_insert_with(FpsSettingsView::default);
+        ui.scope_builder(egui::UiBuilder::new().max_rect(list), |ui| {
+            egui::ScrollArea::vertical()
+                .id_salt("settings-pages")
+                .auto_shrink([false, false])
+                .show(ui, |ui| {
+                    let top = ui.cursor().min;
+                    let r = Rect::from_min_size(top, vec2(list.width() - 4.0, 1.0));
+                    let used = view.page_nav(ui, r, key_h, label_size, !l.narrow);
+                    ui.allocate_rect(Rect::from_min_size(top, vec2(r.width(), used)), egui::Sense::hover());
+                });
+        });
     }
 
     /// The rooms list in the rail's middle.
@@ -1296,14 +1366,19 @@ impl LobbyPanel {
         let page_w = l.screen.max.x - page_left;
         // `lobby__ghost`: the mode's name, huge and outlined, off the bottom
         // left. It shows behind a room too, in the room's colour.
-        if self.tab == Tab::Play {
+        let ghost = match self.tab {
+            Tab::Play => Some(mode.title.to_uppercase()),
+            Tab::Settings => Some(self.settings_view().ghost().to_owned()),
+            _ => None,
+        };
+        if let Some(word) = ghost {
             let size = clamp_css(200.0, l.w * 0.25, 440.0);
             let at = pos2(page_left + RAIL_SKEW - page_w * 0.01, l.screen.max.y + l.h * 0.04);
             let clip = painter.with_clip_rect(Rect::from_min_max(pos2(page_left, l.screen.min.y), l.screen.max));
             paint_outline_text(
                 &clip,
                 DISPLAY_FONT,
-                &mode.title.to_uppercase(),
+                &word,
                 size,
                 -0.04 * size,
                 at,
@@ -1321,6 +1396,7 @@ impl LobbyPanel {
         }
         match self.tab {
             Tab::Play => self.play_page(ui, l, content, &mode),
+            Tab::Settings => self.settings_view().ui(ui, content),
             other => {
                 if not_yet_page(ui, content, other, &accent) {
                     *action = Some(PanelAction::WebLobby);

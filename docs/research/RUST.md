@@ -2744,6 +2744,12 @@ while the player is in one. Levelshots moved to `client/levelshots.rs` for
 the room and the loading screen. Glyph outlines come from skrifa (already
 in the tree through egui) for outlined display text.
 
+**Step 3's pages built.** The settings screen is native in the lobby:
+Controls (keyboard, mouse, actions, key capture), Controller, Gameplay,
+Video and Audio, on `settings_model.rs` and `controller_model.rs`, drawn
+with `client/settings/settings_fields.rs`. The fields stay in the game
+crate, as `SettingsFields.ts` is the game's.
+
 ### 0.3.5 (November 12, 2026)
 
 - **Fixes since 0.3.4**: the lobby page on NVIDIA under Linux still drew at
