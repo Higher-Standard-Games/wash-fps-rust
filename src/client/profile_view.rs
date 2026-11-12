@@ -853,7 +853,7 @@ impl ProfileView {
     }
 
     /// Answers that never came.
-    fn time_out(&mut self) {
+    pub fn tick(&mut self) {
         let late = |at: &mut Option<Instant>| at.is_some_and(|t| t.elapsed() > ANSWER_TIMEOUT) && at.take().is_some();
         if late(&mut self.renaming) {
             self.name_slot.tell(rename_failure_text("timeout"), Tone::Bad);
@@ -891,7 +891,6 @@ impl ProfileView {
         if self.frame.finished() || !self.frame.is_open() {
             return None;
         }
-        self.time_out();
         if self.showing() && ui.input(|i| i.key_pressed(egui::Key::Escape)) {
             self.back(account);
         }

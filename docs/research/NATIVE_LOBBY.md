@@ -167,7 +167,10 @@ tests, and can ship.
    `"stats": [{"id", "name", "data"}]` for the record.
 5. **The rest and the switch.** Welcome and terms, credits, music, the
    update notice. A parity review against section 2, then the default flips
-   to `native`.
+   to `native`. *Built so far:* the Welcome (`client/welcome_overlay.rs`,
+   `WelcomeOverlay.ts` on the Profile's frame): a new account is asked for
+   a name, or "Use my key" logs in with one, and the panel narrows onto
+   the rail. `--page welcome` or `welcome/restore` draws it.
 
 As a rough size, steps 1 and 3 are each about the size of the kit picker plus
 the Esc menu several times over. Steps 2, 4 and 5 are smaller. Each step

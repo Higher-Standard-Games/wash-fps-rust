@@ -77,6 +77,12 @@ impl IdentityFrame {
         self.closing = None;
     }
 
+    /// Open at once, full width: the Welcome is there from the start.
+    pub fn open_now(&mut self) {
+        self.opened = Instant::now().checked_sub(std::time::Duration::from_secs(1));
+        self.closing = None;
+    }
+
     /// `narrowOntoRail`: narrow back onto the rail, then go.
     pub fn close(&mut self) {
         if self.opened.is_some() && self.closing.is_none() {
@@ -584,6 +590,29 @@ pub fn go_key(
         sub_c,
     );
     (face.clicked, rect.bottom() + look.depth)
+}
+
+/// The width [`go_key`] takes for `label` and `hint`.
+#[must_use]
+pub fn go_key_width(painter: &Painter, label: &str, hint: &str, arrow: bool) -> f32 {
+    let l = label_galley(painter, label, 32.0, 0.12, Color32::WHITE);
+    let arrow_w = if arrow { 32.0 * 0.12 + 30.0 } else { 0.0 };
+    let hint_g = text(painter, &hint.to_uppercase(), 13.0, body(), Color32::WHITE, 13.0 * 0.12);
+    ((l.size().x + arrow_w).max(hint_g.size().x) + 96.0).max(260.0)
+}
+
+/// `welcome__note`: a short line beside the go key, 15px uppercase.
+pub fn note(painter: &Painter, left: f32, mid: f32, lines: &[&str]) {
+    let gs: Vec<_> = lines
+        .iter()
+        .map(|l| text(painter, &l.to_uppercase(), 15.0, body(), ink(0.62), 1.5))
+        .collect();
+    let line_h = 19.5;
+    let mut y = mid - line_h * gs.len() as f32 / 2.0;
+    for g in gs {
+        painter.galley(pos2(left, y + (line_h - g.size().y) / 2.0), g, Color32::WHITE);
+        y += line_h;
+    }
 }
 
 /// `welcome__alt`: a question, then small cream keys to where it leads.

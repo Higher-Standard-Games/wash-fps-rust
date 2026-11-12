@@ -56,6 +56,7 @@ use crate::client::room_chat_view::RoomChatView;
 use crate::client::settings::fps_settings_view::FpsSettingsView;
 use crate::client::settings::settings_model::SETTINGS_PAGES;
 use crate::client::washoi_style::{DISPLAY_FONT, display_family};
+use crate::client::welcome_overlay::WelcomeOverlay;
 
 /// `GameMode`: a mode's tile on the Play stage.
 #[derive(Debug, Clone, Copy)]
@@ -328,6 +329,8 @@ pub struct LobbyPanel {
     /// A key to log in with on the connection being opened, from the
     /// Profile's "Use another key" (`switchFpsAccount`).
     switch_key: Option<String>,
+    /// The switch is the Welcome's "Use my key", not the Profile's.
+    switch_from_welcome: bool,
     /// The account was deleted: the next login makes a new one.
     starting_over: bool,
     /// Failed logins in a row, for the offline backoff (`loginFailures`).
@@ -369,6 +372,8 @@ pub struct LobbyPanel {
     pub demos: DemosView,
     /// The Profile, over everything while open.
     pub profile: ProfileView,
+    /// A new player's name or key, over everything while open.
+    pub welcome: WelcomeOverlay,
     /// The page drawn last frame: a page coming into view asks again.
     shown_tab: Option<Tab>,
     /// The maps' levelshots, for the room's vote cards.
@@ -408,6 +413,7 @@ impl LobbyPanel {
             key_unreadable,
             key_unsaved: key_unreadable,
             switch_key: None,
+            switch_from_welcome: false,
             starting_over: false,
             login_failures: 0,
             retry_at: None,
@@ -433,6 +439,7 @@ impl LobbyPanel {
             leaderboard: LeaderboardView::new(),
             demos: DemosView::new(url),
             profile: ProfileView::new(),
+            welcome: WelcomeOverlay::new(),
             shown_tab: None,
             levelshots: Levelshots::new(url),
             site: site_base(url),
@@ -518,6 +525,8 @@ impl LobbyPanel {
         if let Some(room) = &mut self.room {
             room.tick();
         }
+        self.profile.tick();
+        self.welcome.tick();
     }
 
     fn on_event(&mut self, event: LobbyEvent) {
@@ -560,10 +569,10 @@ impl LobbyPanel {
         self.leaderboard.bind(false, false, None);
         self.demos.disconnected();
         if self.switch_key.take().is_some() {
-            self.profile
-                .switch_answered(Err("The lobby didn't answer. Try again.".into()), &account!(self));
+            self.switch_answered(Err("The lobby didn't answer. Try again.".into()));
         }
         self.profile.bind(false, false, &account!(self), &mut self.client);
+        self.welcome.disconnected();
         if !deliberate && !self.lobby_full && self.retry_at.is_none() {
             self.login_failures += 1;
             let seconds = offline_retry_delay_sec(self.login_failures, random01());
@@ -577,8 +586,7 @@ impl LobbyPanel {
     fn login_refused(&mut self, e: &AuthError) {
         // A key pasted on the Profile: say why, and log back in as before.
         if self.switch_key.take().is_some() {
-            self.profile
-                .switch_answered(Err(login_failure_text(&e.code)), &account!(self));
+            self.switch_answered(Err(login_failure_text(&e.code)));
             if e.code != "lobby_full" {
                 self.client.auth(self.key.as_deref());
                 return;
@@ -709,7 +717,10 @@ impl LobbyPanel {
                     &mut self.client,
                 );
                 if switched.is_some() {
-                    self.profile.switch_answered(Ok(self.name.clone()), &account!(self));
+                    self.switch_answered(Ok(self.name.clone()));
+                } else if w.key.is_some() {
+                    // `accountIsNew`: ask the new player who they are.
+                    self.welcome.open(&account!(self));
                 }
                 self.demos.connected(
                     feature("demoOwnership"),
@@ -823,8 +834,12 @@ impl LobbyPanel {
                     name.clone_into(&mut self.name);
                 }
                 self.profile.on_message(kind, message, &account!(self));
+                self.welcome.on_message(kind, message);
             }
-            "identity:error" => self.profile.on_message(kind, message, &account!(self)),
+            "identity:error" => {
+                self.profile.on_message(kind, message, &account!(self));
+                self.welcome.on_message(kind, message);
+            }
             // `forgetDeletedAccount`: drop the key here, so nothing logs back
             // in, and start over as a new player once the lobby has closed.
             "identity:deleted" => {
@@ -1113,8 +1128,8 @@ impl LobbyPanel {
         self.levelshots.poll(ui.ctx());
         let mut action = None;
         // The Profile over everything: the lobby shows only while it moves.
-        if self.profile.covers() {
-            self.profile_ui(ui, screen, time, accent.face, style);
+        if self.profile.covers() || self.welcome.covers() {
+            self.overlays_ui(ui, screen, time, accent.face, style);
             ui.ctx().request_repaint();
             return None;
         }
@@ -1132,9 +1147,7 @@ impl LobbyPanel {
         }
         self.stage(ui, &layout, style, &mut action);
         self.rail(ui, &layout, style);
-        if self.profile.is_open() {
-            self.profile_ui(ui, screen, time, accent.face, style);
-        }
+        self.overlays_ui(ui, screen, time, accent.face, style);
         // Keep the light drifting.
         ui.ctx().request_repaint();
         action
@@ -1142,13 +1155,27 @@ impl LobbyPanel {
 }
 
 impl LobbyPanel {
-    fn profile_ui(&mut self, ui: &mut egui::Ui, screen: Rect, time: f64, accent: Color32, style: &TwinStyle) {
-        let account = account!(self);
-        let answer = self
-            .profile
-            .ui(ui, screen, time, accent, style, &account, &mut self.client);
-        if let Some(ProfileAction::Switch(key)) = answer {
-            self.start_switch(&key);
+    /// The Profile and the Welcome, whichever is open, over the lobby.
+    fn overlays_ui(&mut self, ui: &mut egui::Ui, screen: Rect, time: f64, accent: Color32, style: &TwinStyle) {
+        if self.profile.is_open() {
+            let account = account!(self);
+            let answer = self
+                .profile
+                .ui(ui, screen, time, accent, style, &account, &mut self.client);
+            if let Some(ProfileAction::Switch(key)) = answer {
+                self.switch_from_welcome = false;
+                self.start_switch(&key);
+            }
+        }
+        if self.welcome.is_open() {
+            let account = account!(self);
+            let answer = self
+                .welcome
+                .ui(ui, screen, time, accent, style, &account, &mut self.client);
+            if let Some(ProfileAction::Switch(key)) = answer {
+                self.switch_from_welcome = true;
+                self.start_switch(&key);
+            }
         }
     }
 }
@@ -1231,6 +1258,14 @@ impl LobbyPanel {
             parts.next().unwrap_or_default(),
             parts.next().unwrap_or_default(),
         );
+        if tab == "welcome" {
+            if sub == "restore" {
+                self.welcome.open_restore(&account!(self));
+            } else {
+                self.welcome.open(&account!(self));
+            }
+            return;
+        }
         if tab == "profile" {
             self.open_profile(ProfileScreen::from_id(sub));
             return;
@@ -1266,14 +1301,22 @@ impl LobbyPanel {
     /// The stored key stays until the lobby welcomes the new one.
     fn start_switch(&mut self, pasted: &str) {
         let Some(key) = normalize_key(pasted) else {
-            self.profile
-                .switch_answered(Err(login_failure_text("unknown_key")), &account!(self));
+            self.switch_answered(Err(login_failure_text("unknown_key")));
             return;
         };
         self.connection_lost(true);
         self.retry_at = None;
         self.switch_key = Some(key);
         self.client = LobbyClient::connect(&self.url);
+    }
+
+    /// A switch's outcome, to whichever screen asked for it.
+    fn switch_answered(&mut self, answer: Result<String, String>) {
+        if std::mem::take(&mut self.switch_from_welcome) {
+            self.welcome.switch_answered(answer);
+        } else {
+            self.profile.switch_answered(answer, &account!(self));
+        }
     }
 
     /// The settings screen, open on `page`.
@@ -1283,6 +1326,10 @@ impl LobbyPanel {
 
     /// Escape: closes what the page has open. True when it did.
     pub fn back(&mut self) -> bool {
+        if self.welcome.showing() {
+            self.welcome.back(&account!(self));
+            return true;
+        }
         if self.profile.showing() {
             self.profile.back(&account!(self));
             return true;
@@ -2687,6 +2734,45 @@ mod tests {
         );
         assert!(file.exists());
         panel.leave();
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// A new player's Welcome against a real lobby: the name, then on
+    /// another computer "Use my key" with the first player's key.
+    #[test]
+    #[ignore = "needs a lobby"]
+    fn welcome_flows_against_a_lobby() {
+        let url = std::env::var("WASHOI_TEST_LOBBY").expect("WASHOI_TEST_LOBBY");
+        let dir = std::env::temp_dir().join(format!("washoi-welcome-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let mut panel = LobbyPanel::connect(&url, Some(dir.join("key")));
+        assert!(wait_for(&mut panel, 10, |p| p.account_id.is_some()), "login");
+        assert!(panel.welcome.showing(), "a new player is welcomed");
+        let name = format!("Wel{}", std::process::id() % 100_000);
+        panel.welcome.type_into(false, &name, &account!(panel));
+        panel.welcome.take_name(&mut panel.client);
+        assert!(wait_for(&mut panel, 10, |p| p.name == name), "named");
+        assert!(!panel.welcome.showing());
+        let (key, id) = (panel.key.clone().unwrap(), panel.account_id.clone());
+        panel.leave();
+
+        let file = dir.join("second");
+        let mut second = LobbyPanel::connect(&url, Some(file.clone()));
+        assert!(wait_for(&mut second, 10, |p| p.account_id.is_some()), "second login");
+        assert!(second.welcome.showing());
+        second.welcome.type_into(true, &key, &account!(second));
+        let ProfileAction::Switch(pasted) = second.welcome.use_key().expect("a whole key");
+        second.switch_from_welcome = true;
+        second.start_switch(&pasted);
+        assert!(wait_for(&mut second, 10, |p| p.account_id == id), "restored");
+        assert_eq!(second.name, name);
+        assert_eq!(
+            second.welcome.said(true),
+            (format!("Welcome back, {name}").as_str(), Tone::Ok)
+        );
+        assert!(!second.welcome.showing() || wait_for(&mut second, 3, |p| !p.welcome.showing()));
+        assert_eq!(std::fs::read_to_string(&file).unwrap().trim(), key);
+        second.leave();
         let _ = std::fs::remove_dir_all(&dir);
     }
 

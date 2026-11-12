@@ -69,3 +69,4 @@ pub mod teleport_effect;
 pub mod v2_network_client;
 pub mod washoi_style;
 pub mod weapon_view;
+pub mod welcome_overlay;
