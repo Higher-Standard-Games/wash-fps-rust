@@ -2710,6 +2710,23 @@ whole areas rather than single items. 0.2.0 closes them in two steps.
 
 ## 24. Progress log
 
+### 0.3.2 (November 12, 2026)
+
+- **Fixes since 0.3.1**: closed doors are drawn. The world now builds
+  `func_door` brush models where they stand, as SHAG's `handleFuncDoor`
+  does, so washoi_dm3's double door and snd6's door are no longer
+  see-through. Lifts (`func_plat`, or a `func_door` with angle -1 or -2)
+  and `func_rotating` models are still not drawn. Lightmapped faces whose
+  stage is `rgbGen vertex` take the lightmap as well, the vertex colour
+  tinting the base as SHAG's `applyLightmaps` leaves it, so dm3's rocks
+  are shaded instead of flat. The Esc menu's Settings key opens the
+  settings instead of showing the lobby. That fix is in the web lobby
+  (wash-fps: the overlay sat under the lobby's rail panel), so it arrives
+  with the web deploy.
+- **Engine**: shagger 09e0e81.
+- **Version 0.3.2**: a patch bump for fixes only, and the first release
+  that 0.3.1's update check can offer.
+
 ### 0.3.1 (November 12, 2026)
 
 - **Fixes since 0.3.0**: a dead player's ragdoll no longer shakes (each
