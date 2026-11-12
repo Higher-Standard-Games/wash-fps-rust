@@ -714,7 +714,20 @@ pub fn run(url: &str, mirror: &StorageMirror, after: Option<AfterMatch>) -> Resu
         error: None,
     };
     let ran = run_on_event_loop(&mut app);
+    if let Some(open) = &app.open {
+        crate::window::remember_placement(&open.window);
+    }
     app.open = None;
+    if !crate::window::WINDOW_SURVIVES_LOOPS {
+        // The window closed with the loop, and the page with it: the next
+        // lobby builds a new one in its own window. Without the page there
+        // are no settings over the match.
+        if let Some(host) = HOST.with(|h| h.borrow_mut().take()) {
+            drop(ManuallyDrop::into_inner(host));
+        }
+        GREETED.with(|g| g.set(false));
+        SETTINGS_READY.with(|r| r.set(false));
+    }
     ran?;
     if let Some(e) = app.error {
         return Err(e);

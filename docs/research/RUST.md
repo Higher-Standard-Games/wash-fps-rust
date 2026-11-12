@@ -2728,7 +2728,14 @@ whole areas rather than single items. 0.2.0 closes them in two steps.
   in the running process would take `unsafe`). Other drivers keep the
   faster DMA-BUF path. Without that renderer the page drew at a few frames
   a second, so whenever the variable is set the webview also turns off the
-  page's `backdrop-filter` blurs.
+  page's `backdrop-filter` blurs. On macOS the game showed no window after
+  the region screen: winit closes every window when an event loop exits
+  (winit #4135), and each screen runs its own loop on the one kept window.
+  There each screen now opens a new window where the last one was
+  (`window::WINDOW_SURVIVES_LOOPS`), and the lobby page is built anew in
+  each lobby, so the match menu has no page settings on macOS. The page's
+  web view is never dropped at exit: wry's teardown in a thread-local
+  destructor aborted a quit from the Dock as a crash.
 - **Engine**: shagger d1f92fa.
 - **Version 0.3.3**.
 
