@@ -35,7 +35,7 @@ jobs:
       run:
         shell: bash
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - uses: dtolnay/rust-toolchain@stable
       - if: runner.os == 'Linux'
         run: sudo apt-get update && sudo apt-get install -y libasound2-dev libudev-dev libwebkit2gtk-4.1-dev libxkbcommon-x11-0 mesa-vulkan-drivers xvfb imagemagick
@@ -52,7 +52,7 @@ jobs:
           else
             tools/lobby_smoke/run.sh $exe out
           fi
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         if: always()
         with:
           name: lobby-smoke-${{ matrix.runner }}
