@@ -2710,6 +2710,23 @@ whole areas rather than single items. 0.2.0 closes them in two steps.
 
 ## 24. Progress log
 
+### 0.3.5 (November 12, 2026)
+
+- **Fixes since 0.3.4**: the lobby page on NVIDIA under Linux still drew at
+  a few frames a second. 0.3.4's guess (GTK pumped only between our
+  frames) was wrong: GNOME's MiniBrowser draws the lobby at the same 4 fps
+  with `WEBKIT_DISABLE_DMABUF_RENDERER=1`, and at 61 without it, so the
+  cost is WebKitGTK's CPU path, not the embedding. There it repaints CSS
+  filters every frame, and the lobby's three `blur(90px)` light fields
+  (560 to 760 px) were most of it. On that path the page now goes without
+  `.lobby__light`, the boot screen's `.twin__light` and smoke, and every
+  `filter` and `backdrop-filter`; measured under Xvfb, 4 fps became 60.
+  Windows embeds WebView2 (Chromium) and keeps its GPU path; other Linux
+  drivers keep DMA-BUF. Getting DMA-BUF to work on NVIDIA (newer
+  WebKitGTK on native Wayland, while our child web view needs X11) or
+  embedding CEF on Linux are the ways to keep the effects there.
+- **Version 0.3.5**.
+
 ### 0.3.4 (November 12, 2026)
 
 - **Fixes since 0.3.3**: on macOS the arrow stayed drawn over a match.

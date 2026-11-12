@@ -65,15 +65,20 @@ pub fn nvidia_driver_loaded() -> bool {
 }
 
 /// With the DMA-BUF renderer off (`main`'s `webkit_environment`, or the
-/// player's own `WEBKIT_DISABLE_DMABUF_RENDERER`), WebKitGTK copies every
-/// frame and has been seen drawing the lobby page at a few frames a second;
-/// `backdrop-filter` blurs are the page's most expensive effect. There the
-/// page goes without them; its panels keep their tinted backgrounds, as
-/// with `hud_blur 0` (`HudBlur.ts`).
+/// player's own `WEBKIT_DISABLE_DMABUF_RENDERER`), WebKitGTK paints the page
+/// on the CPU and copies each frame, and repaints CSS filters every frame.
+/// The lobby's three blurred light fields (`.lobby__light`, `blur(90px)` on
+/// 560 to 760 px orbs) and the boot screen's own (`.twin__light`, the smoke)
+/// held the page to 4 fps; with them hidden and every `filter` and
+/// `backdrop-filter` off it drew at 60 (MiniBrowser shows the same 4 fps on
+/// the page, so the cost is WebKitGTK's, not the embedding's). There the page
+/// goes without them; its panels keep their tinted backgrounds, as with
+/// `hud_blur 0` (`HudBlur.ts`).
 const NO_BLUR: &str = r#"document.addEventListener("DOMContentLoaded", () => {
   const style = document.createElement("style");
   style.id = "washoi-native-no-blur";
-  style.textContent = "* { backdrop-filter: none !important; -webkit-backdrop-filter: none !important; }";
+  style.textContent = ".lobby__light, .twin__light, .ui-loading-smoke-container { display: none !important; } "
+    + "*, *::before, *::after { filter: none !important; backdrop-filter: none !important; -webkit-backdrop-filter: none !important; }";
   document.head.appendChild(style);
 });"#;
 
