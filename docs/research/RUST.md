@@ -2710,6 +2710,16 @@ whole areas rather than single items. 0.2.0 closes them in two steps.
 
 ## 24. Progress log
 
+### 0.3.1 (November 12, 2026)
+
+- **Fixes since 0.3.0**: a dead player's ragdoll no longer shakes (each
+  body is drawn between physics substeps; see the ragdoll entry below).
+  The credits dialog's Close button is styled again. That fix is in the
+  web lobby (wash-fps), which the native client shows, so it arrives with
+  the web deploy.
+- **Engine**: shagger 0c7fc9a.
+- **Version 0.3.1**: a patch bump for fixes only.
+
 ### 0.3.0 (November 12, 2026)
 
 - **New since 0.2.1**: hints for new players (the entry below), controllers
