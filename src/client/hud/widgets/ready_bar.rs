@@ -34,6 +34,9 @@ enum Shown {
 pub struct ReadyBar {
     shown: Shown,
     now: f64,
+    /// The ready key with a controller in hand (`getActionKeyLabel(READY)`);
+    /// F4 otherwise.
+    pub pad_key: Option<String>,
 }
 
 impl Default for ReadyBar {
@@ -41,6 +44,7 @@ impl Default for ReadyBar {
         Self {
             shown: Shown::Hidden,
             now: 0.0,
+            pad_key: None,
         }
     }
 }
@@ -77,11 +81,15 @@ impl ReadyBar {
     }
 
     /// The prompt's pieces: text before the key, the key, text after.
-    fn prompt(ready: bool) -> (&'static str, Option<&'static str>, &'static str) {
+    fn prompt(&self, ready: bool) -> (&'static str, Option<String>, &'static str) {
         if ready {
             ("READY! WAITING FOR OTHERS", None, "")
         } else {
-            ("PRESS", Some("F4"), "WHEN READY")
+            let key = self
+                .pad_key
+                .as_deref()
+                .map_or_else(|| "F4".to_owned(), str::to_uppercase);
+            ("PRESS", Some(key), "WHEN READY")
         }
     }
 
@@ -93,9 +101,9 @@ impl ReadyBar {
             Shown::Player { count, ready } => {
                 let count_w = 16.0 * s + hud.measure(&count.to_uppercase(), &Self::count_style(fonts)) + 20.0 * s;
                 let text = Self::text_style(fonts, [0.0; 4], 0.1);
-                let (before, key, after) = Self::prompt(*ready);
+                let (before, key, after) = self.prompt(*ready);
                 let mut prompt = 18.0 * s + hud.measure(before, &text) + 26.0 * s;
-                if let Some(key) = key {
+                if let Some(key) = key.as_deref() {
                     let gap = 4.0 * s;
                     prompt += gap
                         + 6.0 * s
@@ -219,10 +227,10 @@ impl FpsHudWidget for ReadyBar {
                     &style,
                 );
                 let text = Self::text_style(fonts, hsla(42.0, 30.0, 92.0, 0.85), 0.1);
-                let (before, key, after) = Self::prompt(*is_ready);
+                let (before, key, after) = self.prompt(*is_ready);
                 let mut at = left + count_w + 18.0 * s;
                 at += hud.text_in_box(at, y + 12.0 * s, 24.0 * s, before, &text);
-                if let Some(key) = key {
+                if let Some(key) = key.as_deref() {
                     at += 4.0 * s + 6.0 * s;
                     let key_w = 10.0 * s + hud.measure(key, &Self::key_style(fonts)) + 10.0 * s;
                     let key_h = 26.0 * s;

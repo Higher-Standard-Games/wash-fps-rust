@@ -2710,6 +2710,17 @@ whole areas rather than single items. 0.2.0 closes them in two steps.
 
 ## 24. Progress log
 
+### 0.3.0 (November 12, 2026)
+
+- **New since 0.2.1**: hints for new players (the entry below), controllers
+  (the entry below), the freefly spectator's card, the TIME and VITAL
+  captions turned sideways, demo fixes (the gun in hand, the close button,
+  beams from the muzzle), water reflections culled to the mirrored view,
+  and one song at a time when a match starts.
+- **Engine**: shagger 3938b8f.
+- **Version 0.3.0**: a minor bump, since controllers and hints are new
+  features rather than fixes.
+
 ### 0.2.1 released (November 11, 2026)
 
 - **Linux fixes** after 0.2.0 on Arch (Wayland): GTK held to X11 so the
@@ -2731,6 +2742,62 @@ whole areas rather than single items. 0.2.0 closes them in two steps.
 - **Version 0.2.0.**
 
 Newest first. Each entry names the commits and what proves them.
+
+### Controllers (November 12, 2026)
+
+- **shagger.** `input/gamepad_input.rs` ports `GamepadInput.ts` (the
+  standard layout's buttons and labels, the radial stick filter, the
+  edges, the neutral hand-off) with its tests; `input/gamepad_backend.rs`
+  reads the pads through gilrs in its place of `navigator.getGamepads()`
+  (a pad gilrs has a layout for reads as `standard`, sticks down
+  positive). `input/input_device.rs` ports `InputDevice.ts` without
+  touch's detection; natively a press on a pad picks the controller and a
+  key or a moving mouse picks the keyboard again, as the window has no
+  start-screen or Settings choice to pin it. `InputSystem` gains virtual
+  actions (`setVirtualAction`, `VirtualActions.test.ts`'s cases).
+  gilrs needs libudev's development files on Linux: CI and the release
+  install `libudev-dev`.
+- **wash-fps-rust.** `settings/controller_model.rs` ports the controller
+  actions (`gamepad:v1:<action>`, read from the same synced bindings the
+  lobby's Controller page writes) and the `in_pad_*` cvars;
+  `move_stick.rs` ports `MoveStick.ts`; `controller_input.rs` ports
+  `ControllerInput.ts`: in play the pad holds its actions, the move stick
+  goes its own angle (`moveAxis` in the command, with the keys it points
+  at), the look stick turns with the response curve, the speeds and the
+  aim's share, Menu opens the Esc menu and A starts play. In the Esc menu
+  the D-pad or the stick walks the keys, A presses, B resumes. Watching,
+  fire or the next weapon chases the next player and jump lets go; the
+  free camera flies on the stick. Commands carry `ASSISTED_AIM` with a
+  controller in hand. The hints, the spectator card and the ready bar name
+  the pad's buttons.
+- **Not ported.** Aim assist (`AimAssist.ts`): `in_pad_assist` is
+  registered but turns nothing. The lobby page's own pad navigation is the
+  webview's.
+- Proof: unit tests for the sampling, the device, virtual actions, the
+  controller's frame (actions, sticks, swap, menu repeat, scoreboard), the
+  move stick, the Esc menu's walk and the stick's command.
+
+### Hints for new players (November 12, 2026)
+
+- **HintCoach** (`client/hud/hint_coach.rs`) is the browser's coach, one
+  to one: movement, status and events in, a hint out, at most once a
+  minute each (scoreboard and grenade once). Its 20 tests are
+  `HintCoach.test.ts`'s.
+- **HintPanel** (`client/hud/widgets/hint_panel.rs`) draws `.fps-hint`:
+  the gold HINT cell, the dark slab, the player's own keys as gold caps
+  (two at most per action), wrapped at `min(640px, 50vw)`, 236 px up and
+  20 px in from the right. It fades in over 0.18 s (`ease-out`), holds
+  4.5 s and fades out over 0.6 s (`ease`). Hints show in warmup and the
+  first two minutes of a live match, never dead, watching or after the
+  match; `cl_hints 0` turns them off.
+- **The feed.** The window gives the panel each movement step, the keys,
+  fire held from the hip with a gun that aims, the water level, our
+  shots, a charge, fall damage, and fire held on an empty clip with ammo
+  in reserve (where `FPSPlayer` reloads by itself). The panel's clock is
+  the HUD's frame time.
+- Proof: `hint_coach` and `hint_panel` unit tests, and
+  `a_hint_shows_above_the_weapons` in `tests/hud_render.rs` (writes the
+  frame to `HUD_HINT_PNG`).
 
 ### Demo fixes, sideways captions (November 11, 2026)
 

@@ -57,6 +57,8 @@ pub mod buttons {
     pub const USE: u16 = 1 << 11;
     /// ADS asked for by the trigger on a weapon that cannot fire from the hip.
     pub const AUTO_ADS: u16 = 1 << 12;
+    /// Playing with a controller (or touch): the input claims aim assist.
+    pub const ASSISTED_AIM: u16 = 1 << 13;
 }
 
 /// `PlayerInputState`: what the keys and mouse ask for this tick.
@@ -81,6 +83,11 @@ pub struct PlayInput {
     pub pitch: f64,
     /// 1 to 9 picks a weapon; 0 keeps the one in hand.
     pub weapon_slot: u8,
+    /// A move stick's direction, unit length (`moveAxis`): movement goes
+    /// its way rather than the keys'.
+    pub move_axis: Option<crate::client::move_stick::MoveAxis>,
+    /// Played with a controller (`assistedAim`).
+    pub assisted_aim: bool,
 }
 
 /// `bomb?.disabledModels`: the brush models a detonation took out.
@@ -117,6 +124,7 @@ pub fn command_for(input: &PlayInput, tick: u32) -> Command {
         (input.reload, buttons::RELOAD),
         (input.use_key, buttons::USE),
         (input.fire && input.alt_fire && input.auto_ads, buttons::AUTO_ADS),
+        (input.assisted_aim, buttons::ASSISTED_AIM),
     ] {
         if on {
             b |= bit;
@@ -129,17 +137,23 @@ pub fn command_for(input: &PlayInput, tick: u32) -> Command {
         dir[0] += v[0] * k;
         dir[1] += v[1] * k;
     };
-    if input.forward {
-        add(forward, 1.0);
-    }
-    if input.backward {
-        add(forward, -1.0);
-    }
-    if input.left {
-        add(right, -1.0);
-    }
-    if input.right {
-        add(right, 1.0);
+    // A stick's own angle, or the keys.
+    if let Some(axis) = input.move_axis {
+        add(forward, axis.forward);
+        add(right, axis.right);
+    } else {
+        if input.forward {
+            add(forward, 1.0);
+        }
+        if input.backward {
+            add(forward, -1.0);
+        }
+        if input.left {
+            add(right, -1.0);
+        }
+        if input.right {
+            add(right, 1.0);
+        }
     }
     // `Math.sqrt` is exact in both; the division matches V8's.
     let len = (dir[0] * dir[0] + dir[1] * dir[1]).sqrt();
@@ -737,6 +751,24 @@ mod tests {
         assert_eq!(c.tick, 7);
         let still = command_for(&PlayInput::default(), 0);
         assert_eq!(still.direction, [0.0, 0.0, 0.0]);
+    }
+
+    #[test]
+    fn a_move_stick_goes_its_own_way_and_claims_assisted_aim() {
+        // 30° right of forward, yaw 0: the stick's angle, not the keys'.
+        let (sin, cos) = (0.5, 3f64.sqrt() / 2.0);
+        let input = PlayInput {
+            forward: true,
+            move_axis: Some(crate::client::move_stick::MoveAxis {
+                forward: cos,
+                right: sin,
+            }),
+            assisted_aim: true,
+            ..PlayInput::default()
+        };
+        let c = command_for(&input, 0);
+        assert!((c.direction[0] - sin).abs() < 1e-12 && (c.direction[2] - cos).abs() < 1e-12);
+        assert_eq!(c.buttons, buttons::FORWARD | buttons::ASSISTED_AIM);
     }
 
     #[test]

@@ -30,6 +30,7 @@ use crate::client::hud::widgets::event_feed::EventFeed;
 use crate::client::hud::widgets::frag_counter::FragCounter;
 use crate::client::hud::widgets::frag_message::FragMessage;
 use crate::client::hud::widgets::gametype_badge::GametypeBadge;
+use crate::client::hud::widgets::hint_panel::HintPanel;
 use crate::client::hud::widgets::phase_message::PhaseMessage;
 use crate::client::hud::widgets::pickup_prompt::PickupPrompt;
 use crate::client::hud::widgets::pickup_toast::PickupToast;
@@ -76,9 +77,11 @@ pub struct FpsHud {
     pub pickup_prompt: PickupPrompt,
     powerup_timer: PowerupTimer,
     air: AirMeter,
-    ready: ReadyBar,
+    pub ready: ReadyBar,
     spectator_bar: SpectatorBar,
-    spectator_cue: SpectatorCue,
+    pub spectator_cue: SpectatorCue,
+    /// `FPSHintPanel`: tips for new players, fed by the window.
+    pub hints: HintPanel,
     round_result: RoundResult,
     bomb_status: BombStatus,
     death: DeathScreen,
@@ -154,6 +157,7 @@ impl FpsHud {
             round_result: RoundResult::default(),
             spectator_bar: SpectatorBar::default(),
             spectator_cue: SpectatorCue::default(),
+            hints: HintPanel::default(),
             bomb_status: BombStatus::default(),
             death: DeathScreen::default(),
             damage: DamageOverlay::default(),
@@ -431,6 +435,8 @@ impl FpsHud {
         self.spectator_bar.draw(&mut self.hud, &fonts, vw / 2.0, vh - 210.0 * s);
         // `.fps-spectator-cue`: bottom left, 200 px up.
         self.spectator_cue.draw(&mut self.hud, &fonts, 28.0 * s, vh - 200.0 * s);
+        // `.fps-hint`: above the weapons, 236 px up and 20 px in.
+        self.hints.draw(&mut self.hud, &fonts, vw - 20.0 * s, vh - 236.0 * s);
         self.scoreboard.draw(&mut self.hud, &fonts, 0.0, 0.0);
         // `.fps-chat`: clear of the bottom bar, over the scoreboard's veil.
         self.chat.draw(
@@ -472,10 +478,11 @@ impl FpsHud {
         }
     }
 
-    fn widgets_mut(&mut self) -> [&mut dyn FpsHudWidget; 20] {
+    fn widgets_mut(&mut self) -> [&mut dyn FpsHudWidget; 21] {
         [
             &mut self.spectator_bar,
             &mut self.spectator_cue,
+            &mut self.hints,
             &mut self.powerup_timer,
             &mut self.air,
             &mut self.ready,
