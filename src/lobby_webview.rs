@@ -126,24 +126,8 @@ pub struct AfterMatch {
     pub demo: bool,
 }
 
-/// Where the lobby page sent this player.
-#[derive(Debug, Clone, PartialEq)]
-pub struct LobbyChoice {
-    pub server_url: String,
-    pub map: String,
-    pub admission_ticket: Option<String>,
-    /// The account's name, to join the game server as.
-    pub name: String,
-    /// True to play; false to watch.
-    pub play: bool,
-    /// A recording to play instead (the Demos page), saved on disk.
-    pub demo: Option<std::path::PathBuf>,
-    /// Its highlight reel instead, about this many minutes long.
-    pub reel: Option<f64>,
-    /// The side this player took in the room (`alpha` or `bravo`), for the
-    /// game server to honour on join; `None` in a mode without teams.
-    pub team: Option<String>,
-}
+/// Where the lobby page sent this player: the native lobby's choice.
+pub use washoi::client::lobby_panel::LobbyChoice;
 
 /// What the lobby decided.
 #[derive(Debug)]

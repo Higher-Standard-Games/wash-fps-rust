@@ -2730,6 +2730,14 @@ screen the `resumed` winit sends only once. The window, its fullscreen
 Space and the lobby page now live through the match there too, as on
 Windows and Linux.
 
+**Step 1 built.** The rail, the Play page (mode tiles, Find, quick play,
+rooms list, lobby chat) and the handoff to a match and back run natively
+when `ui_lobby` is `native` (`--lobby native` sets it; it is a `ui_` cvar,
+so it stays on this machine). One `LobbyPanel` lives for the session, so
+the connection, room and chat survive each match. The pause menu's keys
+became shagger's `RaisedKey` and `TextField` components, shared with the
+lobby. The room card is still the plain `match_lobby_view.rs` until step 2.
+
 ### 0.3.5 (November 12, 2026)
 
 - **Fixes since 0.3.4**: the lobby page on NVIDIA under Linux still drew at

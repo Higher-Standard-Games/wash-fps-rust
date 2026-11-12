@@ -1,6 +1,9 @@
 # Native lobby and settings: plan
 
-Status: proposal for review (November 12, 2026). Nothing here is built yet.
+Status: step 1 built (November 12, 2026), behind `ui_lobby native`
+(`washoi --lobby native` once; the cvar persists). The defaults for the
+questions in section 7: the welcome guide stays web-only until step 5, the
+native lobby opens straight onto Play, and the web view goes at parity.
 
 ## 1. Why reverse the November 3 decision
 
@@ -107,7 +110,12 @@ tests, and can ship.
 1. **Shell and play.** Widget set in shagger; rail and nav; play stage with
    mode tiles, Find and quick play; login with the key; lobby chat; rooms
    list with watch and drop-in; handoff to the match and back. With this
-   step, a player can live in the native lobby.
+   step, a player can live in the native lobby. *Built:* shagger's
+   `ui/components/raised_key.rs` and `text_field.rs` (the Esc menu now
+   draws its keys with them too), `client/lobby_panel.rs` and
+   `lobby_rooms.rs`, and `src/lobby_screen.rs`. The other tabs offer the web
+   lobby until their step lands. `washoi menu <lobby> --screenshot F --play`
+   presses Quick play headless and joins the match it is handed.
 2. **Rooms.** The room view (restyle `match_lobby_view.rs`), private lobbies,
    invites, bots, the full-server notice, deep links.
 3. **Settings.** All five pages on `settings_model.rs`, key capture, the
