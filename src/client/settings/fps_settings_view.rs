@@ -423,3 +423,100 @@ pub fn choice_seg(ui: &mut egui::Ui, head: Head<'_>, choices: &[CvarChoice], hel
         with_cvars(|c| apply_choice(c, &choices[i]));
     }
 }
+
+/// The settings over a match (`inMatch`): the stage's backdrop, the page
+/// keys and Back down the left, the page at the right. Video is locked.
+/// True when Back was pressed.
+pub fn over_match(ui: &mut egui::Ui, view: &mut FpsSettingsView, kicker: &str) -> bool {
+    use shagger::ui::components::lobby_twin::{paint_backdrop, paint_light_in};
+    let screen = ui.ctx().content_rect();
+    let layer = egui::LayerId::new(egui::Order::Middle, egui::Id::NULL.with("settings-over-match"));
+    let mut back = false;
+    let time = ui.input(|i| i.time);
+    ui.scope_builder(egui::UiBuilder::new().layer_id(layer).max_rect(screen), |ui| {
+        // Block the game under it.
+        let _ = ui.interact(
+            screen,
+            egui::Id::NULL.with("settings-over-match-block"),
+            egui::Sense::click_and_drag(),
+        );
+        let painter = ui.painter().clone();
+        paint_backdrop(&painter, screen);
+        paint_light_in(&painter, screen, time, hsl(276.0, 90.0, 64.0));
+        let left_w = (screen.width() * 0.2).clamp(240.0, 320.0);
+        let side = Rect::from_min_size(
+            screen.min + vec2(28.0, 30.0),
+            vec2(left_w - 28.0, screen.height() - 60.0),
+        );
+        let k = line(
+            &painter,
+            &kicker.to_uppercase(),
+            12.0,
+            body(),
+            hsla(45.0, 100.0, 95.0, 0.6),
+            0.2,
+        );
+        let kh = k.size().y;
+        painter.galley(side.min, k, cream());
+        let used = view.page_nav(
+            ui,
+            Rect::from_min_size(side.min + vec2(0.0, kh + 22.0), vec2(side.width(), 1.0)),
+            48.0,
+            15.0,
+            side.width() > 280.0,
+        );
+        let back_r = Rect::from_min_size(
+            pos2(side.left(), side.top() + kh + 22.0 + used + 18.0),
+            vec2(side.width(), 48.0),
+        );
+        let face = RaisedKey::new("settings-back", back_r, KeyLook::cream().sm()).show(ui);
+        KeyText::new("Back", "Esc", display_family(), body())
+            .size(15.0, 12.0)
+            .pad(24.0, 20.0)
+            .paint(&painter, &face);
+        back = face.clicked;
+        let content = Rect::from_min_max(
+            pos2(screen.left() + left_w + 28.0, screen.top() + 30.0),
+            screen.max - vec2(40.0, 30.0),
+        );
+        view.ui(ui, content);
+    });
+    ui.ctx().request_repaint();
+    back
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn every_page_draws_and_over_a_match_video_is_locked() {
+        let ctx = egui::Context::default();
+        let mut view = FpsSettingsView::new(true);
+        for page in SETTINGS_PAGES {
+            view.show_page(page.id);
+            let input = egui::RawInput {
+                screen_rect: Some(Rect::from_min_size(pos2(0.0, 0.0), vec2(1600.0, 900.0))),
+                ..Default::default()
+            };
+            let mut back = true;
+            let mut output = ctx.run_ui(input, |ui| back = over_match(ui, &mut view, "Duel · Dojo"));
+            output.textures_delta.clear();
+            assert!(!back);
+            assert!(!output.shapes.is_empty());
+        }
+        assert!(view.is_locked(SettingsPageId::Video));
+        assert!(!view.is_locked(SettingsPageId::Audio));
+    }
+
+    #[test]
+    fn a_reset_asks_once() {
+        let mut view = FpsSettingsView::new(false);
+        view.arm_or_run(Reset::Page, 0.0);
+        assert!(view.armed.is_some());
+        assert!(view.toast.is_none());
+        view.arm_or_run(Reset::Page, 1.0);
+        assert!(view.armed.is_none());
+        assert!(view.toast.as_ref().is_some_and(|t| t.1.contains("back to defaults")));
+    }
+}

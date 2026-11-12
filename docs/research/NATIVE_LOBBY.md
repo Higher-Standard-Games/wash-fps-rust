@@ -137,8 +137,10 @@ tests, and can ship.
    Use controller keys are left out, since the native device follows the
    last input. Each side's 3D figure on Gameplay is its name in the side's
    outline for now. `washoi menu ... --page settings/video/effects` opens a
-   page for screenshots. Settings sync was already native (step 1). Still
-   to do: the in-match Settings key, which opens the web page today.
+   page for screenshots. Settings sync was already native (step 1). With
+   `ui_lobby native` the in-match Settings key draws the same view over
+   the match (`fps_settings_view::over_match`), with Video locked as in
+   the browser and Esc stepping back out of a sheet first.
 4. **Profile, leaderboard, demos.**
 5. **The rest and the switch.** Welcome and terms, credits, music, the
    update notice. A parity review against section 2, then the default flips

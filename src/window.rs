@@ -203,6 +203,8 @@ struct App {
     loadout_picker: LoadoutPicker,
     /// The lobby page's settings are up over the match.
     settings_open: bool,
+    /// With the native lobby, its settings screen over the match instead.
+    native_settings: Option<washoi::client::settings::fps_settings_view::FpsSettingsView>,
     /// The match as the menu names it (gametype · map).
     menu_kicker: String,
     /// A demo's highlight reel, driving the demo and the camera.
@@ -339,7 +341,17 @@ impl App {
             return false;
         }
         // The page has the keyboard; what reaches the window is not the game's.
+        // Over the native settings, Escape closes what the page has open,
+        // then the settings, back to the menu.
         if self.settings_open {
+            if code == KeyCode::Escape
+                && event.state == ElementState::Pressed
+                && !event.repeat
+                && let Some(view) = &mut self.native_settings
+                && !view.back()
+            {
+                self.close_native_settings();
+            }
             return true;
         }
         // The kit dialog has the keys; Escape backs out when it can.
@@ -385,6 +397,10 @@ impl App {
             PauseMenuAction::Settings => {
                 if crate::lobby_webview::open_match_settings(&self.menu_kicker) {
                     self.settings_open = true;
+                } else if native_lobby() {
+                    self.native_settings =
+                        Some(washoi::client::settings::fps_settings_view::FpsSettingsView::new(true));
+                    self.settings_open = true;
                 } else {
                     self.pause_menu.open();
                 }
@@ -393,6 +409,17 @@ impl App {
                 println!("lobby: back to the lobby");
                 self.leave = true;
             }
+        }
+    }
+
+    /// Back from the native settings to the match menu.
+    fn close_native_settings(&mut self) {
+        if let Some(mut view) = self.native_settings.take() {
+            view.pause_controls();
+        }
+        self.settings_open = false;
+        if self.in_play() {
+            self.pause_menu.open();
         }
     }
 
@@ -1561,7 +1588,7 @@ impl App {
             }
             _ => (String::new(), String::new()),
         };
-        self.pause_menu.settings = crate::lobby_webview::match_settings_available();
+        self.pause_menu.settings = crate::lobby_webview::match_settings_available() || native_lobby();
         // `matchMenuModeKeys`: Loadout, in a mode with kits, hinted with the kit.
         self.pause_menu.loadout = match feed {
             Some(Feed::Play(p, _)) if p.match_state().loadout_mode().is_some() => Some(
@@ -1571,6 +1598,9 @@ impl App {
             _ => None,
         };
         let pause_menu = &mut self.pause_menu;
+        let native_settings = &mut self.native_settings;
+        let mut settings_back = false;
+        let settings_kicker = kicker.clone();
         let loadout = &mut self.loadout_picker;
         let mut loadout_outcome = None;
         let demo_hud = self.demo_hud.as_ref().filter(|_| cards);
@@ -1588,6 +1618,9 @@ impl App {
                 demo_action = hud.ui(ui.ctx(), demo, followed.map(|id| (id, name.unwrap_or(id))));
             }
             menu_action = pause_menu.ui(ui.ctx(), &kicker, &player);
+            if let Some(view) = native_settings {
+                settings_back = washoi::client::settings::fps_settings_view::over_match(ui, view, &settings_kicker);
+            }
             loadout_outcome = loadout.ui(ui.ctx());
             console.ui(ui.ctx());
         });
@@ -1616,8 +1649,11 @@ impl App {
             self.loadout_outcome(outcome);
         }
         self.offer_loadout();
+        if settings_back {
+            self.close_native_settings();
+        }
         // Back from the settings is back to the match menu (`FPSHud`).
-        if self.settings_open && crate::lobby_webview::poll_match_settings() {
+        if self.settings_open && self.native_settings.is_none() && crate::lobby_webview::poll_match_settings() {
             self.settings_open = false;
             if self.in_play() {
                 self.pause_menu.open();
@@ -2459,6 +2495,7 @@ pub fn run(
         pause_menu: PauseMenu::default(),
         loadout_picker: LoadoutPicker::default(),
         settings_open: false,
+        native_settings: None,
         menu_kicker: String::new(),
         reel,
         overlay: ReelOverlay::default(),
@@ -2519,4 +2556,10 @@ fn name_order(
     let mut ids: Vec<&str> = drawn.iter().map(|(id, _, _)| id.as_str()).collect();
     ids.sort_by(|a, b| locale_compare(&name(a), &name(b)).then(a.cmp(b)));
     ids.into_iter().map(str::to_owned).collect()
+}
+
+/// The player chose the native lobby (`ui_lobby native`), whose settings
+/// open over a match natively too.
+fn native_lobby() -> bool {
+    with_cvars(|c| c.get_string("ui_lobby") == "native")
 }
