@@ -2717,8 +2717,18 @@ on every platform: NVIDIA under Linux, the macOS window, the WebKitGTK
 dependency. [NATIVE_LOBBY.md](NATIVE_LOBBY.md) proposes bringing the lobby
 and settings back as native screens, in pieces behind a `ui_lobby` switch,
 on the style of the native loading screen and Esc menu. The removed egui
-lobby's look is not restored; only its logic is reused. It is under review
-and not built yet.
+lobby's look is not restored; only its logic is reused.
+
+**One window on macOS.** Every screen change (lobby, loading screen, match
+and back) moved the fullscreen game to another desktop: winit closes every
+window when an event loop exits (winit #4135), so each screen opened a new
+one (0.3.3's `WINDOW_SURVIVES_LOOPS`). On macOS the event loop now never
+exits between screens: `window::run_on_event_loop` pumps it
+(`pump_app_events`) until the screen calls `window::end_screen`, which
+every screen calls in place of `event_loop.exit()`, and sends each later
+screen the `resumed` winit sends only once. The window, its fullscreen
+Space and the lobby page now live through the match there too, as on
+Windows and Linux.
 
 ### 0.3.5 (November 12, 2026)
 

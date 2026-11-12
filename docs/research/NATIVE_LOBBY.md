@@ -16,8 +16,9 @@ share one lobby. On November 4 the plain egui lobby was removed
 - **Linux, everywhere**: the AppImage needs WebKitGTK 4.1 on the system, and
   the web view needs X11, so Wayland desktops run the game on XWayland.
 - **macOS**: the page's size did not follow the window in fullscreen on a
-  notched MacBook (fixed in 0.3.4). The page has to be rebuilt for every
-  screen, because winit closes windows when an event loop ends.
+  notched MacBook (fixed in 0.3.4). Each screen change moved the game to
+  another desktop, because winit closed the window when a screen's event
+  loop ended (fixed by pumping the loop there; RUST.md).
 - **Everywhere**: a second copy of the input, focus, fullscreen and cursor
   handling across the bridge; 150 to 300 MB for the web view's processes; and
   a second renderer to keep working on each OS.

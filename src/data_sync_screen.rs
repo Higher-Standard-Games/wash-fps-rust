@@ -502,7 +502,7 @@ impl ApplicationHandler for SyncApp {
             }
             Err(why) => {
                 self.error = Some(why);
-                event_loop.exit();
+                crate::window::end_screen(event_loop);
             }
         }
     }
@@ -518,11 +518,11 @@ impl ApplicationHandler for SyncApp {
         match event {
             WindowEvent::CloseRequested => {
                 self.outcome = Some(SyncOutcome::Quit);
-                event_loop.exit();
+                crate::window::end_screen(event_loop);
             }
             _ if escape => {
                 self.outcome = Some(SyncOutcome::Quit);
-                event_loop.exit();
+                crate::window::end_screen(event_loop);
             }
             WindowEvent::Resized(size) => {
                 if let Some(m) = &mut self.open {
@@ -534,7 +534,7 @@ impl ApplicationHandler for SyncApp {
             WindowEvent::RedrawRequested => {
                 self.redraw();
                 if self.outcome.is_some() || self.error.is_some() {
-                    event_loop.exit();
+                    crate::window::end_screen(event_loop);
                 }
             }
             _ => {}

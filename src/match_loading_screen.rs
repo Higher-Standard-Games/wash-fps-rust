@@ -445,7 +445,7 @@ impl ApplicationHandler for LoadingApp {
             }
             Err(why) => {
                 self.error = Some(why);
-                event_loop.exit();
+                crate::window::end_screen(event_loop);
             }
         }
     }
@@ -484,7 +484,7 @@ impl ApplicationHandler for LoadingApp {
             _ => {}
         }
         if self.outcome.is_some() || self.error.is_some() {
-            event_loop.exit();
+            crate::window::end_screen(event_loop);
         }
     }
 

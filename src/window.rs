@@ -44,6 +44,7 @@ use winit::dpi::{LogicalSize, PhysicalPosition, PhysicalSize};
 use winit::event::{DeviceEvent, DeviceId, ElementState, MouseButton, MouseScrollDelta, WindowEvent};
 use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop};
 use winit::keyboard::{KeyCode, PhysicalKey};
+#[cfg(not(target_os = "macos"))]
 use winit::platform::run_on_demand::EventLoopExtRunOnDemand;
 use winit::window::{CursorGrabMode, Fullscreen, Window, WindowId};
 
@@ -1807,7 +1808,7 @@ impl ApplicationHandler for App {
         }
         if let Err(why) = self.open(event_loop) {
             self.error = Some(why);
-            event_loop.exit();
+            end_screen(event_loop);
         }
     }
 
@@ -1847,7 +1848,7 @@ impl ApplicationHandler for App {
             _ => {}
         }
         match event {
-            WindowEvent::CloseRequested => event_loop.exit(),
+            WindowEvent::CloseRequested => end_screen(event_loop),
             WindowEvent::Resized(size) => {
                 if let Some(s) = &mut self.surface {
                     s.config.width = size.width.max(1);
@@ -1880,7 +1881,7 @@ impl ApplicationHandler for App {
                         if self.captured {
                             self.set_captured(false);
                         } else {
-                            event_loop.exit();
+                            end_screen(event_loop);
                         }
                     }
                     ElementState::Pressed if !event.repeat && self.reel_key(code) => {}
@@ -1914,7 +1915,7 @@ impl ApplicationHandler for App {
                     });
                 if home {
                     println!("lobby: back to the lobby");
-                    event_loop.exit();
+                    end_screen(event_loop);
                 } else if !self.captured
                     && state == ElementState::Pressed
                     && !self.opened_up
@@ -1950,7 +1951,7 @@ impl ApplicationHandler for App {
             WindowEvent::RedrawRequested => {
                 self.redraw();
                 if self.error.is_some() {
-                    event_loop.exit();
+                    end_screen(event_loop);
                 }
             }
             _ => {}
@@ -1984,20 +1985,20 @@ impl ApplicationHandler for App {
 
     fn about_to_wait(&mut self, event_loop: &ActiveEventLoop) {
         if self.leave {
-            event_loop.exit();
+            end_screen(event_loop);
             return;
         }
         if let Some(limit) = self.seconds
             && self.started.elapsed() >= Duration::from_secs_f64(limit)
         {
-            event_loop.exit();
+            end_screen(event_loop);
             return;
         }
         // The bench ends when it has its frames, or the demo does.
         if let Some(b) = &self.bench
             && (b.done() || self.feed.as_ref().is_some_and(|f| f.ended().is_some()))
         {
-            event_loop.exit();
+            end_screen(event_loop);
             return;
         }
         if let Some(s) = &self.surface {
@@ -2029,10 +2030,55 @@ pub fn run_on_event_loop(app: &mut impl ApplicationHandler) -> Result<(), String
         }
         let event_loop = slot.as_mut().expect("made above");
         event_loop.set_control_flow(ControlFlow::Poll);
+        SCREEN_ENDED.with(|e| e.set(false));
+        let mut app = Exiting {
+            app,
+            resume: cfg!(target_os = "macos") && LOOP_STARTED.with(Cell::get),
+        };
+        LOOP_STARTED.with(|s| s.set(true));
+        #[cfg(target_os = "macos")]
+        {
+            // The loop never exits between screens here: an exit closes
+            // every window (winit #4135), and with it the fullscreen Space,
+            // so each screen would land the player on another desktop. It
+            // is pumped instead, until the screen ends or the app quits.
+            use winit::platform::pump_events::{EventLoopExtPumpEvents, PumpStatus};
+            loop {
+                if let PumpStatus::Exit(_) = event_loop.pump_app_events(None, &mut app) {
+                    break;
+                }
+                if SCREEN_ENDED.with(Cell::get) {
+                    break;
+                }
+            }
+            shagger::core::atomic_file::flush_pending(Duration::from_secs(2));
+            Ok(())
+        }
+        #[cfg(not(target_os = "macos"))]
         event_loop
-            .run_app_on_demand(&mut Exiting(app))
+            .run_app_on_demand(&mut app)
             .map_err(|e| format!("event loop: {e}"))
     })
+}
+
+thread_local! {
+    /// The running screen called [`end_screen`].
+    static SCREEN_ENDED: Cell<bool> = const { Cell::new(false) };
+    /// A screen has run on the event loop before: the next one is not sent
+    /// `resumed` by winit when the loop is pumped (macOS), so it is sent here.
+    static LOOP_STARTED: Cell<bool> = const { Cell::new(false) };
+}
+
+/// Ends the screen running on the event loop: [`run_on_event_loop`] returns.
+/// On macOS the loop itself keeps going (pumped), so the window and its
+/// fullscreen Space stay for the next screen; elsewhere it exits, and the
+/// kept window stays all the same.
+pub fn end_screen(event_loop: &ActiveEventLoop) {
+    SCREEN_ENDED.with(|e| e.set(true));
+    #[cfg(not(target_os = "macos"))]
+    event_loop.exit();
+    #[cfg(target_os = "macos")]
+    let _ = event_loop;
 }
 
 thread_local! {
@@ -2064,17 +2110,26 @@ fn starts_fullscreen() -> bool {
 /// process from inside the loop (Cmd+Q on macOS terminates the app there,
 /// so nothing after the loop runs), the settings still on their way to
 /// disk land first.
-struct Exiting<'a, A>(&'a mut A);
+struct Exiting<'a, A> {
+    app: &'a mut A,
+    /// Send `resumed` with the first events: the pumped loop (macOS) sends
+    /// it only once, to the first screen.
+    resume: bool,
+}
 
 impl<A: ApplicationHandler> ApplicationHandler for Exiting<'_, A> {
     fn new_events(&mut self, event_loop: &ActiveEventLoop, cause: winit::event::StartCause) {
-        self.0.new_events(event_loop, cause);
+        self.app.new_events(event_loop, cause);
+        if std::mem::take(&mut self.resume) {
+            self.app.resumed(event_loop);
+        }
     }
     fn resumed(&mut self, event_loop: &ActiveEventLoop) {
-        self.0.resumed(event_loop);
+        self.resume = false;
+        self.app.resumed(event_loop);
     }
     fn user_event(&mut self, event_loop: &ActiveEventLoop, event: ()) {
-        self.0.user_event(event_loop, event);
+        self.app.user_event(event_loop, event);
     }
     fn window_event(&mut self, event_loop: &ActiveEventLoop, window_id: WindowId, event: WindowEvent) {
         if let WindowEvent::ModifiersChanged(m) = &event {
@@ -2095,25 +2150,25 @@ impl<A: ApplicationHandler> ApplicationHandler for Exiting<'_, A> {
             }
             return;
         }
-        self.0.window_event(event_loop, window_id, event);
+        self.app.window_event(event_loop, window_id, event);
     }
     fn device_event(&mut self, event_loop: &ActiveEventLoop, device_id: DeviceId, event: DeviceEvent) {
-        self.0.device_event(event_loop, device_id, event);
+        self.app.device_event(event_loop, device_id, event);
     }
     fn about_to_wait(&mut self, event_loop: &ActiveEventLoop) {
         // The lobby page keeps running under every screen (GTK on Linux).
         shagger::webview::pump();
-        self.0.about_to_wait(event_loop);
+        self.app.about_to_wait(event_loop);
     }
     fn suspended(&mut self, event_loop: &ActiveEventLoop) {
-        self.0.suspended(event_loop);
+        self.app.suspended(event_loop);
     }
     fn exiting(&mut self, event_loop: &ActiveEventLoop) {
-        self.0.exiting(event_loop);
+        self.app.exiting(event_loop);
         shagger::core::atomic_file::flush_pending(Duration::from_secs(2));
     }
     fn memory_warning(&mut self, event_loop: &ActiveEventLoop) {
-        self.0.memory_warning(event_loop);
+        self.app.memory_warning(event_loop);
     }
 }
 
@@ -2257,13 +2312,8 @@ pub fn kept_window() -> Option<Arc<Window>> {
     KEPT_WINDOW.with(|w| w.borrow().clone())
 }
 
-/// One window can serve every screen. Not on macOS: there winit closes every
-/// window when an event loop exits (winit #4135), and each screen runs a loop
-/// of its own, so each opens a new window where the last one was.
-pub const WINDOW_SURVIVES_LOOPS: bool = !cfg!(target_os = "macos");
-
 pub fn open_window(event_loop: &ActiveEventLoop) -> Result<OpenWindow, String> {
-    let kept = if KEEP_WINDOW.with(Cell::get) && WINDOW_SURVIVES_LOOPS {
+    let kept = if KEEP_WINDOW.with(Cell::get) {
         kept_window()
     } else {
         None
