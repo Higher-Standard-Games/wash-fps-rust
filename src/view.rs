@@ -20,6 +20,7 @@ use washoi::client::dropped_weapon_renderer::{DropThrow, DroppedWeaponInfo, Drop
 use washoi::client::fps_liquid_audio::play_liquid_crossing;
 use washoi::client::fps_player_audio::{player_voice_for_entity, set_local_player_voice};
 use washoi::client::gib_system::{GibRenderer, GibSystem};
+use washoi::client::hud::widgets::loadout_picker;
 use washoi::client::hud::widgets::pickup_prompt::{horizontal_distance_sq, in_pickup_range};
 use washoi::client::player_appearance::{AppearanceView, PlayerAppearance};
 use washoi::client::player_model_selection::{PlayerModelSide, player_model_choice};
@@ -3713,7 +3714,14 @@ pub fn start_prepared(o: &ViewOptions, prepared: Prepared) -> Result<i32, String
             if live {
                 std::thread::sleep(std::time::Duration::from_micros(16_667));
             }
-            if let Feed::Play(_, input) = feed {
+            if let Feed::Play(p, input) = feed {
+                // No one to show the kit picker to: the remembered kit, or
+                // the default, goes in so the join is not held up.
+                if p.wants_loadout() {
+                    let kit = loadout_picker::remembered(p.match_state().gametype_name())
+                        .unwrap_or(loadout_picker::DEFAULT_LOADOUT);
+                    p.choose_loadout(kit.primary, kit.secondary);
+                }
                 // Headless play: run forward looking where the camera looks,
                 // firing through the first half (which also asks to respawn).
                 *input = PlayInput {
