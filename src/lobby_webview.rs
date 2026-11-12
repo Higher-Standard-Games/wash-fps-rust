@@ -54,6 +54,22 @@ const HELLO_TIMEOUT: Duration = Duration::from_secs(30);
 /// The page's global.
 const GLOBAL: &str = "__washoiNative";
 
+/// With the DMA-BUF renderer off (`main`'s `webkit_environment`), WebKitGTK
+/// has been seen drawing the lobby page at a few frames a second, and
+/// `backdrop-filter` blurs are its most expensive effect. On Linux the page
+/// goes without them; its panels keep their tinted backgrounds, as with
+/// `hud_blur 0` (`HudBlur.ts`).
+const LINUX_NO_BLUR: &str = if cfg!(target_os = "linux") {
+    r#"document.addEventListener("DOMContentLoaded", () => {
+  const style = document.createElement("style");
+  style.id = "washoi-native-no-blur";
+  style.textContent = "* { backdrop-filter: none !important; -webkit-backdrop-filter: none !important; }";
+  document.head.appendChild(style);
+});"#
+} else {
+    ""
+};
+
 /// Behind the page: Washoi's night blue.
 const BACKGROUND: wgpu::Color = wgpu::Color {
     r: 0.035,
@@ -311,7 +327,7 @@ impl LobbyApp {
                 // only the renderer declares (the Video page's).
                 "cvars": with_cvars(|c| c.declarations()),
             }),
-            extra_script: String::new(),
+            extra_script: LINUX_NO_BLUR.into(),
             data_dir: washoi::cache_dir().map(|d| d.join("webview")),
             devtools: cfg!(debug_assertions),
         }

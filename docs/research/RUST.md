@@ -2725,6 +2725,8 @@ whole areas rather than single items. 0.2.0 closes them in two steps.
   comes up blank on NVIDIA's driver: unless `WEBKIT_DISABLE_DMABUF_RENDERER`
   is already set, the game restarts itself once with it set to 1 before
   WebKitGTK starts (setting it in the running process would take `unsafe`).
+  Without that renderer the page drew at a few frames a second, so on Linux
+  the webview also turns off the page's `backdrop-filter` blurs.
 - **Engine**: shagger d1f92fa.
 - **Version 0.3.3**.
 
