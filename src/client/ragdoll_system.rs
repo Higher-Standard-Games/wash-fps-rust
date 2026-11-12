@@ -24,7 +24,7 @@ use shagger::loader::model::gltf_animation::GLTF_TARGET_FPS;
 use shagger::physics::physics_system::rapier3d::prelude::{
     ColliderBuilder, ColliderHandle, LockedAxes, RigidBodyBuilder, RigidBodyHandle,
 };
-use shagger::physics::physics_system::{PhysicsSystem, debris_groups, from_rapier, quat_from_rapier, to_rapier};
+use shagger::physics::physics_system::{PhysicsSystem, debris_groups, from_rapier, to_rapier};
 use shagger::rendering::glam::{DMat4, DQuat, DVec3, Mat4, Quat, Vec3};
 use shagger::rendering::gpu::Gpu;
 use shagger::rendering::model_renderer::{ModelDraw, ModelHandle, ModelRenderer, Outline};
@@ -490,9 +490,9 @@ impl RagdollSystem {
         thrown.clip_time = (thrown.clip_time + dt.max(0.0)).min(thrown.clip_length);
         let frame = thrown.from_frame + thrown.clip_time * GLTF_TARGET_FPS;
         active.body.model.pose_clip(&mut active.instance, thrown.clip, frame);
-        if let Some(body) = self.physics.world.bodies.get(thrown.body) {
-            let at = from_rapier(body.translation()).as_dvec3();
-            active.world = throw_world(&active.body, thrown, at);
+        // Drawn between substeps, as the limp bones are.
+        if let Some((at, _)) = self.physics.interpolated(thrown.body) {
+            active.world = throw_world(&active.body, thrown, at.as_dvec3());
         }
     }
 
@@ -538,12 +538,7 @@ impl RagdollSystem {
     /// `bodyPosition`: the hips, or the sphere while thrown.
     fn body_position(&self, active: &ActiveRagdoll) -> Option<DVec3> {
         if let Some(thrown) = &active.throw {
-            return self
-                .physics
-                .world
-                .bodies
-                .get(thrown.body)
-                .map(|b| from_rapier(b.translation()).as_dvec3());
+            return self.physics.interpolated(thrown.body).map(|(at, _)| at.as_dvec3());
         }
         active
             .ragdoll
@@ -700,11 +695,8 @@ fn throw_world(body: &PlayerBody, thrown: &DeathThrow, at: DVec3) -> Mat4 {
 
 /// The hips box's world matrix (the trail's generator).
 fn hips_pose(physics: &PhysicsSystem, ragdoll: &Ragdoll) -> Option<DMat4> {
-    let body = physics.world.bodies.get(ragdoll.get_aggregate(0)?)?;
-    Some(DMat4::from_rotation_translation(
-        quat_from_rapier(*body.rotation()).as_dquat(),
-        from_rapier(body.translation()).as_dvec3(),
-    ))
+    let (at, rotation) = physics.interpolated(ragdoll.get_aggregate(0)?)?;
+    Some(DMat4::from_rotation_translation(rotation.as_dquat(), at.as_dvec3()))
 }
 
 /// The ragdolls' speed trails: a mesh per slot, uploaded on first use.
