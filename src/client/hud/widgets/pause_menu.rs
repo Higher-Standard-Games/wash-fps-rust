@@ -43,8 +43,9 @@ pub struct PauseMenu {
     pub open: bool,
     /// The Settings key is offered (the lobby page can show them).
     pub settings: bool,
-    /// The mode's Loadout key (`matchMenuModeKeys`), hinted with the kit
-    /// chosen; `None` in a mode without kits.
+    /// The mode's Loadout key (`matchMenuModeKeys`) with the kit chosen,
+    /// which the key no longer shows as its hint; `None` in a mode without
+    /// kits.
     pub loadout: Option<String>,
     /// When this opening was first drawn (egui seconds), for the slide-in.
     shown_at: Option<f64>,
@@ -300,6 +301,7 @@ pub(crate) fn raised_key(
         look.text,
         label_size * 0.07,
     );
+    let no_hint = hint.is_empty();
     let hint_size = if kind == KeyKind::Leave { 12.0 } else { 13.0 };
     let hint = galley(
         painter,
@@ -320,6 +322,9 @@ pub(crate) fn raised_key(
     if kind == KeyKind::Cta {
         // `justify-content: center`, no hint.
         painter.galley(inner.center() - label.size() / 2.0, label, look.text);
+    } else if no_hint {
+        let label_y = inner.center().y - label.size().y / 2.0;
+        painter.galley(pos2(inner.left(), label_y), label, look.text);
     } else if stacked {
         let gap = 5.0;
         let total = label.size().y + gap + hint.size().y;
@@ -571,8 +576,10 @@ impl PauseMenu {
                 let mut keys: Vec<(&str, &str, &str, PauseMenuAction)> =
                     vec![("resume", "Resume", "Back to the fight", PauseMenuAction::Resume)];
                 // The mode's keys, right under Resume.
-                if let Some(hint) = &loadout {
-                    keys.push(("loadout", "Loadout", hint, PauseMenuAction::Loadout));
+                // No hint: the kit's name ran into the label on a narrow
+                // rail, and the picker shows the kit anyway.
+                if loadout.is_some() {
+                    keys.push(("loadout", "Loadout", "", PauseMenuAction::Loadout));
                 }
                 if settings {
                     keys.push(("settings", "Settings", "Controls and video", PauseMenuAction::Settings));
