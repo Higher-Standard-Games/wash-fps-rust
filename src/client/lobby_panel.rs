@@ -16,8 +16,11 @@
 //! for the key file and the retries. Drawn with egui on shagger's
 //! `RaisedKey` and rail at the CSS's sizes (CSS pixels are egui points).
 //!
-//! Not yet (NATIVE_LOBBY.md 5): the Profile and Console pages,
-//! which say so and offer the web lobby; the welcome dialog and guide,
+//! The Profile key widens the rail into the account's gold panel
+//! (`client/profile_view.rs`) over everything, as the browser does.
+//!
+//! Not yet (NATIVE_LOBBY.md 5): the Console page, which says so and offers
+//! the web lobby; the welcome dialog and guide,
 //! credits, music, deep links and the drop-in from a spectated match.
 
 use std::collections::VecDeque;
@@ -28,6 +31,7 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use serde_json::Value;
 use shagger::core::cvar::with_cvars;
 use shagger::lobby::lobby_client::{CLIENT_DISCONNECT_REASON, LobbyClient, LobbyEvent};
+use shagger::lobby::player_identity::normalize_key;
 use shagger::lobby::settings_sync::SettingsSync;
 use shagger::lobby::types::{AuthError, GametypeInfo, LiveMatchInfo, LobbyConnect, LobbyIn};
 use shagger::shared::js::js_round;
@@ -47,6 +51,7 @@ use crate::client::demos_view::DemosView;
 use crate::client::leaderboard_view::LeaderboardView;
 use crate::client::levelshots::{Levelshots, site_base};
 use crate::client::lobby_rooms::{PlayKeysInput, RoomAction, describe_room, play_keys, room_count_label, sort_rooms};
+use crate::client::profile_view::{Account, ProfileAction, ProfileView, Screen as ProfileScreen};
 use crate::client::room_chat_view::RoomChatView;
 use crate::client::settings::fps_settings_view::FpsSettingsView;
 use crate::client::settings::settings_model::SETTINGS_PAGES;
@@ -292,6 +297,22 @@ fn save_key(file: &Path, key: &str) -> std::io::Result<()> {
     shagger::core::atomic_file::write_atomic(file, key.as_bytes())
 }
 
+/// The account as [`ProfileView`] reads it, borrowing the panel's fields
+/// one by one so the view and the client can be borrowed beside it.
+macro_rules! account {
+    ($panel:expr) => {
+        Account {
+            name: &$panel.name,
+            key: $panel.key.as_deref(),
+            key_unsaved: $panel.key_unsaved,
+            id: $panel.account_id.as_deref(),
+            connected: $panel.connected,
+            in_room: $panel.room.is_some(),
+            modes: &$panel.server_gametypes,
+        }
+    };
+}
+
 /// `LobbyPanel`.
 pub struct LobbyPanel {
     pub client: LobbyClient,
@@ -302,6 +323,13 @@ pub struct LobbyPanel {
     /// The key file exists but could not be read: a new account's key must
     /// not replace it.
     key_unreadable: bool,
+    /// The key in use is not on disk (`playerKeyIsSessionOnly`).
+    key_unsaved: bool,
+    /// A key to log in with on the connection being opened, from the
+    /// Profile's "Use another key" (`switchFpsAccount`).
+    switch_key: Option<String>,
+    /// The account was deleted: the next login makes a new one.
+    starting_over: bool,
     /// Failed logins in a row, for the offline backoff (`loginFailures`).
     login_failures: u32,
     /// When to connect again, after a drop or a full lobby.
@@ -339,6 +367,8 @@ pub struct LobbyPanel {
     pub leaderboard: LeaderboardView,
     /// The Demos page.
     pub demos: DemosView,
+    /// The Profile, over everything while open.
+    pub profile: ProfileView,
     /// The page drawn last frame: a page coming into view asks again.
     shown_tab: Option<Tab>,
     /// The maps' levelshots, for the room's vote cards.
@@ -376,6 +406,9 @@ impl LobbyPanel {
             key,
             key_file,
             key_unreadable,
+            key_unsaved: key_unreadable,
+            switch_key: None,
+            starting_over: false,
             login_failures: 0,
             retry_at: None,
             lobby_full: false,
@@ -399,6 +432,7 @@ impl LobbyPanel {
             settings: None,
             leaderboard: LeaderboardView::new(),
             demos: DemosView::new(url),
+            profile: ProfileView::new(),
             shown_tab: None,
             levelshots: Levelshots::new(url),
             site: site_base(url),
@@ -464,6 +498,10 @@ impl LobbyPanel {
         if self.retry_at.is_some_and(|at| Instant::now() >= at) {
             self.retry_at = None;
             self.notice.clear();
+            // After a deletion, as the browser's reload: a new player.
+            if std::mem::take(&mut self.starting_over) {
+                self.profile.close();
+            }
             if self.connected {
                 // A refused login on an open connection logs in again on it.
                 self.client.auth(self.key.as_deref());
@@ -486,7 +524,8 @@ impl LobbyPanel {
         match event {
             LobbyEvent::Connected => {
                 self.connected = true;
-                self.client.auth(self.key.as_deref());
+                let key = self.switch_key.as_deref().or(self.key.as_deref());
+                self.client.auth(key);
             }
             LobbyEvent::Error(why) => {
                 println!("lobby: {why}");
@@ -520,6 +559,11 @@ impl LobbyPanel {
         self.settings_sync = None;
         self.leaderboard.bind(false, false, None);
         self.demos.disconnected();
+        if self.switch_key.take().is_some() {
+            self.profile
+                .switch_answered(Err("The lobby didn't answer. Try again.".into()), &account!(self));
+        }
+        self.profile.bind(false, false, &account!(self), &mut self.client);
         if !deliberate && !self.lobby_full && self.retry_at.is_none() {
             self.login_failures += 1;
             let seconds = offline_retry_delay_sec(self.login_failures, random01());
@@ -531,6 +575,15 @@ impl LobbyPanel {
 
     /// `performLobbyLogin`'s answer to a refusal.
     fn login_refused(&mut self, e: &AuthError) {
+        // A key pasted on the Profile: say why, and log back in as before.
+        if self.switch_key.take().is_some() {
+            self.profile
+                .switch_answered(Err(login_failure_text(&e.code)), &account!(self));
+            if e.code != "lobby_full" {
+                self.client.auth(self.key.as_deref());
+                return;
+            }
+        }
         // The lobby does not know the stored key (its accounts were reset):
         // set the key aside and make a new account.
         if e.code == "unknown_key"
@@ -590,6 +643,9 @@ impl LobbyPanel {
                 );
             } else if let Err(e) = save_key(file, new_key) {
                 self.notice = format!("Could not save the new account's key: {e}");
+                self.key_unsaved = true;
+            } else {
+                self.key_unsaved = false;
             }
         }
     }
@@ -620,6 +676,12 @@ impl LobbyPanel {
                 if let Some(new_key) = &w.key {
                     self.keep_new_key(new_key);
                 }
+                // `restoreAccount`: the pasted key is this computer's now.
+                let switched = self.switch_key.take();
+                if let Some(key) = &switched {
+                    self.key_unreadable = false;
+                    self.keep_new_key(key);
+                }
                 self.login_failures = 0;
                 self.retry_at = None;
                 self.account_id = w.identity.as_ref().map(|i| i.id.clone());
@@ -639,6 +701,15 @@ impl LobbyPanel {
                 );
                 if self.tab == Tab::Leaderboard {
                     self.leaderboard.refresh(&mut self.client);
+                }
+                self.profile.bind(
+                    feature("playerStats"),
+                    feature("leaderboard") && feature("skillRatings"),
+                    &account!(self),
+                    &mut self.client,
+                );
+                if switched.is_some() {
+                    self.profile.switch_answered(Ok(self.name.clone()), &account!(self));
                 }
                 self.demos.connected(
                     feature("demoOwnership"),
@@ -751,7 +822,28 @@ impl LobbyPanel {
                 if let Some(name) = message.pointer("/identity/name").and_then(Value::as_str) {
                     name.clone_into(&mut self.name);
                 }
+                self.profile.on_message(kind, message, &account!(self));
             }
+            "identity:error" => self.profile.on_message(kind, message, &account!(self)),
+            // `forgetDeletedAccount`: drop the key here, so nothing logs back
+            // in, and start over as a new player once the lobby has closed.
+            "identity:deleted" => {
+                self.profile.on_message(kind, message, &account!(self));
+                self.key = None;
+                if let Some(file) = &self.key_file {
+                    for f in [file.clone(), beside(file, "unknown")] {
+                        if let Err(e) = std::fs::remove_file(&f)
+                            && e.kind() != std::io::ErrorKind::NotFound
+                        {
+                            println!("lobby: could not remove {}: {e}", f.display());
+                        }
+                    }
+                }
+                self.key_unreadable = false;
+                self.starting_over = true;
+                self.retry_at = Some(Instant::now() + Duration::from_secs(2));
+            }
+            "stats:summary" | "stats:error" => self.profile.on_message(kind, message, &account!(self)),
             "lobby:kicked" => {
                 if self.room.as_ref().map(|r| r.lobby_id.clone()) == field("lobbyId") {
                     self.show_play_stage();
@@ -765,7 +857,10 @@ impl LobbyPanel {
                 self.system_line("Match ended — ready up to rematch");
             }
             "queue:left" => self.queue_pending = false,
-            "leaderboard:page" | "leaderboard:error" => self.leaderboard.on_message(kind, message),
+            "leaderboard:page" | "leaderboard:error" => {
+                self.leaderboard.on_message(kind, message);
+                self.profile.on_message(kind, message, &account!(self));
+            }
             "demos:list_response" | "featured:page" | "featured:error" => self.demos.on_message(kind, message),
             // `recoverSeat`'s answer.
             "match:seat_reissued" => {
@@ -1017,6 +1112,12 @@ impl LobbyPanel {
         paint_light_in(&painter, screen, time, accent.face);
         self.levelshots.poll(ui.ctx());
         let mut action = None;
+        // The Profile over everything: the lobby shows only while it moves.
+        if self.profile.covers() {
+            self.profile_ui(ui, screen, time, accent.face, style);
+            ui.ctx().request_repaint();
+            return None;
+        }
         let layout = Layout::new(screen);
         if self.shown_tab != Some(self.tab) {
             if self.shown_tab == Some(Tab::Demos) {
@@ -1031,9 +1132,24 @@ impl LobbyPanel {
         }
         self.stage(ui, &layout, style, &mut action);
         self.rail(ui, &layout, style);
+        if self.profile.is_open() {
+            self.profile_ui(ui, screen, time, accent.face, style);
+        }
         // Keep the light drifting.
         ui.ctx().request_repaint();
         action
+    }
+}
+
+impl LobbyPanel {
+    fn profile_ui(&mut self, ui: &mut egui::Ui, screen: Rect, time: f64, accent: Color32, style: &TwinStyle) {
+        let account = account!(self);
+        let answer = self
+            .profile
+            .ui(ui, screen, time, accent, style, &account, &mut self.client);
+        if let Some(ProfileAction::Switch(key)) = answer {
+            self.start_switch(&key);
+        }
     }
 }
 
@@ -1115,11 +1231,14 @@ impl LobbyPanel {
             parts.next().unwrap_or_default(),
             parts.next().unwrap_or_default(),
         );
+        if tab == "profile" {
+            self.open_profile(ProfileScreen::from_id(sub));
+            return;
+        }
         self.tab = match tab {
             "leaderboard" => Tab::Leaderboard,
             "demos" => Tab::Demos,
             "settings" => Tab::Settings,
-            "profile" => Tab::Profile,
             "console" => Tab::Console,
             _ => Tab::Play,
         };
@@ -1138,6 +1257,25 @@ impl LobbyPanel {
         }
     }
 
+    /// Widens the Profile out of the rail, at `screen`.
+    pub fn open_profile(&mut self, screen: ProfileScreen) {
+        self.profile.open(screen, &account!(self), &mut self.client);
+    }
+
+    /// `switchFpsAccount`: a new connection, logging in with the pasted key.
+    /// The stored key stays until the lobby welcomes the new one.
+    fn start_switch(&mut self, pasted: &str) {
+        let Some(key) = normalize_key(pasted) else {
+            self.profile
+                .switch_answered(Err(login_failure_text("unknown_key")), &account!(self));
+            return;
+        };
+        self.connection_lost(true);
+        self.retry_at = None;
+        self.switch_key = Some(key);
+        self.client = LobbyClient::connect(&self.url);
+    }
+
     /// The settings screen, open on `page`.
     pub fn settings_view(&mut self) -> &mut FpsSettingsView {
         self.settings.get_or_insert_with(FpsSettingsView::default)
@@ -1145,6 +1283,10 @@ impl LobbyPanel {
 
     /// Escape: closes what the page has open. True when it did.
     pub fn back(&mut self) -> bool {
+        if self.profile.showing() {
+            self.profile.back(&account!(self));
+            return true;
+        }
         match self.tab {
             Tab::Settings => self.settings.as_mut().is_some_and(FpsSettingsView::back),
             Tab::Demos => self.demos.back(),
@@ -1262,8 +1404,13 @@ impl LobbyPanel {
         {
             let x = l.rail_left + i as f32 * (util_w + gap);
             let rect = Rect::from_min_size(pos2(x, util_top), vec2(util_w, util_h));
+            let current = if tab == Tab::Profile {
+                self.profile.showing()
+            } else {
+                self.tab == tab
+            };
             let face = RaisedKey::new(label, rect, KeyLook::gold().sm().flat())
-                .current(self.tab == tab)
+                .current(current)
                 .show(ui);
             let (size, em) = if l.narrow { (10.0, 0.06) } else { (11.0, 0.12) };
             KeyText::new(label, "", display_family(), body())
@@ -1273,7 +1420,11 @@ impl LobbyPanel {
                 .layout(KeyTextLayout::Centered)
                 .paint(&painter, &face);
             if face.clicked {
-                self.tab = tab;
+                if tab == Tab::Profile {
+                    self.open_profile(ProfileScreen::Key);
+                } else {
+                    self.tab = tab;
+                }
             }
         }
 
@@ -2282,6 +2433,7 @@ fn not_yet_page(ui: &mut egui::Ui, content: Rect, tab: Tab, accent: &Accent) -> 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::client::identity_fields::Tone;
 
     #[test]
     fn names_take_the_browser_s_colours() {
@@ -2441,5 +2593,104 @@ mod tests {
             assert_eq!(action, None);
             assert!(!output.shapes.is_empty());
         }
+    }
+
+    /// Polls `panel` until `done` holds, for up to `secs`.
+    fn wait_for(panel: &mut LobbyPanel, secs: u64, done: impl Fn(&LobbyPanel) -> bool) -> bool {
+        let deadline = Instant::now() + Duration::from_secs(secs);
+        while Instant::now() < deadline {
+            panel.poll();
+            if done(panel) {
+                return true;
+            }
+            std::thread::sleep(Duration::from_millis(50));
+        }
+        false
+    }
+
+    /// The Profile's account flows against a real lobby: rename, switch to
+    /// another player and back, delete. `WASHOI_TEST_LOBBY=ws://localhost:9000
+    /// cargo test -- --ignored profile_flows` with a scratch lobby.
+    #[test]
+    #[ignore = "needs a lobby"]
+    fn profile_flows_against_a_lobby() {
+        let url = std::env::var("WASHOI_TEST_LOBBY").expect("WASHOI_TEST_LOBBY");
+        let dir = std::env::temp_dir().join(format!("washoi-profile-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let file = dir.join("key");
+        let mut panel = LobbyPanel::connect(&url, Some(file.clone()));
+        assert!(wait_for(&mut panel, 10, |p| p.account_id.is_some()), "login");
+        let first_key = panel.key.clone().unwrap();
+        assert_eq!(std::fs::read_to_string(&file).unwrap().trim(), first_key);
+        panel.open_profile(ProfileScreen::Name);
+
+        // Rename.
+        let new_name = format!("Prof{}", std::process::id() % 100_000);
+        panel
+            .profile
+            .type_into(ProfileScreen::Name, &new_name, &account!(panel));
+        panel.profile.rename(&account!(panel), &mut panel.client);
+        assert!(wait_for(&mut panel, 10, |p| p.name == new_name), "renamed");
+        assert_eq!(
+            panel.profile.said(ProfileScreen::Name),
+            (format!("You're {new_name} now").as_str(), Tone::Ok)
+        );
+
+        // A second player, to switch to.
+        let mut other = LobbyPanel::connect(&url, Some(dir.join("other")));
+        assert!(wait_for(&mut other, 10, |p| p.account_id.is_some()), "second login");
+        let (other_key, other_id) = (other.key.clone().unwrap(), other.account_id.clone());
+        other.leave();
+
+        // A key nobody has is refused, and the player stays.
+        let first_id = panel.account_id.clone();
+        panel
+            .profile
+            .type_into(ProfileScreen::Switch, "0000-0000-0000-0000-0000-0000", &account!(panel));
+        let go = panel.profile.switch(&account!(panel)).expect("switch");
+        let ProfileAction::Switch(key) = go;
+        panel.start_switch(&key);
+        assert!(
+            wait_for(&mut panel, 10, |p| p.profile.said(ProfileScreen::Switch).1 == Tone::Bad
+                && p.account_id.is_some()),
+            "refused"
+        );
+        assert_eq!(panel.account_id, first_id);
+        assert_eq!(std::fs::read_to_string(&file).unwrap().trim(), first_key);
+
+        // The other key logs in and becomes this computer's.
+        panel.profile.type_into(
+            ProfileScreen::Switch,
+            &format_key_for_test(&other_key),
+            &account!(panel),
+        );
+        let ProfileAction::Switch(key) = panel.profile.switch(&account!(panel)).expect("switch");
+        panel.start_switch(&key);
+        assert!(wait_for(&mut panel, 10, |p| p.account_id == other_id), "switched");
+        assert_eq!(std::fs::read_to_string(&file).unwrap().trim(), other_key);
+        assert_eq!(panel.profile.said(ProfileScreen::Switch).1, Tone::Ok);
+
+        // Delete it: the key file goes, and a new player starts.
+        panel
+            .profile
+            .open(ProfileScreen::Delete, &account!(panel), &mut panel.client);
+        panel
+            .profile
+            .type_into(ProfileScreen::Delete, &other_key, &account!(panel));
+        panel.profile.delete(&account!(panel), &mut panel.client);
+        assert!(wait_for(&mut panel, 10, |p| p.starting_over), "deleted");
+        assert_eq!(panel.profile.said(ProfileScreen::Delete).1, Tone::Ok);
+        assert!(!file.exists());
+        assert!(
+            wait_for(&mut panel, 20, |p| p.account_id.is_some() && p.account_id != other_id),
+            "a new player"
+        );
+        assert!(file.exists());
+        panel.leave();
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    fn format_key_for_test(key: &str) -> String {
+        shagger::lobby::player_identity::format_key(key)
     }
 }

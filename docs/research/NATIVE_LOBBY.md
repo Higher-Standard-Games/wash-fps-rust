@@ -1,6 +1,6 @@
 # Native lobby and settings: plan
 
-Status: steps 1 and 2 built, step 3's pages built (November 12, 2026), behind `ui_lobby native`
+Status: steps 1 to 4 built (November 13, 2026), behind `ui_lobby native`
 (`washoi --lobby native` once; the cvar persists). The defaults for the
 questions in section 7: the welcome guide stays web-only until step 5, the
 native lobby opens straight onto Play, and the web view goes at parity.
@@ -141,7 +141,7 @@ tests, and can ship.
    `ui_lobby native` the in-match Settings key draws the same view over
    the match (`fps_settings_view::over_match`), with Video locked as in
    the browser and Esc stepping back out of a sheet first.
-4. **Profile, leaderboard, demos.** *Built so far:* the Leaderboard
+4. **Profile, leaderboard, demos.** *Built:* the Leaderboard
    (`client/leaderboard_view.rs`): the podium and the rest of the top ten,
    the Top 100 with its search, Jump to me and period keys, and your rank
    per mode in the rail, from the lobby's `leaderboard:get` with
@@ -154,7 +154,17 @@ tests, and can ship.
    does; the browser's video export is left out. `washoi menu ...
    --page demos/latest/reel --seed FILE.json` draws given pages
    (`{"boards": {"duel:month": ...}, "demos": [...], "featured": [...]}`)
-   for screenshots.
+   for screenshots. The Profile (`client/profile_view.rs`) widens the rail
+   into the gold panel over everything, as the browser does: the key
+   (blurred until shown, copied to the clipboard or saved as a text file
+   in Downloads), Change name, Use another key (a new connection with the
+   pasted key; the key file changes only once the lobby welcomes it) and
+   Delete account (the key file goes and a new player starts). The record
+   sits on the stage, from `stats:get` or, without it, the boards. The
+   panel and its parts (`client/identity_frame.rs`, `identity_fields.rs`)
+   are built for step 5's Welcome to reuse. Left out for now: the record's
+   match history and the browser's "Save in browser". `--seed` takes
+   `"stats": [{"id", "name", "data"}]` for the record.
 5. **The rest and the switch.** Welcome and terms, credits, music, the
    update notice. A parity review against section 2, then the default flips
    to `native`.

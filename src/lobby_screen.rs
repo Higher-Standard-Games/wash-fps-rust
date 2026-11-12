@@ -240,7 +240,7 @@ pub struct Shot<'a> {
     pub page: Option<&'a str>,
     /// What the lobby would say, for the Leaderboard and Demos pages:
     /// `{"boards": {"duel:month": leaderboard:page, ...}, "demos": [...],
-    /// "featured": [...]}`.
+    /// "featured": [...], "stats": [{"id", "name", "data": StatsSummary}]}`.
     pub seed: Option<&'a Path>,
 }
 
@@ -301,6 +301,20 @@ pub fn screenshot(
                 .collect()
         })
         .unwrap_or_default();
+    let stats: Vec<(String, String, washoi::client::profile_view::Summary)> = seed
+        .get("stats")
+        .and_then(serde_json::Value::as_array)
+        .map(|a| {
+            a.iter()
+                .filter_map(|e| {
+                    let id = e.get("id")?.as_str()?;
+                    let message = serde_json::json!({ "data": e.get("data")? });
+                    let summary = washoi::client::profile_view::read_stats(&message, id).ok()?;
+                    Some((id.to_owned(), e.get("name")?.as_str()?.to_owned(), summary))
+                })
+                .collect()
+        })
+        .unwrap_or_default();
     let (width, height) = size;
     let gpu = Gpu::headless().map_err(|e| e.to_string())?;
     let mut layer = EguiLayer::offscreen(&gpu, OFFSCREEN_FORMAT);
@@ -336,6 +350,9 @@ pub fn screenshot(
         }
         if let Some(demos) = &demos {
             panel.demos.seed(demos.clone(), featured.clone());
+        }
+        if !stats.is_empty() {
+            panel.profile.seed_stats(stats.clone());
         }
         // Again once the lobby has said hello, which resets the pages.
         if let Some(page) = page
