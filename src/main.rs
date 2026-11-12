@@ -122,7 +122,7 @@ fn usage() -> ! {
          \x20      washoi watch <ws://game-server> [--name NAME] [--ticket TICKET] [--data DIR] [--screenshot FILE.png] [--time T] [--at X,Y,Z,YAW] [--follow N] [--seconds N]\n\
          \x20      washoi play <ws://game-server> [--name NAME] [--ticket TICKET] [--data DIR] [--screenshot FILE.png] [--time T] [--say TEXT] [--seconds N]\n\
          \x20      washoi connect <ws://game-server> [--name NAME] [--ticket TICKET] [--seconds N] [--play]\n\
-         \x20      washoi menu <ws://lobby> --screenshot FILE.png [--key-file FILE] [--size WxH] [--seconds N] [--play]\n\
+         \x20      washoi menu <ws://lobby> --screenshot FILE.png [--key-file FILE] [--size WxH] [--seconds N] [--play | --room FILE.json]\n\
          \x20      washoi lobby <ws://lobby> [--key-file FILE] list\n\
          \x20      washoi lobby <ws://lobby> [--key-file FILE] spectate [--window] [--seconds N]\n\
          \x20      washoi lobby <ws://lobby> [--key-file FILE] queue <gametype> [--seconds N] [--play | --window]\n\
@@ -138,6 +138,8 @@ struct Options {
     name: Option<String>,
     ticket: Option<String>,
     seconds: Option<f64>,
+    /// `menu --room FILE.json`: a room's state to draw, without a lobby.
+    room: Option<PathBuf>,
     play: bool,
     key_file: Option<PathBuf>,
     data: Option<PathBuf>,
@@ -196,6 +198,7 @@ fn parse_options(args: impl Iterator<Item = String>) -> Options {
             "--name" => o.name = Some(value()),
             "--ticket" => o.ticket = Some(value()),
             "--seconds" => o.seconds = Some(value().parse().unwrap_or_else(|_| usage())),
+            "--room" => o.room = Some(PathBuf::from(value())),
             "--key-file" => o.key_file = Some(PathBuf::from(value())),
             "--lobby" => o.lobby = Some(value()),
             "--play" => o.play = true,
@@ -536,7 +539,15 @@ fn main() {
             let Some(path) = &o.screenshot else { usage() };
             let size = o.size.unwrap_or((1280, 720));
             let key = o.key_file.as_deref();
-            match lobby_screen::screenshot(&url, key, path, size, o.seconds.unwrap_or(3.0), o.play) {
+            match lobby_screen::screenshot(
+                &url,
+                key,
+                path,
+                size,
+                o.seconds.unwrap_or(3.0),
+                o.play,
+                o.room.as_deref(),
+            ) {
                 Ok(None) if o.play => {
                     eprintln!("lobby: no match was handed out");
                     1

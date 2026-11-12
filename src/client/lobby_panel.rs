@@ -37,15 +37,18 @@ use shagger::ui::components::lobby_twin::{
     RAIL_SKEW, TwinRail, TwinStyle, clamp_css, cream, elide, gradient_polygon, horizontal_gradient, hsl, hsla,
     paint_backdrop, paint_brand, paint_light_in, paint_rail, text, violet,
 };
-use shagger::ui::components::match_lobby_view::{MatchLobbyView, RoomAction as ViewAction};
+use shagger::ui::components::match_lobby_view::{MatchLobbyView, RoomAction as ViewAction, RoomStyle};
+use shagger::ui::components::outline_text::paint_outline_text;
 use shagger::ui::components::raised_key::{Accent, KeyFace, KeyLook, KeyText, KeyTextLayout, RaisedKey};
 use shagger::ui::components::text_field::TextField;
 use shagger::ui::egui_layer::egui;
 
 use egui::{Color32, FontFamily, FontId, Painter, Pos2, Rect, Shape, Stroke, pos2, vec2};
 
+use crate::client::levelshots::{Levelshots, site_base};
 use crate::client::lobby_rooms::{PlayKeysInput, RoomAction, describe_room, play_keys, room_count_label, sort_rooms};
-use crate::client::washoi_style::display_family;
+use crate::client::room_chat_view::RoomChatView;
+use crate::client::washoi_style::{DISPLAY_FONT, display_family};
 
 /// `GameMode`: a mode's tile on the Play stage.
 #[derive(Debug, Clone, Copy)]
@@ -161,11 +164,18 @@ pub struct LobbyChoice {
 }
 
 /// What the panel asks of the window, besides a match.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum PanelAction {
     /// Back to the web lobby (`ui_lobby web`), for a page not built here yet.
     WebLobby,
+    /// The links row's Quit.
+    Quit,
+    /// A page for the system's browser, such as the devlog.
+    OpenUrl(&'static str),
 }
+
+/// The team's devlog, opened from the Play page's links bar (`DEVLOG_URL`).
+pub const DEVLOG_URL: &str = "https://washoi.net/devlog";
 
 /// The rail's pages (`switchTab`), and the keys under the player card that
 /// open a page here.
@@ -319,6 +329,16 @@ pub struct LobbyPanel {
     pending_quick_play: bool,
     queue_pending: bool,
     room: Option<MatchLobbyView>,
+    /// The room's own chat, in the rail while the room is open.
+    room_chat: Option<RoomChatView>,
+    /// The maps' levelshots, for the room's vote cards.
+    levelshots: Levelshots,
+    /// The site the game is served from, which invites open.
+    site: String,
+    /// A seat asked back for a running match: its request and the match.
+    seat_request: Option<(String, String)>,
+    /// The map of the room's last match, for a rejoin.
+    last_map: Option<String>,
     /// `playNoticeEl`.
     notice: String,
     choice: Option<LobbyChoice>,
@@ -365,6 +385,11 @@ impl LobbyPanel {
             pending_quick_play: false,
             queue_pending: false,
             room: None,
+            room_chat: None,
+            levelshots: Levelshots::new(url),
+            site: site_base(url),
+            seat_request: None,
+            last_map: None,
             notice: String::new(),
             choice: None,
             tab: Tab::Play,
@@ -466,6 +491,8 @@ impl LobbyPanel {
     /// client's own or a full lobby already set its wait.
     fn connection_lost(&mut self, deliberate: bool) {
         self.connected = false;
+        self.room_chat = None;
+        self.seat_request = None;
         if let Some(room) = self.room.take() {
             self.room_to_rejoin = Some((room.lobby_id, self.room_invite.take(), self.account_id.clone()));
         }
@@ -552,6 +579,9 @@ impl LobbyPanel {
     }
 
     fn on_message(&mut self, message: LobbyIn) {
+        if let Some(chat) = &mut self.room_chat {
+            chat.handle(&message);
+        }
         if let Some(room) = &mut self.room {
             room.handle(&message, &self.client);
         }
@@ -646,6 +676,7 @@ impl LobbyPanel {
                     .and_then(|room| room.players.iter().find(|p| p.is_local))
                     .map(|p| p.team.clone())
                     .filter(|team| !team.is_empty() && team != "ffa");
+                self.last_map = Some(map.clone());
                 self.choice = Some(LobbyChoice {
                     server_url,
                     map,
@@ -697,8 +728,40 @@ impl LobbyPanel {
                 }
             }
             // The lobby is the rematch screen: the room stays.
-            "match:ended" => self.system_line("⚔ Match ended — ready up to rematch"),
+            "match:ended" => self.system_line("Match ended — ready up to rematch"),
             "queue:left" => self.queue_pending = false,
+            // `recoverSeat`'s answer.
+            "match:seat_reissued" => {
+                let Some((request, match_id)) = self.seat_request.take() else {
+                    return;
+                };
+                if field("requestId").as_deref() != Some(request.as_str()) {
+                    self.seat_request = Some((request, match_id));
+                    return;
+                }
+                let team = self
+                    .room
+                    .as_ref()
+                    .and_then(|room| room.players.iter().find(|p| p.is_local))
+                    .map(|p| p.team.clone())
+                    .filter(|team| !team.is_empty() && team != "ffa");
+                self.choice = Some(LobbyChoice {
+                    server_url: field("serverUrl").unwrap_or_default(),
+                    map: self.last_map.clone().unwrap_or_default(),
+                    admission_ticket: field("admissionTicket"),
+                    name: self.name.clone(),
+                    play: true,
+                    demo: None,
+                    reel: None,
+                    team,
+                });
+            }
+            "match:seat_reissue_error" if self.seat_request.as_ref().map(|(r, _)| r.clone()) == field("requestId") => {
+                self.seat_request = None;
+                if let Some(room) = &mut self.room {
+                    room.seat_unavailable();
+                }
+            }
             _ => {}
         }
     }
@@ -778,13 +841,29 @@ impl LobbyPanel {
         if let Some(at) = GAME_MODES.iter().position(|m| m.id == room.gametype) {
             self.selected_mode = at;
         }
+        self.levelshots.want(room.maps.iter().map(|m| m.name.as_str()));
+        self.room_chat = Some(RoomChatView::new(lobby));
         self.room = Some(room);
         self.tab = Tab::Play;
+    }
+
+    /// Opens a room from its state, as `lobby:created` does: for drawing a
+    /// room without a lobby (`washoi menu --room`).
+    pub fn show_room_state(&mut self, lobby: &Value) {
+        if self.local_lobby_player_id.is_none() {
+            self.local_lobby_player_id = lobby
+                .pointer("/players/0/id")
+                .and_then(Value::as_str)
+                .map(str::to_owned);
+        }
+        self.handle_lobby_created(lobby);
     }
 
     /// `showPlayStage`: the room is gone.
     fn show_play_stage(&mut self) {
         self.room = None;
+        self.room_chat = None;
+        self.seat_request = None;
         self.room_invite = None;
     }
 
@@ -890,6 +969,7 @@ impl LobbyPanel {
         let accent = self.mode().accent();
         paint_backdrop(&painter, screen);
         paint_light_in(&painter, screen, time, accent.face);
+        self.levelshots.poll(ui.ctx());
         let mut action = None;
         let layout = Layout::new(screen);
         self.stage(ui, &layout, style, &mut action);
@@ -1096,7 +1176,10 @@ impl LobbyPanel {
 
         // `lobby__rail-mid--rooms`: what is left between.
         let mid = Rect::from_min_max(pos2(l.screen.min.x, y), pos2(l.screen.min.x + l.rail_w, card_top - 4.0));
-        if mid.height() > 40.0 {
+        // In a room, the lobby list gives way to the room's chat.
+        if self.room_chat.is_some() {
+            self.room_chat_panel(ui, l, mid);
+        } else if mid.height() > 40.0 {
             self.rooms(ui, l, mid);
         }
     }
@@ -1211,39 +1294,31 @@ impl LobbyPanel {
         let accent = mode.accent();
         let page_left = l.screen.min.x + l.rail_w - RAIL_SKEW;
         let page_w = l.screen.max.x - page_left;
-        // `lobby__ghost`: the mode's name, huge and faint, off the bottom left.
+        // `lobby__ghost`: the mode's name, huge and outlined, off the bottom
+        // left. It shows behind a room too, in the room's colour.
         if self.tab == Tab::Play {
             let size = clamp_css(200.0, l.w * 0.25, 440.0);
-            let ghost = line(
-                &painter,
+            let at = pos2(page_left + RAIL_SKEW - page_w * 0.01, l.screen.max.y + l.h * 0.04);
+            let clip = painter.with_clip_rect(Rect::from_min_max(pos2(page_left, l.screen.min.y), l.screen.max));
+            paint_outline_text(
+                &clip,
+                DISPLAY_FONT,
                 &mode.title.to_uppercase(),
                 size,
-                display_family(),
-                accent.face.gamma_multiply(0.045),
-                -0.04,
+                -0.04 * size,
+                at,
+                Stroke::new(2.0, accent.face.gamma_multiply(0.26)),
             );
-            let at = pos2(
-                page_left + RAIL_SKEW - page_w * 0.01,
-                l.screen.max.y + l.h * 0.04 - ghost.size().y * 0.9,
-            );
-            painter.galley(at, ghost, Color32::WHITE);
         }
-        // The links row's line, and the page above it.
-        let links_h = 32.0;
+        // `lobby__links` along the foot, and the page above it.
+        let links_h = 44.0 + 5.0 + 12.0;
         let content = Rect::from_min_max(
             pos2(l.screen.min.x + l.rail_w + 28.0, l.screen.min.y + 30.0),
-            pos2(l.screen.max.x - 52.0, l.screen.max.y - 24.0 - links_h),
+            pos2(l.screen.max.x - 52.0, l.screen.max.y - links_h - 20.0),
         );
-        let version = line(
-            &painter,
-            &style.version,
-            12.0,
-            body(),
-            hsla(45.0, 100.0, 95.0, 0.45),
-            0.12,
-        );
-        let vx = l.screen.max.x - 52.0 - version.size().x;
-        painter.galley(pos2(vx, l.screen.max.y - 12.0 - version.size().y), version, cream());
+        if let Some(a) = self.links(ui, l, style) {
+            *action = Some(a);
+        }
         match self.tab {
             Tab::Play => self.play_page(ui, l, content, &mode),
             other => {
@@ -1252,6 +1327,43 @@ impl LobbyPanel {
                 }
             }
         }
+    }
+
+    /// `lobby__links`: the version and the devlog on the Play page, and Quit
+    /// (the shell's), right to left along the foot.
+    fn links(&mut self, ui: &mut egui::Ui, l: &Layout, style: &TwinStyle) -> Option<PanelAction> {
+        let painter = ui.painter().clone();
+        let bottom = l.screen.max.y - 12.0 - 5.0;
+        let mut right = l.screen.max.x - 52.0;
+        let mut action = None;
+        let key = |ui: &mut egui::Ui, right: &mut f32, label: &str| {
+            let g = line(&painter, label, 13.0, display_family(), hsl(43.0, 100.0, 94.0), 0.12);
+            let r = Rect::from_min_max(pos2(*right - g.size().x - 32.0, bottom - 44.0), pos2(*right, bottom));
+            *right = r.left() - 12.0;
+            link_key(ui, &painter, r, g, label)
+        };
+        if key(ui, &mut right, "QUIT") {
+            action = Some(PanelAction::Quit);
+        }
+        // On the Play page only: a room keeps the foot clear.
+        if self.tab == Tab::Play && self.room.is_none() {
+            if key(ui, &mut right, "DEVLOG") {
+                action = Some(PanelAction::OpenUrl(DEVLOG_URL));
+            }
+            // The version, so a screenshot for a bug report carries it.
+            let version = line(
+                &painter,
+                &format!("client {}", style.version.trim_start_matches('v')),
+                15.0,
+                display_family(),
+                hsla(45.0, 100.0, 92.0, 0.7),
+                0.16,
+            );
+            let at = pos2(right - version.size().x, bottom - 22.0 - version.size().y / 2.0);
+            painter.galley(at + vec2(0.0, 2.0), version.clone(), hsla(0.0, 0.0, 0.0, 0.5));
+            painter.galley(at, version, cream());
+        }
+        action
     }
 
     /// Kicker and title (`lobby__heading`); returns its bottom.
@@ -1272,35 +1384,7 @@ impl LobbyPanel {
         let painter = ui.painter().clone();
         let accent = mode.accent();
         if self.room.is_some() {
-            let kicker = if self.room.as_ref().is_some_and(|r| r.private_lobby) {
-                "Private room"
-            } else {
-                "Room"
-            };
-            let bottom = Self::heading(&painter, l, content.min, kicker, mode.title, accent.face);
-            let panel = Rect::from_min_max(pos2(content.left(), bottom + 22.0), content.max);
-            cut_panel(
-                &painter,
-                panel,
-                22.0,
-                &[
-                    (0.0, hsla(250.0, 40.0, 11.0, 0.86)),
-                    (1.0, hsla(250.0, 44.0, 7.0, 0.92)),
-                ],
-                Some(Stroke::new(1.5, hsla(276.0, 90.0, 64.0, 0.32))),
-            );
-            let mut leave = false;
-            if let Some(room) = &mut self.room {
-                ui.scope_builder(egui::UiBuilder::new().max_rect(panel.shrink2(vec2(22.0, 16.0))), |ui| {
-                    egui::ScrollArea::vertical().id_salt("lobby-room").show(ui, |ui| {
-                        leave = room.ui(ui, &self.client) == Some(ViewAction::Leave);
-                    });
-                });
-            }
-            if leave {
-                self.show_play_stage();
-                self.room_to_rejoin = None;
-            }
+            self.room_page(ui, l, content, &accent);
             return;
         }
         let bottom = Self::heading(&painter, l, content.min, "Play", "Pick your fight", accent.face);
@@ -1345,6 +1429,36 @@ impl LobbyPanel {
         self.detail(ui, detail, mode);
         if chat.height() > 120.0 {
             self.chat_panel(ui, chat);
+        }
+    }
+
+    /// A room: the whole page is `MatchLobbyView`'s.
+    fn room_page(&mut self, ui: &mut egui::Ui, l: &Layout, content: Rect, accent: &Accent) {
+        let Some(room) = &mut self.room else { return };
+        let shots = &self.levelshots;
+        let map_shot = |map: &str| shots.texture(map);
+        let style = RoomStyle {
+            accent: *accent,
+            display: display_family(),
+            body: body(),
+            window_width: l.w,
+            short: l.short,
+            narrow: l.narrow,
+            narrower: l.narrower,
+            site: &self.site,
+            online: self.connected,
+            map_shot: &map_shot,
+        };
+        match room.ui(ui, content, &self.client, &style) {
+            Some(ViewAction::Leave) => {
+                self.show_play_stage();
+                self.room_to_rejoin = None;
+            }
+            Some(ViewAction::Rejoin(match_id)) => {
+                let request = self.client.request_seat_reissue(&match_id);
+                self.seat_request = Some((request, match_id));
+            }
+            None => {}
         }
     }
 
@@ -1522,8 +1636,109 @@ impl LobbyPanel {
 
     /// `lobby-chat`: the lobby's chat beside the mode.
     fn chat_panel(&mut self, ui: &mut egui::Ui, r: Rect) {
-        let painter = ui.painter().clone();
-        let rule = Stroke::new(1.0, hsla(276.0, 90.0, 64.0, 0.2));
+        let count = if self.connected {
+            format!("{} ONLINE", self.online.len())
+        } else {
+            "OFFLINE".into()
+        };
+        let send = chat_box(
+            ui,
+            r,
+            ChatBox {
+                id: "lobby-chat",
+                title: "LOBBY",
+                count: &count,
+                dot: true,
+                lines: &self.chat,
+                draft: &mut self.chat_draft,
+                placeholder: if self.connected {
+                    "Say something…"
+                } else {
+                    "Lobby offline"
+                },
+                enabled: self.connected,
+                empty: if self.connected {
+                    "Nobody has said anything yet. Say hello."
+                } else {
+                    "Chat opens when the lobby server is back."
+                },
+                mine: &self.name,
+                rail: false,
+            },
+        );
+        if send {
+            self.send_chat();
+        }
+    }
+
+    /// The room's chat in the rail's middle (`lobby__rail--room .lobby-chat`).
+    fn room_chat_panel(&mut self, ui: &mut egui::Ui, l: &Layout, mid: Rect) {
+        let Some(chat) = &mut self.room_chat else { return };
+        let r = Rect::from_min_max(
+            pos2(mid.left() + 22.0, mid.top() + 4.0),
+            pos2(mid.left() + l.rail_w - RAIL_SKEW - 18.0, mid.bottom() - 16.0),
+        );
+        if r.height() < 90.0 {
+            return;
+        }
+        let enabled = self.connected && chat.supported;
+        let count = chat.here().to_uppercase();
+        let placeholder = chat.placeholder(self.connected);
+        let empty = chat.empty_text();
+        let send = chat_box(
+            ui,
+            r,
+            ChatBox {
+                id: "room-chat",
+                title: "ROOM CHAT",
+                count: &count,
+                dot: false,
+                lines: &chat.lines,
+                draft: &mut chat.draft,
+                placeholder,
+                enabled,
+                empty,
+                mine: &self.name,
+                rail: true,
+            },
+        );
+        if send {
+            chat.send(&self.client, self.connected);
+        }
+    }
+}
+
+/// What a chat box shows: the lobby's on the Play page, a room's in the rail.
+struct ChatBox<'a> {
+    id: &'static str,
+    title: &'a str,
+    count: &'a str,
+    /// The pink online dot beside the count.
+    dot: bool,
+    lines: &'a VecDeque<ChatLine>,
+    draft: &'a mut String,
+    placeholder: &'a str,
+    enabled: bool,
+    empty: &'a str,
+    /// This player's name, whose lines are lit.
+    mine: &'a str,
+    /// In the rail: a solid slab, tighter, its cut corner smaller.
+    rail: bool,
+}
+
+/// `lobby-chat`: head, log and form. True when the player sends a line.
+fn chat_box(ui: &mut egui::Ui, r: Rect, c: ChatBox<'_>) -> bool {
+    let painter = ui.painter().clone();
+    let rule = Stroke::new(1.0, hsla(276.0, 90.0, 64.0, 0.2));
+    if c.rail {
+        cut_panel(
+            &painter,
+            r,
+            18.0,
+            &[(0.0, hsla(250.0, 45.0, 7.0, 0.94)), (1.0, hsla(250.0, 45.0, 7.0, 0.94))],
+            None,
+        );
+    } else {
         cut_panel(
             &painter,
             r,
@@ -1534,93 +1749,134 @@ impl LobbyPanel {
             ],
             Some(Stroke::new(1.5, hsla(276.0, 90.0, 64.0, 0.32))),
         );
-        let inner = Rect::from_min_max(r.min + vec2(22.0, 16.0), r.max - vec2(20.0, 16.0));
-        // `lobby-chat__head`.
-        let title = line(&painter, "LOBBY", 14.0, display_family(), cream(), 0.16);
-        let head_h = title.size().y;
-        painter.galley(inner.left_top(), title, cream());
-        let count = if self.connected {
-            format!("{} ONLINE", self.online.len())
-        } else {
-            "OFFLINE".into()
-        };
-        let count = line(&painter, &count, 12.0, body(), hsla(45.0, 100.0, 95.0, 0.55), 0.14);
-        let cx = inner.right() - count.size().x;
-        let cy = inner.top() + head_h / 2.0;
-        painter.galley(pos2(cx, cy - count.size().y / 2.0), count, cream());
+    }
+    let inner = if c.rail {
+        Rect::from_min_max(r.min + vec2(16.0, 14.0), r.max - vec2(16.0, 14.0))
+    } else {
+        Rect::from_min_max(r.min + vec2(22.0, 16.0), r.max - vec2(20.0, 16.0))
+    };
+    // `lobby-chat__head`.
+    let title = line(&painter, c.title, 14.0, display_family(), cream(), 0.16);
+    let head_h = title.size().y;
+    painter.galley(inner.left_top(), title, cream());
+    let count = line(&painter, c.count, 12.0, body(), hsla(45.0, 100.0, 95.0, 0.55), 0.14);
+    let cx = inner.right() - count.size().x;
+    let cy = inner.top() + head_h / 2.0;
+    painter.galley(pos2(cx, cy - count.size().y / 2.0), count, cream());
+    if c.dot {
         let pink = hsl(322.0, 100.0, 58.0);
         painter.circle_filled(pos2(cx - 12.0, cy), 7.0, pink.gamma_multiply(0.18));
         painter.circle_filled(pos2(cx - 12.0, cy), 4.0, pink);
-        let head_bottom = inner.top() + head_h + 12.0;
-        painter.hline(inner.x_range(), head_bottom, rule);
-
-        // `lobby-chat__form`, at the foot.
-        let form_top = inner.bottom() - 44.0 - 3.6;
-        painter.hline(inner.x_range(), form_top - 12.0, rule);
-        let send_label = line(&painter, "SEND", 13.0, display_family(), cream(), 0.12);
-        let send_w = send_label.size().x + 46.0;
-        let send = Rect::from_min_size(pos2(inner.right() - send_w - 4.0, form_top), vec2(send_w, 44.0));
-        let field = Rect::from_min_max(pos2(inner.left(), form_top), pos2(send.left() - 14.0, form_top + 44.0));
-        let placeholder = if self.connected {
-            "Say something…"
-        } else {
-            "Lobby offline"
-        };
-        let typed = TextField::new("lobby-chat", field, &mut self.chat_draft, FontId::proportional(18.0))
-            .placeholder(placeholder)
-            .enabled(self.connected)
-            .show(ui);
-        let face = RaisedKey::new("send", send, KeyLook::gold().sm())
-            .disabled(!self.connected)
-            .show(ui);
-        KeyText::new("Send", "", display_family(), body())
-            .size(13.0, 13.0)
-            .spacing(0.12)
-            .pad(24.0, 22.0)
-            .layout(KeyTextLayout::Centered)
-            .paint(&painter, &face);
-        if typed.submitted || face.clicked {
-            self.send_chat();
-        }
-
-        // `lobby-chat__log`: follows new lines while at the bottom.
-        let log = Rect::from_min_max(
-            pos2(inner.left(), head_bottom + 6.0),
-            pos2(inner.right(), form_top - 18.0),
-        );
-        if log.height() < 20.0 {
-            return;
-        }
-        if self.chat.is_empty() {
-            let empty = if self.connected {
-                "Nobody has said anything yet. Say hello."
-            } else {
-                "Chat opens when the lobby server is back."
-            };
-            let g = wrapped(
-                &painter,
-                empty,
-                FontId::proportional(17.0),
-                hsla(45.0, 100.0, 95.0, 0.5),
-                log.width(),
-            );
-            painter.galley(pos2(log.left(), log.top() + 14.0), g, cream());
-            return;
-        }
-        let mine = self.name.clone();
-        let lines: Vec<ChatLine> = self.chat.iter().cloned().collect();
-        ui.scope_builder(egui::UiBuilder::new().max_rect(log), |ui| {
-            egui::ScrollArea::vertical()
-                .id_salt("lobby-chat-log")
-                .auto_shrink([false, false])
-                .stick_to_bottom(true)
-                .show(ui, |ui| {
-                    for chat in &lines {
-                        chat_row(ui, chat, &mine, log.width() - 12.0);
-                    }
-                });
-        });
     }
+    let head_bottom = inner.top() + head_h + 12.0;
+    painter.hline(inner.x_range(), head_bottom, rule);
+
+    // `lobby-chat__form`, at the foot.
+    let form_top = inner.bottom() - 44.0 - 3.6;
+    painter.hline(inner.x_range(), form_top - 12.0, rule);
+    let send_label = line(&painter, "SEND", 13.0, display_family(), cream(), 0.12);
+    let pad = if c.rail { (16.0, 14.0) } else { (24.0, 22.0) };
+    let send_w = send_label.size().x + pad.0 + pad.1;
+    let send = Rect::from_min_size(pos2(inner.right() - send_w - 4.0, form_top), vec2(send_w, 44.0));
+    let gap = if c.rail { 10.0 } else { 14.0 };
+    let field = Rect::from_min_max(pos2(inner.left(), form_top), pos2(send.left() - gap, form_top + 44.0));
+    let typed = TextField::new(c.id, field, c.draft, FontId::proportional(18.0))
+        .placeholder(c.placeholder)
+        .enabled(c.enabled)
+        .show(ui);
+    let face = RaisedKey::new((c.id, "send"), send, KeyLook::gold().sm())
+        .disabled(!c.enabled)
+        .show(ui);
+    KeyText::new("Send", "", display_family(), body())
+        .size(13.0, 13.0)
+        .spacing(0.12)
+        .pad(pad.0, pad.1)
+        .layout(KeyTextLayout::Centered)
+        .paint(&painter, &face);
+    let sent = c.enabled && (typed.submitted || face.clicked);
+
+    // `lobby-chat__log`: follows new lines while at the bottom.
+    let log = Rect::from_min_max(
+        pos2(inner.left(), head_bottom + 6.0),
+        pos2(inner.right(), form_top - 18.0),
+    );
+    if log.height() < 20.0 {
+        return sent;
+    }
+    if c.lines.is_empty() {
+        let size = if c.rail { 16.0 } else { 17.0 };
+        let alpha = if c.rail { 0.58 } else { 0.5 };
+        let g = wrapped(
+            &painter,
+            c.empty,
+            FontId::proportional(size),
+            hsla(45.0, 100.0, 95.0, alpha),
+            log.width(),
+        );
+        painter.galley(pos2(log.left(), log.top() + 14.0), g, cream());
+        return sent;
+    }
+    let time_w = if c.rail { 42.0 } else { 50.0 };
+    let size = if c.rail { 16.0 } else { 18.0 };
+    ui.scope_builder(egui::UiBuilder::new().max_rect(log), |ui| {
+        egui::ScrollArea::vertical()
+            .id_salt((c.id, "log"))
+            .auto_shrink([false, false])
+            .stick_to_bottom(true)
+            .show(ui, |ui| {
+                for chat in c.lines {
+                    chat_row(ui, chat, c.mine, log.width() - 12.0, time_w, size);
+                }
+            });
+    });
+    sent
+}
+
+/// `lobby-credits-key`: a dark key on a 5px base, sinking onto it when held.
+fn link_key(ui: &mut egui::Ui, painter: &Painter, r: Rect, label: Arc<egui::Galley>, id: &str) -> bool {
+    let response = ui.interact(
+        r.expand2(vec2(0.0, 5.0)),
+        ui.scope_id().with(("link", id)),
+        egui::Sense::click(),
+    );
+    let held = response.is_pointer_button_down_on();
+    let hovered = response.hovered();
+    if hovered {
+        ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
+    }
+    let sink = if held { 4.0 } else { 0.0 };
+    let base = r.translate(vec2(0.0, 5.0));
+    painter.rect_filled(
+        base.translate(vec2(0.0, 4.0 - sink * 0.8)).expand(1.0),
+        4.0,
+        hsla(0.0, 0.0, 0.0, 0.25),
+    );
+    painter.rect_filled(base, 4.0, Color32::from_rgb(0x0d, 0x0b, 0x16));
+    let face = r.translate(vec2(0.0, sink));
+    let (top, foot) = if hovered {
+        (Color32::from_rgb(0x57, 0x4b, 0x6d), Color32::from_rgb(0x28, 0x21, 0x37))
+    } else {
+        (Color32::from_rgb(0x39, 0x35, 0x4b), Color32::from_rgb(0x19, 0x16, 0x26))
+    };
+    painter.add(egui::epaint::RectShape::filled(face, 4.0, foot));
+    gradient_polygon(
+        painter,
+        &[
+            face.left_top() + vec2(2.0, 0.0),
+            face.right_top() - vec2(2.0, 0.0),
+            face.right_bottom() - vec2(2.0, 0.0),
+            face.left_bottom() + vec2(2.0, 0.0),
+        ],
+        &[(0.0, top), (1.0, foot)],
+    );
+    painter.hline(
+        (face.left() + 3.0)..=(face.right() - 3.0),
+        face.top() + 0.5,
+        Stroke::new(1.0, hsla(0.0, 0.0, 100.0, 0.2)),
+    );
+    let size = label.size();
+    painter.galley(face.center() - size / 2.0, label, cream());
+    response.clicked()
 }
 
 /// One room in the rail (`raised-key--sm raised-key--cream raised-key--room`).
@@ -1732,7 +1988,7 @@ fn room_row(ui: &mut egui::Ui, rect: Rect, m: &LiveMatchInfo) -> KeyFace {
 }
 
 /// One chat line: time, who, what (`lobby-chat__msg`).
-fn chat_row(ui: &mut egui::Ui, chat: &ChatLine, mine: &str, width: f32) {
+fn chat_row(ui: &mut egui::Ui, chat: &ChatLine, mine: &str, width: f32, time_w: f32, size: f32) {
     let painter = ui.painter().clone();
     let time = line(
         &painter,
@@ -1742,19 +1998,16 @@ fn chat_row(ui: &mut egui::Ui, chat: &ChatLine, mine: &str, width: f32) {
         hsla(45.0, 100.0, 95.0, 0.3),
         0.08,
     );
-    let text_x = 50.0 + 12.0;
+    let text_x = time_w + 12.0;
+    let sys = size - 2.0;
     let (who, body_text, color) = if chat.system || chat.from.is_empty() {
         let mut job = egui::text::LayoutJob::default();
-        job.append(
-            "◆  ",
-            0.0,
-            egui::TextFormat::simple(FontId::proportional(16.0), hsl(276.0, 90.0, 72.0)),
-        );
+        // The diamond is drawn: the body face has no `◆`.
         job.append(
             &chat.text,
-            0.0,
+            sys + 6.0,
             egui::TextFormat {
-                font_id: FontId::proportional(16.0),
+                font_id: FontId::proportional(sys),
                 color: hsla(45.0, 100.0, 95.0, 0.45),
                 italics: true,
                 ..Default::default()
@@ -1774,7 +2027,7 @@ fn chat_row(ui: &mut egui::Ui, chat: &ChatLine, mine: &str, width: f32) {
         let said = wrapped(
             &painter,
             &chat.text,
-            FontId::proportional(18.0),
+            FontId::proportional(size),
             hsla(45.0, 100.0, 95.0, 0.9),
             width - left,
         );
@@ -1800,6 +2053,18 @@ fn chat_row(ui: &mut egui::Ui, chat: &ChatLine, mine: &str, width: f32) {
         let w = who.size().x;
         painter.galley(pos2(x, who_y), who, cream());
         x += w + 12.0;
+    }
+    if chat.system || chat.from.is_empty() {
+        let d = sys * 0.3;
+        let c = pos2(
+            x + d + 1.0,
+            y + body_text.rows.first().map_or(sys, |r| r.max_y()) * 0.55,
+        );
+        painter.add(Shape::convex_polygon(
+            vec![c - vec2(0.0, d), c + vec2(d, 0.0), c + vec2(0.0, d), c - vec2(d, 0.0)],
+            hsl(276.0, 90.0, 72.0),
+            Stroke::NONE,
+        ));
     }
     painter.galley(pos2(x, y), body_text, color);
 }

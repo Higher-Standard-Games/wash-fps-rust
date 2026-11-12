@@ -2738,6 +2738,12 @@ the connection, room and chat survive each match. The pause menu's keys
 became shagger's `RaisedKey` and `TextField` components, shared with the
 lobby. The room card is still the plain `match_lobby_view.rs` until step 2.
 
+**Step 2 built.** shagger's `match_lobby_view.rs` now draws the room as
+`MatchLobbyView.ts` and its CSS do, and the rail shows the room's chat
+while the player is in one. Levelshots moved to `client/levelshots.rs` for
+the room and the loading screen. Glyph outlines come from skrifa (already
+in the tree through egui) for outlined display text.
+
 ### 0.3.5 (November 12, 2026)
 
 - **Fixes since 0.3.4**: the lobby page on NVIDIA under Linux still drew at

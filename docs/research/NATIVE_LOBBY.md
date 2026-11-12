@@ -1,6 +1,6 @@
 # Native lobby and settings: plan
 
-Status: step 1 built (November 12, 2026), behind `ui_lobby native`
+Status: steps 1 and 2 built (November 12, 2026), behind `ui_lobby native`
 (`washoi --lobby native` once; the cvar persists). The defaults for the
 questions in section 7: the welcome guide stays web-only until step 5, the
 native lobby opens straight onto Play, and the web view goes at parity.
@@ -117,7 +117,15 @@ tests, and can ship.
    lobby until their step lands. `washoi menu <lobby> --screenshot F --play`
    presses Quick play headless and joins the match it is handed.
 2. **Rooms.** The room view (restyle `match_lobby_view.rs`), private lobbies,
-   invites, bots, the full-server notice, deep links.
+   invites, bots, the full-server notice, deep links. *Built:* the room as
+   the web draws it (status radar, roster in VS, team and FFA layouts, map
+   vote with levelshots, Leave, Add bot, Switch, Shuffle, Rejoin, Ready),
+   room chat in the rail (`client/room_chat_view.rs`), seat reissue for
+   Rejoin, `client/levelshots.rs` shared with the loading screen, the
+   outlined ghost word (shagger `ui/components/outline_text.rs`), and the
+   foot's version, Devlog and Quit keys. `washoi menu ws://127.0.0.1:9
+   --screenshot F --room room.json` draws a room from its saved state.
+   Deep links and the full-server notice move to step 5.
 3. **Settings.** All five pages on `settings_model.rs`, key capture, the
    controller page, native settings sync, and the in-match Settings key.
    This is the biggest single step.

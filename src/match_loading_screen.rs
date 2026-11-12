@@ -16,18 +16,18 @@
 //! (`/data/levelshots/<map>.jpg`, as the browser's), kept in the cache.
 
 use std::cell::RefCell;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::sync::Arc;
 use std::sync::mpsc::{Receiver, TryRecvError, channel};
 use std::time::{Duration, Instant};
 
-use shagger::network::client::http_fetch::{FetchEvent, HttpFetch};
 use shagger::rendering::gpu::Gpu;
 use shagger::rendering::wgpu;
 use shagger::ui::components::connecting_overlay::{ConnectingOverlay, paint_twin};
 use shagger::ui::components::lobby_twin::{TwinRail, TwinStyle};
 use shagger::ui::egui_layer::{EguiLayer, egui};
 use shagger::ui::transfer_loading_view::{LoadingComplete, LoadingProgress, LoadingStart, TransferLoadingView};
+use washoi::client::levelshots::{Levelshot, levelshot_base};
 use washoi::client::washoi_style::{display_family, install_style};
 use winit::application::ApplicationHandler;
 use winit::event::{ElementState, WindowEvent};
@@ -47,8 +47,6 @@ const BACKGROUND: wgpu::Color = wgpu::Color {
 };
 /// How long a failure stays up before the lobby (`ConnectingOverlay`'s 3 s).
 const FAILURE_SHOWN: Duration = Duration::from_secs(3);
-const LEVELSHOT_IDLE: Duration = Duration::from_secs(5);
-const LEVELSHOT_TOTAL: Duration = Duration::from_secs(10);
 
 /// How the screen ended.
 pub enum Loaded {
@@ -123,87 +121,6 @@ pub fn twin_style() -> TwinStyle {
         body: egui::FontFamily::Proportional,
         engine: "SHAGGER".into(),
         version: format!("v{}", washoi::VERSION),
-    }
-}
-
-/// `https://eu.washoi.net/data/levelshots` for `wss://eu.washoi.net/lobby`.
-#[must_use]
-pub fn levelshot_base(lobby_url: &str) -> String {
-    let (scheme, rest) = match lobby_url.split_once("://") {
-        Some(("wss" | "https", rest)) => ("https", rest),
-        Some((_, rest)) => ("http", rest),
-        None => ("http", lobby_url),
-    };
-    let host = rest.split('/').next().unwrap_or(rest);
-    format!("{scheme}://{host}/data/levelshots")
-}
-
-/// A map name that is safe in a URL and a file name.
-fn safe_map(map: &str) -> bool {
-    !map.is_empty() && map.len() <= 64 && map.chars().all(|c| c.is_ascii_alphanumeric() || matches!(c, '_' | '-'))
-}
-
-fn levelshot_cache(map: &str) -> Option<PathBuf> {
-    washoi::cache_dir().map(|d| d.join("levelshots").join(format!("{map}.jpg")))
-}
-
-fn decode_levelshot(bytes: &[u8]) -> Option<egui::ColorImage> {
-    let image = image::load_from_memory(bytes).ok()?.into_rgba8();
-    let size = [image.width() as usize, image.height() as usize];
-    Some(egui::ColorImage::from_rgba_unmultiplied(size, image.as_raw()))
-}
-
-/// The levelshot: from the cache, or fetched and then kept.
-enum Levelshot {
-    None,
-    Fetching(String, HttpFetch),
-    Ready(Arc<egui::ColorImage>),
-}
-
-impl Levelshot {
-    fn start(base: Option<&str>, map: &str) -> Self {
-        if !safe_map(map) {
-            return Self::None;
-        }
-        if let Some(image) = levelshot_cache(map)
-            .and_then(|p| std::fs::read(p).ok())
-            .and_then(|b| decode_levelshot(&b))
-        {
-            return Self::Ready(Arc::new(image));
-        }
-        match base {
-            Some(base) => Self::Fetching(
-                map.to_owned(),
-                HttpFetch::start(&format!("{base}/{map}.jpg"), LEVELSHOT_IDLE, LEVELSHOT_TOTAL),
-            ),
-            None => Self::None,
-        }
-    }
-
-    fn poll(&mut self) {
-        let Self::Fetching(map, fetch) = self else { return };
-        while let Some(event) = fetch.poll() {
-            match event {
-                FetchEvent::Progress { .. } => {}
-                FetchEvent::Done(bytes) => {
-                    let Some(image) = decode_levelshot(&bytes) else {
-                        *self = Self::None;
-                        return;
-                    };
-                    if let Some(path) = levelshot_cache(map) {
-                        let _ = path.parent().map(std::fs::create_dir_all);
-                        let _ = std::fs::write(path, &bytes);
-                    }
-                    *self = Self::Ready(Arc::new(image));
-                    return;
-                }
-                // A map with no levelshot keeps the stage's own gradient.
-                FetchEvent::Failed(_) => {
-                    *self = Self::None;
-                    return;
-                }
-            }
-        }
     }
 }
 
@@ -637,7 +554,7 @@ pub fn screenshot(
     }
     let shot = levelshot
         .and_then(|p| std::fs::read(p).ok())
-        .and_then(|b| decode_levelshot(&b))
+        .and_then(|b| washoi::client::levelshots::decode_levelshot(&b))
         .map(|image| layer.ctx.load_texture("levelshot", image, egui::TextureOptions::LINEAR));
     view.stage.shot = shot.as_ref().map(|t| (t.id(), t.size_vec2()));
     let mut screen = Screen::Loading(view);
@@ -665,29 +582,4 @@ pub fn screenshot(
     image::save_buffer(path, &pixels, width, height, image::ExtendedColorType::Rgba8).map_err(|e| e.to_string())?;
     println!("loading: saved {}", path.display());
     Ok(())
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn levelshots_come_from_the_lobby_s_site() {
-        assert_eq!(
-            levelshot_base("wss://eu.washoi.net/lobby"),
-            "https://eu.washoi.net/data/levelshots"
-        );
-        assert_eq!(
-            levelshot_base("ws://localhost:9000"),
-            "http://localhost:9000/data/levelshots"
-        );
-    }
-
-    #[test]
-    fn only_a_plain_map_name_is_fetched() {
-        assert!(safe_map("washoi_dm2"));
-        assert!(!safe_map("../etc/passwd"));
-        assert!(!safe_map("a b"));
-        assert!(!safe_map(""));
-    }
 }

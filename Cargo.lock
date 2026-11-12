@@ -4009,7 +4009,7 @@ dependencies = [
 [[package]]
 name = "shagger"
 version = "0.0.1"
-source = "git+https://github.com/Higher-Standard-Games/shagger?rev=b8699ed8fe056ed3e8f4e83dfbc052536a6f429f#b8699ed8fe056ed3e8f4e83dfbc052536a6f429f"
+source = "git+https://github.com/Higher-Standard-Games/shagger?rev=7bf988dd9184da2273c04f344878ff63aff6804f#7bf988dd9184da2273c04f344878ff63aff6804f"
 dependencies = [
  "bytemuck",
  "cpal",
@@ -4036,6 +4036,7 @@ dependencies = [
  "serde_json",
  "sha2",
  "shagger_shared",
+ "skrifa",
  "swash",
  "tokio",
  "tokio-tungstenite",
@@ -4050,7 +4051,7 @@ dependencies = [
 [[package]]
 name = "shagger_shared"
 version = "0.0.1"
-source = "git+https://github.com/Higher-Standard-Games/shagger?rev=b8699ed8fe056ed3e8f4e83dfbc052536a6f429f#b8699ed8fe056ed3e8f4e83dfbc052536a6f429f"
+source = "git+https://github.com/Higher-Standard-Games/shagger?rev=7bf988dd9184da2273c04f344878ff63aff6804f#7bf988dd9184da2273c04f344878ff63aff6804f"
 dependencies = [
  "flate2",
 ]

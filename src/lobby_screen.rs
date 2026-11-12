@@ -106,9 +106,17 @@ impl LobbyApp<'_> {
             .paint(&m.gpu, &mut encoder, &view, [m.config.width, m.config.height], ui);
         m.gpu.queue.submit([encoder.finish()]);
         present(&m.gpu, &m.window, &mut m.surface, &m.config, frame);
-        if action == Some(PanelAction::WebLobby) {
-            self.outcome = Some(NativeOutcome::WebLobby);
-            end_screen(event_loop);
+        match action {
+            Some(PanelAction::WebLobby) => {
+                self.outcome = Some(NativeOutcome::WebLobby);
+                end_screen(event_loop);
+            }
+            Some(PanelAction::Quit) => {
+                self.outcome = Some(NativeOutcome::Lobby(LobbyOutcome::Quit));
+                end_screen(event_loop);
+            }
+            Some(PanelAction::OpenUrl(url)) => open_url(url),
+            None => {}
         }
     }
 }
@@ -174,6 +182,20 @@ impl ApplicationHandler for LobbyApp<'_> {
     }
 }
 
+/// Opens `url` in the system's browser.
+fn open_url(url: &str) {
+    let spawned = if cfg!(target_os = "windows") {
+        std::process::Command::new("cmd").args(["/C", "start", "", url]).spawn()
+    } else if cfg!(target_os = "macos") {
+        std::process::Command::new("open").arg(url).spawn()
+    } else {
+        std::process::Command::new("xdg-open").arg(url).spawn()
+    };
+    if let Err(why) = spawned {
+        println!("lobby: could not open {url}: {why}");
+    }
+}
+
 /// The lobby until it hands out a match, the player quits, or asks for
 /// the web lobby. On a quit the panel uploads the settings and lets go of
 /// the connection.
@@ -212,7 +234,8 @@ pub fn run(panel: &mut LobbyPanel, style: TwinStyle) -> Result<NativeOutcome, St
 /// The lobby `seconds` after it connects to `lobby_url`, saved to `path`
 /// without a window: for checking its look against the browser's. With
 /// `quick_play` it presses Quick play once the lobby allows it, and returns
-/// the match it is handed as soon as it is, saving that frame.
+/// the match it is handed as soon as it is, saving that frame. With `room`
+/// it draws that room's state (a `lobby:created` message's `lobby`) instead.
 ///
 /// # Errors
 /// No GPU, or the image could not be written.
@@ -223,6 +246,7 @@ pub fn screenshot(
     size: (u32, u32),
     seconds: f64,
     quick_play: bool,
+    room: Option<&Path>,
 ) -> Result<Option<LobbyChoice>, String> {
     let (width, height) = size;
     let gpu = Gpu::headless().map_err(|e| e.to_string())?;
@@ -240,9 +264,22 @@ pub fn screenshot(
     let started = Instant::now();
     let mut pixels = Vec::new();
     let mut pressed = false;
+    let room = match room {
+        Some(file) => {
+            let text = std::fs::read_to_string(file).map_err(|e| e.to_string())?;
+            Some(serde_json::from_str::<serde_json::Value>(&text).map_err(|e| e.to_string())?)
+        }
+        None => None,
+    };
     let mut choice = None;
     while choice.is_none() && (started.elapsed() < Duration::from_secs_f64(seconds) || pixels.is_empty()) {
         panel.poll();
+        // Without a lobby the dropped connection closes the room: open it again.
+        if let Some(state) = &room
+            && !panel.in_room()
+        {
+            panel.show_room_state(state);
+        }
         if quick_play && !pressed && panel.quick_play_enabled() {
             pressed = true;
             panel.start_quick_play();
