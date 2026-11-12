@@ -2710,6 +2710,17 @@ whole areas rather than single items. 0.2.0 closes them in two steps.
 
 ## 24. Progress log
 
+### 0.3.0 (November 12, 2026)
+
+- **New since 0.2.1**: hints for new players (the entry below), controllers
+  (the entry below), the freefly spectator's card, the TIME and VITAL
+  captions turned sideways, demo fixes (the gun in hand, the close button,
+  beams from the muzzle), water reflections culled to the mirrored view,
+  and one song at a time when a match starts.
+- **Engine**: shagger 3938b8f.
+- **Version 0.3.0**: a minor bump, since controllers and hints are new
+  features rather than fixes.
+
 ### 0.2.1 released (November 11, 2026)
 
 - **Linux fixes** after 0.2.0 on Arch (Wayland): GTK held to X11 so the

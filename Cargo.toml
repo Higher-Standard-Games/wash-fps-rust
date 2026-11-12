@@ -2,7 +2,7 @@
 name = "washoi"
 description = "Washoi, the native client: wash-fps ported to Rust on the SHAGGER engine."
 license = "MIT"
-version = "0.2.1"
+version = "0.3.0"
 publish = false
 edition = "2024"
 rust-version = "1.95"
@@ -14,7 +14,7 @@ repository = "https://github.com/Higher-Standard-Games/wash-fps-rust"
 #   [patch."https://github.com/Higher-Standard-Games/shagger"]
 #   shagger = { path = "../shagger/crates/shagger" }
 #   shagger_shared = { path = "../shagger/crates/shagger_shared" }
-shagger = { git = "https://github.com/Higher-Standard-Games/shagger", rev = "49c5133589204972260675d5a256aa340b384064", features = ["webview"] }
+shagger = { git = "https://github.com/Higher-Standard-Games/shagger", rev = "3938b8fa5f67ca30540a66fa54bdec9dccebddc6", features = ["webview"] }
 
 # The window and its events for `washoi view` (RUST.md 12): winit 0.30, the
 # release wgpu 30 and egui 0.37 work with. Without winit's drawn Wayland
