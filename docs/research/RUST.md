@@ -2710,6 +2710,20 @@ whole areas rather than single items. 0.2.0 closes them in two steps.
 
 ## 24. Progress log
 
+### Next (unreleased)
+
+- **Fixes since 0.3.3**: on macOS the arrow stayed drawn over a match.
+  winit hides the cursor with cursor rects, which AppKit applies only when
+  the cursor moves, and a locked cursor never moves; the game now also
+  hides it through `NSCursor` while the mouse is captured (shagger's
+  `input::native_cursor`). On Linux the lobby page stays slow without
+  DMA-BUF even with the blurs off: the page runs on GTK's main loop, which
+  ran only between our frames, and each frame waited for vsync while
+  drawing nothing anyone sees under the page. Once a frame has been drawn
+  and while the page covers the window, the lobby loop no longer draws:
+  it waits 2 ms at a time and pumps GTK each time.
+- **Engine**: shagger 815ad86.
+
 ### 0.3.3 (November 12, 2026)
 
 - **Fixes since 0.3.2**: the loading screen's rail shows the Washoi logo
