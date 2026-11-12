@@ -3957,7 +3957,6 @@ dependencies = [
 [[package]]
 name = "shagger"
 version = "0.0.1"
-source = "git+https://github.com/Higher-Standard-Games/shagger?rev=0c7fc9a6dd1ec1a69ac55b03bb125e753e4af3f1#0c7fc9a6dd1ec1a69ac55b03bb125e753e4af3f1"
 dependencies = [
  "bytemuck",
  "cpal",
@@ -3997,7 +3996,6 @@ dependencies = [
 [[package]]
 name = "shagger_shared"
 version = "0.0.1"
-source = "git+https://github.com/Higher-Standard-Games/shagger?rev=0c7fc9a6dd1ec1a69ac55b03bb125e753e4af3f1#0c7fc9a6dd1ec1a69ac55b03bb125e753e4af3f1"
 dependencies = [
  "flate2",
 ]
@@ -4809,7 +4807,7 @@ dependencies = [
 
 [[package]]
 name = "washoi"
-version = "0.3.1"
+version = "0.3.2"
 dependencies = [
  "flate2",
  "image",
