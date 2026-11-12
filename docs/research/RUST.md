@@ -2721,7 +2721,10 @@ whole areas rather than single items. 0.2.0 closes them in two steps.
   mode is remembered in `loadouts.json`. The stand shows the weapon's slot
   colour and initials: `WeaponPreview`'s turning model is not ported. The
   trigger on a launcher (`hipfireBlocked`: GL, RL) now raises the sights
-  on screen as well as for the server.
+  on screen as well as for the server. On Linux the lobby page no longer
+  comes up blank on NVIDIA's driver: unless `WEBKIT_DISABLE_DMABUF_RENDERER`
+  is already set, the game restarts itself once with it set to 1 before
+  WebKitGTK starts (setting it in the running process would take `unsafe`).
 - **Engine**: shagger d1f92fa.
 - **Version 0.3.3**.
 
