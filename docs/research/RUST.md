@@ -2721,8 +2721,14 @@ whole areas rather than single items. 0.2.0 closes them in two steps.
   ran only between our frames, and each frame waited for vsync while
   drawing nothing anyone sees under the page. Once a frame has been drawn
   and while the page covers the window, the lobby loop no longer draws:
-  it waits 2 ms at a time and pumps GTK each time.
-- **Engine**: shagger 815ad86.
+  it waits 2 ms at a time and pumps GTK each time. On macOS the lobby
+  page's bottom (the rail's Profile, Settings and Console keys) was cut
+  off in fullscreen on a MacBook Air: in a browser the page fits at that
+  size, so the web view was taller than the window's view. shagger now
+  gives it the content view's bounds on every resize and lets AppKit
+  resize it with the view. The Esc menu's Loadout key no longer shows
+  the kit's name, which ran into the label on a narrow rail.
+- **Engine**: shagger c398eea.
 
 ### 0.3.3 (November 12, 2026)
 
