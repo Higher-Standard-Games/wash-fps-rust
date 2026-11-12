@@ -1,6 +1,6 @@
 # Native lobby and settings: plan
 
-Status: steps 1 to 4 built (November 13, 2026), behind `ui_lobby native`
+Status: steps 1 to 4 built, step 5 under way (November 13, 2026), behind `ui_lobby native`
 (`washoi --lobby native` once; the cvar persists). The defaults for the
 questions in section 7: the welcome guide stays web-only until step 5, the
 native lobby opens straight onto Play, and the web view goes at parity.
@@ -170,7 +170,22 @@ tests, and can ship.
    to `native`. *Built so far:* the Welcome (`client/welcome_overlay.rs`,
    `WelcomeOverlay.ts` on the Profile's frame): a new account is asked for
    a name, or "Use my key" logs in with one, and the panel narrows onto
-   the rail. `--page welcome` or `welcome/restore` draws it.
+   the rail. `--page welcome` or `welcome/restore` draws it. The welcome
+   guide (`client/lobby_welcome_dialog.rs`, `lobby_welcome_guide.rs`): the
+   terms to agree to, the keys as bound (the controls page's board and
+   mouse, drawn to look at only) and a tip of the day. It opens once a
+   boot after login, once the Welcome and the Profile are out of the way,
+   unless turned off; `?` in the links bar opens it again, and "Go to
+   keyboard setup" leaves a "Back to welcome" key over Settings. The
+   credits (`client/credits/`, with MarkdownLite back from the egui menu)
+   open from CREDITS in the links bar, on the guide's card. TERMS.md and
+   CREDITS.md are copied into `assets/docs/` from wash-fps. The agreed
+   terms' version and "Don't show this again" live in `preferences.json`
+   beside the bindings (`client/lobby_preferences.rs`); the web view's
+   local storage keeps its own, so it asks once more. `--page guide/N`
+   and `credits` draw them. Left out: the lobby music key (the native
+   lobby plays no music yet) and the blur behind the card (egui has none;
+   the lobby is only darkened).
 
 As a rough size, steps 1 and 3 are each about the size of the kit picker plus
 the Esc menu several times over. Steps 2, 4 and 5 are smaller. Each step

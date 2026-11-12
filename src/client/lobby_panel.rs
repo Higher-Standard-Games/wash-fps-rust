@@ -47,14 +47,18 @@ use shagger::ui::egui_layer::egui;
 
 use egui::{Color32, FontFamily, FontId, Painter, Pos2, Rect, Shape, Stroke, pos2, vec2};
 
+use crate::client::credits::credits_dialog::{CreditsAnswer, CreditsDialog};
 use crate::client::demos_view::DemosView;
 use crate::client::leaderboard_view::LeaderboardView;
 use crate::client::levelshots::{Levelshots, site_base};
 use crate::client::lobby_rooms::{PlayKeysInput, RoomAction, describe_room, play_keys, room_count_label, sort_rooms};
+use crate::client::lobby_welcome_dialog::{back_key, back_key_size, dark_key};
+use crate::client::lobby_welcome_guide::{GuideEvent, LobbyWelcomeGuide};
 use crate::client::profile_view::{Account, ProfileAction, ProfileView, Screen as ProfileScreen};
 use crate::client::room_chat_view::RoomChatView;
 use crate::client::settings::fps_settings_view::FpsSettingsView;
 use crate::client::settings::settings_model::SETTINGS_PAGES;
+use crate::client::settings::settings_model::SettingsPageId;
 use crate::client::washoi_style::{DISPLAY_FONT, display_family};
 use crate::client::welcome_overlay::WelcomeOverlay;
 
@@ -179,7 +183,7 @@ pub enum PanelAction {
     /// The links row's Quit.
     Quit,
     /// A page for the system's browser, such as the devlog.
-    OpenUrl(&'static str),
+    OpenUrl(String),
 }
 
 /// The team's devlog, opened from the Play page's links bar (`DEVLOG_URL`).
@@ -374,6 +378,12 @@ pub struct LobbyPanel {
     pub profile: ProfileView,
     /// A new player's name or key, over everything while open.
     pub welcome: WelcomeOverlay,
+    /// The welcome guide and its `?` key.
+    pub guide: LobbyWelcomeGuide,
+    /// The credits, while open.
+    pub credits: Option<CreditsDialog>,
+    /// A page for the system's browser, asked for from a dialog.
+    open_url: Option<String>,
     /// The page drawn last frame: a page coming into view asks again.
     shown_tab: Option<Tab>,
     /// The maps' levelshots, for the room's vote cards.
@@ -440,6 +450,9 @@ impl LobbyPanel {
             demos: DemosView::new(url),
             profile: ProfileView::new(),
             welcome: WelcomeOverlay::new(),
+            guide: LobbyWelcomeGuide::default(),
+            credits: None,
+            open_url: None,
             shown_tab: None,
             levelshots: Levelshots::new(url),
             site: site_base(url),
@@ -722,6 +735,8 @@ impl LobbyPanel {
                     // `accountIsNew`: ask the new player who they are.
                     self.welcome.open(&account!(self));
                 }
+                // `welcomeGuide.setAuthenticated(true)`.
+                self.guide.set_authenticated(true);
                 self.demos.connected(
                     feature("demoOwnership"),
                     feature("featuredDemos"),
@@ -1148,6 +1163,10 @@ impl LobbyPanel {
         self.stage(ui, &layout, style, &mut action);
         self.rail(ui, &layout, style);
         self.overlays_ui(ui, screen, time, accent.face, style);
+        self.dialogs_ui(ui, screen);
+        if let Some(url) = self.open_url.take() {
+            action = Some(PanelAction::OpenUrl(url));
+        }
         // Keep the light drifting.
         ui.ctx().request_repaint();
         action
@@ -1155,6 +1174,37 @@ impl LobbyPanel {
 }
 
 impl LobbyPanel {
+    /// Whether the welcome guide may be over the lobby (`canOpen`).
+    fn guide_can_open(&self) -> bool {
+        !self.welcome.is_open() && !self.profile.is_open()
+    }
+
+    /// The welcome guide and the credits, over everything.
+    fn dialogs_ui(&mut self, ui: &mut egui::Ui, screen: Rect) {
+        let can_open = self.guide_can_open();
+        self.guide.refresh(can_open);
+        if self.guide.is_open() {
+            // The guide has the lobby's attention: the credits wait.
+            self.credits = None;
+            match self.guide.ui(ui, screen) {
+                Some(GuideEvent::OpenControls) => {
+                    self.tab = Tab::Settings;
+                    self.settings_view().show_page(SettingsPageId::Controls);
+                }
+                Some(GuideEvent::Open(url)) => self.open_url = Some(url),
+                None => {}
+            }
+            return;
+        }
+        if let Some(credits) = &mut self.credits {
+            match credits.ui(ui, screen) {
+                Some(CreditsAnswer::Close) => self.credits = None,
+                Some(CreditsAnswer::Open(url)) => self.open_url = Some(url),
+                None => {}
+            }
+        }
+    }
+
     /// The Profile and the Welcome, whichever is open, over the lobby.
     fn overlays_ui(&mut self, ui: &mut egui::Ui, screen: Rect, time: f64, accent: Color32, style: &TwinStyle) {
         if self.profile.is_open() {
@@ -1270,6 +1320,19 @@ impl LobbyPanel {
             self.open_profile(ProfileScreen::from_id(sub));
             return;
         }
+        if tab == "credits" {
+            self.credits = Some(CreditsDialog::default());
+            return;
+        }
+        if tab == "guide" {
+            // `guide/2`: the step, once the terms are agreed.
+            self.guide.set_authenticated(true);
+            self.guide.help(true);
+            if let Some(d) = &mut self.guide.dialog {
+                d.show_step(sub.parse::<usize>().unwrap_or(1).saturating_sub(1));
+            }
+            return;
+        }
         self.tab = match tab {
             "leaderboard" => Tab::Leaderboard,
             "demos" => Tab::Demos,
@@ -1326,6 +1389,12 @@ impl LobbyPanel {
 
     /// Escape: closes what the page has open. True when it did.
     pub fn back(&mut self) -> bool {
+        if self.guide.back() {
+            return true;
+        }
+        if self.credits.take().is_some() {
+            return true;
+        }
         if self.welcome.showing() {
             self.welcome.back(&account!(self));
             return true;
@@ -1662,7 +1731,18 @@ impl LobbyPanel {
         }
         match self.tab {
             Tab::Play => self.play_page(ui, l, content, &mode),
-            Tab::Settings => self.settings_view().ui(ui, content),
+            Tab::Settings => {
+                // `« Back to welcome`, above the page, while the guide waits.
+                let mut content = content;
+                if self.guide.suspended {
+                    if back_key(ui, content.min) {
+                        let can_open = self.guide_can_open();
+                        self.guide.resume(can_open);
+                    }
+                    content.min.y += back_key_size(&ui.painter().clone()).y + 5.0 + 8.0;
+                }
+                self.settings_view().ui(ui, content);
+            }
             Tab::Leaderboard => self.leaderboard.ui(ui, content, &mut self.client),
             Tab::Demos => {
                 if let Some(demo) = self.demos.ui(ui, content, &mut self.client, &mut self.levelshots) {
@@ -1704,8 +1784,20 @@ impl LobbyPanel {
         }
         // On the Play page only: a room keeps the foot clear.
         if self.tab == Tab::Play && self.room.is_none() {
+            // `.lobby-guide-help`: the welcome guide again.
+            let can_open = self.guide_can_open();
+            if self.guide.help_shown(can_open) {
+                let r = Rect::from_min_max(pos2(right - 44.0, bottom - 44.0), pos2(right, bottom));
+                right = r.left() - 12.0;
+                if dark_key(ui, "help", r, "?", 17.0) {
+                    self.guide.help(can_open);
+                }
+            }
+            if key(ui, &mut right, "CREDITS") && self.credits.is_none() {
+                self.credits = Some(CreditsDialog::default());
+            }
             if key(ui, &mut right, "DEVLOG") {
-                action = Some(PanelAction::OpenUrl(DEVLOG_URL));
+                action = Some(PanelAction::OpenUrl(DEVLOG_URL.to_owned()));
             }
             // The version, so a screenshot for a bug report carries it.
             let version = line(

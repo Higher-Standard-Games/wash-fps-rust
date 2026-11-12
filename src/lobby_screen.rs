@@ -116,7 +116,7 @@ impl LobbyApp<'_> {
                 self.outcome = Some(NativeOutcome::Lobby(LobbyOutcome::Quit));
                 end_screen(event_loop);
             }
-            Some(PanelAction::OpenUrl(url)) => open_url(url),
+            Some(PanelAction::OpenUrl(url)) => open_url(&url),
             None => {}
         }
     }

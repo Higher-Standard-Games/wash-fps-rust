@@ -243,7 +243,7 @@ impl IdentityFrame {
 }
 
 /// A soft ellipse of `color` fading out at `radius`, within the convex `clip`.
-fn glow(painter: &Painter, centre: Pos2, radius: egui::Vec2, color: Color32, clip: &[Pos2]) {
+pub fn glow(painter: &Painter, centre: Pos2, radius: egui::Vec2, color: Color32, clip: &[Pos2]) {
     const SEGMENTS: u32 = 48;
     const RINGS: u32 = 8;
     let inside = |p: Pos2| {

@@ -86,6 +86,9 @@ pub struct ControlsPage {
     focus: Option<&'static str>,
     /// Shift and the like held while listening, bound if released alone.
     modifiers: egui::Modifiers,
+    /// The welcome guide's picture of the keys (`lobby-guide__preview`):
+    /// nothing answers the pointer, and keys that do nothing fade.
+    preview: bool,
 }
 
 impl ControlsPage {
@@ -288,6 +291,77 @@ impl ControlsPage {
         }
     }
 
+    /// Keys answer clicks, except in the preview.
+    fn sense(&self) -> egui::Sense {
+        if self.preview {
+            egui::Sense::hover()
+        } else {
+            egui::Sense::click()
+        }
+    }
+
+    /// `.lobby-guide__preview`: the keyboard and the mouse as they are bound,
+    /// to look at only, in `rect`'s width from its top; returns the bottom.
+    /// The mouse takes a 250px column (225 on the web; the labels are
+    /// wider here), one column under 820px.
+    pub fn preview(ui: &mut egui::Ui, rect: Rect, screen_w: f32) -> f32 {
+        let mut page = Self {
+            preview: true,
+            ..Self::default()
+        };
+        let painter = ui.painter().clone();
+        let one_column = screen_w <= 820.0;
+        let inner = rect.shrink2(vec2(18.0, 16.0));
+        let (board_w, mouse_left) = if one_column {
+            (inner.width(), inner.left())
+        } else {
+            (inner.width() - 250.0 - 24.0, inner.right() - 250.0)
+        };
+        let heading = |x: f32, y: f32, s: &str| {
+            let g = line(&painter, s, 15.0, display_family(), cream(), 0.1);
+            let h = g.size().y;
+            painter.galley(pos2(x, y), g, cream());
+            y + h + 12.0
+        };
+        // Painted under the keys once their height is known.
+        let backdrop = painter.add(Shape::Noop);
+        let mut bottom = inner.top();
+        with_input(|input| {
+            let board_top = heading(inner.left(), inner.top(), "KEYBOARD");
+            let board = Rect::from_min_size(pos2(inner.left(), board_top), vec2(board_w, 400.0));
+            let board_bottom = ui
+                .scope_builder(egui::UiBuilder::new().max_rect(board), |ui| {
+                    page.keyboard(ui, input, None);
+                    ui.min_rect().bottom()
+                })
+                .inner;
+            let mouse_y = if one_column { board_bottom + 24.0 } else { inner.top() };
+            let mouse_top = heading(mouse_left, mouse_y, "MOUSE");
+            let mouse = Rect::from_min_size(
+                pos2(mouse_left, mouse_top),
+                vec2(if one_column { 320.0 } else { 250.0 }, 300.0),
+            );
+            let mouse_bottom = ui
+                .scope_builder(egui::UiBuilder::new().max_rect(mouse), |ui| {
+                    page.mouse(ui, input, None);
+                    ui.min_rect().bottom()
+                })
+                .inner;
+            bottom = board_bottom.max(mouse_bottom) + 16.0;
+        });
+        let r = Rect::from_min_max(rect.min, pos2(rect.right(), bottom));
+        let mut mesh = egui::Mesh::default();
+        let (top_c, foot_c) = (hsl(250.0, 35.0, 16.0), hsl(250.0, 45.0, 9.0));
+        mesh.colored_vertex(r.left_top(), top_c);
+        mesh.colored_vertex(r.right_top(), top_c);
+        mesh.colored_vertex(r.right_bottom(), foot_c);
+        mesh.colored_vertex(r.left_bottom(), foot_c);
+        mesh.add_triangle(0, 1, 2);
+        mesh.add_triangle(0, 2, 3);
+        painter.set(backdrop, mesh);
+        bottom
+    }
+
     /// Whether `code` is dimmed: an action is pointed at, and not this key's.
     fn dimmed(&self, focus: Option<&'static str>, code: &str, input: &InputSystem) -> bool {
         focus.is_some_and(|f| !codes_for(f, input).iter().any(|c| c == code))
@@ -305,11 +379,11 @@ impl ControlsPage {
         legend: &str,
         show_act: bool,
     ) {
-        let response = ui.interact(rect, ui.scope_id().with(("cap", code)), egui::Sense::click());
+        let response = ui.interact(rect, ui.scope_id().with(("cap", code)), self.sense());
         let action = action_for(code, input);
         let fixed = action.is_some_and(|a| a.fixed.is_some());
         let open = self.pop.as_ref().is_some_and(|(c, _)| c == code);
-        let hovered = response.hovered();
+        let hovered = response.hovered() && !self.preview;
         if hovered {
             ui.ctx().set_cursor_icon(if fixed {
                 egui::CursorIcon::Help
@@ -321,7 +395,18 @@ impl ControlsPage {
             }
         }
         let lit = focus.is_some() && !self.dimmed(focus, code, input);
-        let alpha = if self.dimmed(focus, code, input) { 0.28 } else { 1.0 };
+        let alpha = if self.preview {
+            // `.is-muted`: a key that does nothing, or only something minor.
+            if action.is_none_or(|a| a.group == ActionGroupId::Other) {
+                0.17
+            } else {
+                1.0
+            }
+        } else if self.dimmed(focus, code, input) {
+            0.28
+        } else {
+            1.0
+        };
         let held = response.is_pointer_button_down_on();
         let lift = if fixed {
             0.0
@@ -540,14 +625,15 @@ impl ControlsPage {
                 pos2(labels_left, labels_top + i as f32 * (slot_h + 6.0)),
                 vec2(label_w, slot_h),
             );
-            let response = ui.interact(r, ui.scope_id().with(("mlabel", *code)), egui::Sense::click());
+            let response = ui.interact(r, ui.scope_id().with(("mlabel", *code)), self.sense());
             let action = action_for(code, input);
             let open = self.pop.as_ref().is_some_and(|(c, _)| c == code);
             let dim = if self.dimmed(focus, code, input) { 0.3 } else { 1.0 };
-            if response.hovered() || open {
+            let hovered = response.hovered() && !self.preview;
+            if hovered || open {
                 painter.rect_filled(r, 0.0, hsla(276.0, 90.0, 64.0, 0.2));
             }
-            if response.hovered() {
+            if hovered {
                 hovered_code = Some(*code);
                 ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
             }
@@ -579,11 +665,12 @@ impl ControlsPage {
         }
         for (code, _) in MOUSE_INPUTS {
             let (r, radius) = zone(code);
-            let response = ui.interact(r, ui.scope_id().with(("mzone", code)), egui::Sense::click());
+            let response = ui.interact(r, ui.scope_id().with(("mzone", code)), self.sense());
             let action = action_for(code, input);
             let open = self.pop.as_ref().is_some_and(|(c, _)| c == code);
-            let lit = response.hovered() || open || hovered_code == Some(code);
-            if response.hovered() {
+            let hovered = response.hovered() && !self.preview;
+            let lit = hovered || open || hovered_code == Some(code);
+            if hovered {
                 ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
                 if let Some(a) = action {
                     self.focus = Some(a.id);
