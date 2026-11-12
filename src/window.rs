@@ -678,6 +678,11 @@ impl App {
         self.camera.fov_y = with_cvars(|c| current_base_fov(c)) as f32;
         let Some(s) = &mut self.surface else { return };
         s.renderer.world.animate(&s.gpu, f64::from(dt));
+        // The rotators turn and the lifts stand where the lift state says.
+        let feed = self.feed.as_ref();
+        s.renderer
+            .world
+            .move_movers(&s.gpu, f64::from(dt), |model| feed.and_then(|f| f.lift_travel(model)));
         s.renderer.item_time += f64::from(dt);
         if let Some(feed) = &mut self.feed {
             if let (Some(reel), Feed::Demo(demo)) = (&mut self.reel, &mut *feed) {

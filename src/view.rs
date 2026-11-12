@@ -614,6 +614,16 @@ impl Feed {
         }
     }
 
+    /// A lift's travel by its model index, which places its brush model.
+    #[must_use]
+    pub fn lift_travel(&self, model_index: usize) -> Option<f64> {
+        match self {
+            Self::Demo(d) => d.lift_travel(model_index),
+            Self::Live(l) => l.lift_travel(model_index),
+            Self::Play(p, _) => p.lift_travel(model_index),
+        }
+    }
+
     /// The newest snapshot's players.
     #[must_use]
     pub fn roster(&self) -> &[(String, PlayerState)] {
@@ -2822,7 +2832,7 @@ pub fn build_renderer(gpu: &Gpu, map: &mut LoadedMap, output_format: wgpu::Textu
     );
     let triangles: u32 = geometry.batches.iter().map(|b| b.index_count / 3).sum();
     println!(
-        "world: {} vertices, {triangles} triangles in {} batches, {} material passes ({} animated), {} images, {} shaders, {} sky faces, {} autosprite faces",
+        "world: {} vertices, {triangles} triangles in {} batches, {} material passes ({} animated), {} images, {} shaders, {} sky faces, {} autosprite faces, {} movers",
         geometry.vertices.len(),
         geometry.batches.len(),
         renderer.pass_count(),
@@ -2830,7 +2840,8 @@ pub fn build_renderer(gpu: &Gpu, map: &mut LoadedMap, output_format: wgpu::Textu
         renderer.texture_count(),
         map.shaders.shader_count(),
         geometry.sky_faces.len(),
-        geometry.sprite_faces
+        geometry.sprite_faces,
+        geometry.movers.len()
     );
     if !renderer.missing_images().is_empty() {
         println!("  no image found: {}", renderer.missing_images().join(", "));
@@ -3659,6 +3670,8 @@ pub fn start_prepared(o: &ViewOptions, prepared: Prepared) -> Result<i32, String
     renderer.dynamic_lights = !o.no_lights;
     // Shader animation as it stands `--time` seconds after the map loads.
     renderer.world.animate(&gpu, o.time);
+    // The rotators as they have turned by then; the lifts at rest.
+    renderer.world.move_movers(&gpu, o.time, |_| None);
     renderer.item_time = o.time;
     let mut hud: Option<FpsHud> = None;
     let mut overlay = crate::reel_overlay::ReelOverlay::default();

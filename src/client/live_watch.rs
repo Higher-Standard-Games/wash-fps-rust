@@ -79,6 +79,12 @@ impl LiveWatch {
     }
 
     /// Takes the snapshots that arrived and samples everything at now.
+    /// A lift's travel by its model index, as the newest snapshot says.
+    #[must_use]
+    pub fn lift_travel(&self, model_index: usize) -> Option<f64> {
+        self.feed.lift_travel.get(&model_index).copied()
+    }
+
     /// The match as the snapshots so far tell it.
     #[must_use]
     pub fn match_state(&self) -> &crate::client::match_state_manager::MatchStateManager {
