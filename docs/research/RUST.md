@@ -2743,6 +2743,18 @@ whole areas rather than single items. 0.2.0 closes them in two steps.
 
 Newest first. Each entry names the commits and what proves them.
 
+### Ragdolls drawn between substeps (November 12, 2026)
+
+- **shagger.** `PhysicsSystem` keeps each moving body's pose from before
+  the last fixed 1/60 s substep, and `interpolated` blends it to the
+  current pose by the leftover time (`alpha`). Before this, a display
+  faster than 60 Hz ran a substep on some frames and none on others. Limp
+  bodies stood still and then jumped, which showed as a shake. Now
+  `Ragdoll::sync` and `root_position` draw from the blended pose. Proved
+  by `drawing_blends_between_the_last_two_substeps`.
+- **washoi.** The thrown body's sphere, the trail's hips pose and
+  `body_position` read the same blended pose. Engine pin `0c7fc9a`.
+
 ### Controllers (November 12, 2026)
 
 - **shagger.** `input/gamepad_input.rs` ports `GamepadInput.ts` (the
