@@ -425,7 +425,30 @@ fn parse_options(args: impl Iterator<Item = String>) -> Options {
 /// Standard output and error go to `washoi.log` (no terminal to print to).
 static CONSOLE_LOGGED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
+/// WebKitGTK's DMA-BUF renderer draws the lobby page blank (black or white)
+/// on NVIDIA's driver and on some other stacks. Unless the player chose
+/// otherwise, the process starts over with it off. The variable has to be
+/// there before WebKit starts, and setting it in a running process is
+/// unsafe, so the process replaces itself with one that has it.
+#[cfg(target_os = "linux")]
+fn webkit_environment() {
+    use std::os::unix::process::CommandExt;
+    const VAR: &str = "WEBKIT_DISABLE_DMABUF_RENDERER";
+    if std::env::var_os(VAR).is_some() {
+        return;
+    }
+    let Ok(exe) = std::env::current_exe() else { return };
+    let why = std::process::Command::new(exe)
+        .args(std::env::args_os().skip(1))
+        .env(VAR, "1")
+        .exec();
+    // Still here: the restart failed. Carry on as we are.
+    eprintln!("could not restart with {VAR}=1: {why}");
+}
+
 fn main() {
+    #[cfg(target_os = "linux")]
+    webkit_environment();
     // Lossy rather than `args()`, which panics on a path that is not UTF-8.
     let mut args: Vec<String> = std::env::args_os()
         .skip(1)
