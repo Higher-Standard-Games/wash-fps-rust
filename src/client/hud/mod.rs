@@ -2,6 +2,7 @@
 //! browser HUD's sizes, colours and fonts.
 
 pub mod frame_rate_display;
+pub mod hint_coach;
 pub mod hud_widget;
 pub mod washiki;
 pub mod widgets;

@@ -2732,6 +2732,28 @@ whole areas rather than single items. 0.2.0 closes them in two steps.
 
 Newest first. Each entry names the commits and what proves them.
 
+### Hints for new players (November 12, 2026)
+
+- **HintCoach** (`client/hud/hint_coach.rs`) is the browser's coach, one
+  to one: movement, status and events in, a hint out, at most once a
+  minute each (scoreboard and grenade once). Its 20 tests are
+  `HintCoach.test.ts`'s.
+- **HintPanel** (`client/hud/widgets/hint_panel.rs`) draws `.fps-hint`:
+  the gold HINT cell, the dark slab, the player's own keys as gold caps
+  (two at most per action), wrapped at `min(640px, 50vw)`, 236 px up and
+  20 px in from the right. It fades in over 0.18 s (`ease-out`), holds
+  4.5 s and fades out over 0.6 s (`ease`). Hints show in warmup and the
+  first two minutes of a live match, never dead, watching or after the
+  match; `cl_hints 0` turns them off.
+- **The feed.** The window gives the panel each movement step, the keys,
+  fire held from the hip with a gun that aims, the water level, our
+  shots, a charge, fall damage, and fire held on an empty clip with ammo
+  in reserve (where `FPSPlayer` reloads by itself). The panel's clock is
+  the HUD's frame time.
+- Proof: `hint_coach` and `hint_panel` unit tests, and
+  `a_hint_shows_above_the_weapons` in `tests/hud_render.rs` (writes the
+  frame to `HUD_HINT_PNG`).
+
 ### Demo fixes, sideways captions (November 11, 2026)
 
 - **The gun in a demo.** `start_prepared` loaded the hand weapons only to

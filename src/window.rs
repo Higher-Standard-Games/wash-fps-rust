@@ -58,8 +58,10 @@ use shagger::babylon::post_processes::fxaa_post_process::FxaaPostProcess;
 use shagger::debug::debug_console::LogType;
 use shagger::loader::pk3::pk3_loader::locale_compare;
 use shagger::network::client::snapshot_buffer::InterpolatedEntity;
+use shagger::shared::js::js_hypot;
 use shagger::shared::net::game_state::PlayerState;
 use shagger::ui::egui_layer::EguiLayer;
+use washoi::client::ammo_status::HudWeaponAmmo;
 use washoi::client::cinematic_demo_player::{CinematicDemoPlayer, REEL_TITLE_MS, analyze_demo};
 use washoi::client::death_camera::{DeathCamera, look_angles};
 use washoi::client::demo_playback_keys::{DemoKeyAction, DemoKeyContext, Modifiers, demo_key_action, frag_seek_tick};
@@ -67,6 +69,8 @@ use washoi::client::demo_pov_state::{DemoPovState, watched_eye_pose};
 use washoi::client::demo_service::analysis_report;
 use washoi::client::first_person_view::{BodyFrame, FirstPersonView, ViewKeys, ViewOffset};
 use washoi::client::game_events::GameAudio;
+use washoi::client::hud::hint_coach::MovementSample;
+use washoi::client::hud::widgets::hint_panel::{AIMING, can_aim_with};
 use washoi::client::hud::widgets::pause_menu::{PauseMenu, PauseMenuAction};
 use washoi::client::hud::widgets::pickup_prompt::{asks_to_swap, swap_text};
 use washoi::client::spectate_view::{DeathCameraCue, SpectateView};
@@ -653,6 +657,23 @@ impl App {
                             smooth_factor,
                         ));
                         self.on_ladder = m.on_ladder;
+                        // `FPSHintPanel.moved`: the coach sees each step.
+                        if let Some(hud) = &mut s.hud {
+                            let weapon = hud.state.current_weapon.clone();
+                            hud.hints.moved(
+                                &MovementSample {
+                                    grounded: body.grounded,
+                                    sliding: body.sliding,
+                                    horizontal_speed: js_hypot(&[v.x, v.z]),
+                                    vertical_speed: v.y,
+                                    wall_jump: body.wall_jump,
+                                    ledge_grab: body.ledge_grab,
+                                    forward: held.forward,
+                                    strafing: held.left || held.right,
+                                },
+                                &weapon,
+                            );
+                        }
                         // `Game`'s own trail, from where we are drawn.
                         s.renderer.slide_dust.emit(
                             "local",
@@ -931,13 +952,30 @@ impl App {
                                 if feed.local_entity() == Some(entity_id.as_str()) {
                                     self.first_person
                                         .kick_for_shot(canonical_weapon_id(weapon_id), view_model.view.ads_progress);
+                                    // `noteLocalShotForHints(canAimWith(weaponId))`.
+                                    if let Some(hud) = &mut s.hud {
+                                        hud.hints.shot(
+                                            view_model.view.ads_progress < AIMING,
+                                            can_aim_with(weapon_id),
+                                            weapon_id,
+                                        );
+                                    }
                                 }
                             }
                             s.renderer.fire_view_muzzle_flash(&self.camera, projectile_fire);
                         }
                         SnapshotEvent::WeaponCharge {
                             entity_id, charging, ..
-                        } if *entity_id == viewed => self.view_charging = *charging,
+                        } if *entity_id == viewed => {
+                            self.view_charging = *charging;
+                            // `noteLocalChargeForHints`.
+                            if *charging
+                                && feed.local_entity() == Some(entity_id.as_str())
+                                && let Some(hud) = &mut s.hud
+                            {
+                                hud.hints.charged();
+                            }
+                        }
                         // The pain shake, our own only (`GameEvents`).
                         SnapshotEvent::Damage {
                             entity_id,
@@ -945,6 +983,13 @@ impl App {
                             weapon_id,
                             ..
                         } if feed.local_entity() == Some(entity_id.as_str()) => {
+                            // `noteLocalFallForHints`.
+                            if matches!(weapon_id.as_str(), "fall" | "fall_crush")
+                                && let Some(hud) = &mut s.hud
+                            {
+                                let weapon = hud.state.current_weapon.clone();
+                                hud.hints.fell(&weapon);
+                            }
                             let hitshake = with_cvars(|c| c.get_bool("cg_hitshake"));
                             self.first_person.hit(f64::from(*damage), weapon_id, hitshake);
                         }
@@ -1031,6 +1076,26 @@ impl App {
                 let (pickup, dropped) = (ask(map), ask(floor));
                 hud.pickup_prompt.set("pickup", pickup);
                 hud.pickup_prompt.set("dropped", dropped);
+                // `FPSHintPanel.update`'s inputs: the keys, fire held from
+                // the hip with a gun that aims, the water; and `FPSPlayer`'s
+                // emptied clip, where it reloads by itself.
+                with_input(|i| hud.hints.set_keys(i, false));
+                let (ads, shown) = s
+                    .renderer
+                    .view_model
+                    .as_ref()
+                    .map_or((1.0, ""), |v| (v.view.ads_progress, v.view.weapon.as_str()));
+                let (fire, water) = match &*feed {
+                    Feed::Play(p, held) => (p.alive && held.fire, p.movement().water_level),
+                    _ => (false, 0),
+                };
+                hud.hints.holding_fire = fire && ads < AIMING && can_aim_with(shown);
+                hud.hints.water_level = water;
+                let weapon = hud.state.current_weapon.clone();
+                let dry = fire
+                    && matches!(hud.state.ammo.get(&weapon),
+                        Some(HudWeaponAmmo::Clip { clip, reserve }) if *clip <= 0.0 && *reserve > 0.0);
+                hud.hints.dry_fire(dry, &weapon);
             }
             let outline = quad.then(|| quad_view_weapon_outline(s.renderer.item_time));
             if let Some(view_model) = &mut s.renderer.view_model {

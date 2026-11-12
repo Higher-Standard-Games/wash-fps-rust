@@ -221,6 +221,22 @@ pub const WEAPON_MODELS: [&WeaponModel; 8] = [
     &BLADE,
 ];
 
+/// `WEAPONS[id]?.name`: the weapon as the HUD names it.
+#[must_use]
+pub fn weapon_name(id: &str) -> Option<&'static str> {
+    Some(match id {
+        "blade" => "Blade",
+        "electrobolt" => "Electrobolt",
+        "glauncher" => "Grenade Launcher",
+        "machinegun" => "Machinegun",
+        "plasmagun" => "Plasma Gun",
+        "riotgun" => "Riotgun",
+        "rlauncher" => "Rocket Launcher",
+        "voltaic" | "lasergun" => "Voltaic",
+        _ => return None,
+    })
+}
+
 /// `WEAPONS[id]?.speedBonus ?? 0`: the weapon's run speed bonus, which the
 /// server applies per entity and prediction must match (blade +10, riot gun
 /// +5, electrobolt and rocket launcher -25).

@@ -507,3 +507,83 @@ fn a_freefly_spectator_sees_the_keys() {
     assert!(cyan > 100, "{cyan}");
     assert!(cream > 300, "{cream}");
 }
+
+/// A new player's hint, bottom right above the weapons: the gold HINT cell
+/// and the line with the player's keys as gold caps. Writes the frame to
+/// `HUD_HINT_PNG` when set.
+#[test]
+fn a_hint_shows_above_the_weapons() {
+    let Ok(gpu) = Gpu::headless() else {
+        eprintln!("skipped: no GPU adapter");
+        return;
+    };
+    let (width, height) = (1280u32, 720u32);
+    let mut hud = FpsHud::new(&gpu, OFFSCREEN_FORMAT).unwrap();
+    let roster = vec![(
+        "player_3".to_owned(),
+        PlayerState {
+            entity_id: "player_3".into(),
+            name: "Noodlesoup".into(),
+            ..PlayerState::default()
+        },
+    )];
+    let match_state = MatchStateManager::new();
+    let mut input = shagger::input::input_system::InputSystem::new(None);
+    washoi::client::fps_actions::register_fps_actions(&mut input);
+    hud.hints.set_keys(&input, false);
+    let mut frame = WatchFrame {
+        roster: &roster,
+        match_state: &match_state,
+        events: &[],
+        view_entity: Some("player_3"),
+        playback: false,
+        playing: true,
+        speed: 0.0,
+        positions: &[],
+        yaw: 0.0,
+        dt: 1.0 / 60.0,
+        air: None,
+        watched: None,
+    };
+    hud.update_watching(&frame, width as f32, height as f32);
+    hud.hints
+        .present(washoi::client::hud::hint_coach::HintId::Strafe, "machinegun");
+    // Past the fade in.
+    frame.dt = 0.3;
+    hud.update_watching(&frame, width as f32, height as f32);
+    assert_eq!(
+        hud.hints.text().as_deref(),
+        Some("In the air, hold [A] or [D] and turn the mouse to gain speed!")
+    );
+    hud.prepare(&gpu);
+    let post = ImageProcessingPostProcess::new(&gpu, OFFSCREEN_FORMAT);
+    let pixels = render_hdr_with_ui_to_rgba(
+        &gpu,
+        width,
+        height,
+        wgpu::Color {
+            r: 0.3,
+            g: 0.3,
+            b: 0.3,
+            a: 1.0,
+        },
+        &post,
+        &ImageProcessingConfiguration::default(),
+        |_| {},
+        |_| {},
+        |pass| hud.draw(pass),
+    );
+    if let Some(path) = std::env::var_os("HUD_HINT_PNG") {
+        image::save_buffer(path, &pixels, width, height, image::ExtendedColorType::Rgba8).unwrap();
+    }
+    // Gold (the cell and the caps) in the lower right, above the weapons.
+    let gold = (height / 2..height - 200)
+        .flat_map(|y| (width / 2..width).map(move |x| (x, y)))
+        .filter(|&(x, y)| {
+            let i = ((y * width + x) * 4) as usize;
+            let (r, g, b) = (pixels[i], pixels[i + 1], pixels[i + 2]);
+            r > 200 && g > 140 && b < 90
+        })
+        .count();
+    assert!(gold > 2000, "gold pixels: {gold}");
+}
