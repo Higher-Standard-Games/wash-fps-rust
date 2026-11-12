@@ -75,6 +75,7 @@ use washoi::client::first_person_view::{BodyFrame, FirstPersonView, ViewKeys, Vi
 use washoi::client::game_events::GameAudio;
 use washoi::client::hud::hint_coach::MovementSample;
 use washoi::client::hud::widgets::hint_panel::{AIMING, can_aim_with};
+use washoi::client::hud::widgets::loadout_picker::{self, LoadoutOutcome, LoadoutPicker};
 use washoi::client::hud::widgets::pause_menu::{PauseMenu, PauseMenuAction};
 use washoi::client::hud::widgets::pickup_prompt::{asks_to_swap, swap_text};
 use washoi::client::hud::widgets::spectator_cue::pad_bindings;
@@ -196,6 +197,9 @@ struct App {
     leave: bool,
     /// The Esc menu over a match we play in (`FPSPauseMenu`).
     pause_menu: PauseMenu,
+    /// The kit dialog (`FPSLoadoutPicker`), before the join in a mode
+    /// with kits and from the Esc menu's Loadout key.
+    loadout_picker: LoadoutPicker,
     /// The lobby page's settings are up over the match.
     settings_open: bool,
     /// The match as the menu names it (gametype · map).
@@ -337,6 +341,17 @@ impl App {
         if self.settings_open {
             return true;
         }
+        // The kit dialog has the keys; Escape backs out when it can.
+        if self.loadout_picker.is_open() {
+            if code == KeyCode::Escape
+                && event.state == ElementState::Pressed
+                && !event.repeat
+                && let Some(outcome) = self.loadout_picker.escape()
+            {
+                self.loadout_outcome(outcome);
+            }
+            return true;
+        }
         if code == KeyCode::Escape {
             if event.state == ElementState::Pressed && !event.repeat {
                 if self.pause_menu.open {
@@ -356,6 +371,16 @@ impl App {
         self.pause_menu.close();
         match action {
             PauseMenuAction::Resume => self.set_captured(true),
+            PauseMenuAction::Loadout => {
+                // `openLoadoutFromMenu`: the kit in use pre-selected.
+                if let Some(Feed::Play(p, _)) = &self.feed {
+                    let state = p.match_state();
+                    let mode = state.gametype_name().to_owned();
+                    let timing = state.loadout_mode().map(str::to_owned);
+                    let current = loadout_picker::remembered(&mode);
+                    self.loadout_picker.open(&mode, current, timing.as_deref(), true);
+                }
+            }
             PauseMenuAction::Settings => {
                 if crate::lobby_webview::open_match_settings(&self.menu_kicker) {
                     self.settings_open = true;
@@ -366,6 +391,43 @@ impl App {
             PauseMenuAction::Leave => {
                 println!("lobby: back to the lobby");
                 self.leave = true;
+            }
+        }
+    }
+
+    /// `joinGame`'s picker: a mode with kits waits for one before the join,
+    /// with the mouse free to choose it.
+    fn offer_loadout(&mut self) {
+        let Some(Feed::Play(p, _)) = &self.feed else { return };
+        if !p.wants_loadout() || self.loadout_picker.is_open() {
+            return;
+        }
+        let state = p.match_state();
+        let mode = state.gametype_name().to_owned();
+        let timing = state.loadout_mode().map(str::to_owned);
+        let current = loadout_picker::remembered(&mode);
+        self.pause_menu.close();
+        self.loadout_picker.open(&mode, current, timing.as_deref(), false);
+        self.set_captured(false);
+    }
+
+    /// The kit dialog closed: a kit is sent (and remembered) and the player
+    /// goes back to the game; backing out returns to the Esc menu.
+    fn loadout_outcome(&mut self, outcome: LoadoutOutcome) {
+        match outcome {
+            LoadoutOutcome::Confirm(kit) => {
+                if let Some(Feed::Play(p, _)) = &mut self.feed {
+                    loadout_picker::remember(p.match_state().gametype_name(), kit);
+                    p.choose_loadout(kit.primary, kit.secondary);
+                }
+                if self.in_play() {
+                    self.set_captured(true);
+                }
+            }
+            LoadoutOutcome::Cancel => {
+                if self.in_play() {
+                    self.pause_menu.open();
+                }
             }
         }
     }
@@ -410,7 +472,7 @@ impl App {
         let ctx = ControllerContext {
             enabled: self.device.gamepad(),
             in_play: self.captured,
-            menu: self.pause_menu.open,
+            menu: self.pause_menu.open || self.loadout_picker.is_open(),
             blocked: self.surface.is_none() || self.settings_open || self.console.console.open || typing,
         };
         let cvars = PadCvars::read();
@@ -427,10 +489,22 @@ impl App {
             }
             self.set_captured(false);
         }
-        if frame.enter_play && !self.opened_up && !self.pause_menu.open && !self.settings_open {
+        if frame.enter_play
+            && !self.opened_up
+            && !self.pause_menu.open
+            && !self.settings_open
+            && !self.loadout_picker.is_open()
+        {
             self.set_captured(true);
         }
         for intent in frame.nav {
+            if self.loadout_picker.is_open() {
+                if let Some(outcome) = self.loadout_picker.nav(intent) {
+                    self.loadout_outcome(outcome);
+                    break;
+                }
+                continue;
+            }
             if let Some(action) = self.pause_menu.nav(intent) {
                 self.pause_menu_action(action);
                 break;
@@ -540,6 +614,13 @@ impl App {
         true
     }
 
+    /// Playing with a weapon that fires only aimed (`hipfireBlocked`: the
+    /// launchers) in hand.
+    fn hipfire_blocked_in_hand(&self) -> bool {
+        matches!(&self.feed, Some(Feed::Play(play, _))
+            if play.weapon_in_hand().is_some_and(|w| weapon_hipfire_blocked(canonical_weapon_id(w))))
+    }
+
     /// This frame's actions as a player's input, through the player's
     /// bindings (`FPSActions`).
     fn play_input(&self) -> PlayInput {
@@ -574,13 +655,7 @@ impl App {
         input.left |= keys.left;
         input.right |= keys.right;
         // `hipfireBlocked`: the trigger on a launcher puts the aim up.
-        if input.fire
-            && !input.alt_fire
-            && let Some(Feed::Play(play, _)) = &self.feed
-            && play
-                .weapon_in_hand()
-                .is_some_and(|w| weapon_hipfire_blocked(canonical_weapon_id(w)))
-        {
+        if input.fire && !input.alt_fire && self.hipfire_blocked_in_hand() {
             input.alt_fire = true;
             input.auto_ads = true;
         }
@@ -671,7 +746,11 @@ impl App {
         }
         self.poll_pads(dt);
         with_input(InputSystem::update);
-        self.aiming = self.captured && with_input(|i| i.is_active(fps::AIM));
+        // `FPSController`'s `hipfireBlocked`: the trigger on a launcher puts
+        // the aim up, its look and feel too (`keys.aim = true`), not only
+        // the server's ALT_FIRE.
+        let launcher = self.hipfire_blocked_in_hand();
+        self.aiming = self.captured && with_input(|i| i.is_active(fps::AIM) || (launcher && i.is_active(fps::FIRE)));
         self.step(dt);
         with_input(InputSystem::end_frame);
         // `cl_fov`, as `currentBaseFov` gives every camera.
@@ -1203,7 +1282,11 @@ impl App {
             // play, alive, with the mouse ours; asked for under each owner.
             if let Some(hud) = &mut s.hud {
                 let at = match &*feed {
-                    Feed::Play(p, _) if !self.pause_menu.open && !self.settings_open => p.feet(),
+                    Feed::Play(p, _)
+                        if !self.pause_menu.open && !self.settings_open && !self.loadout_picker.is_open() =>
+                    {
+                        p.feet()
+                    }
                     _ => None,
                 };
                 let (map, floor) = match at {
@@ -1476,7 +1559,17 @@ impl App {
             _ => (String::new(), String::new()),
         };
         self.pause_menu.settings = crate::lobby_webview::match_settings_available();
+        // `matchMenuModeKeys`: Loadout, in a mode with kits, hinted with the kit.
+        self.pause_menu.loadout = match feed {
+            Some(Feed::Play(p, _)) if p.match_state().loadout_mode().is_some() => Some(
+                loadout_picker::remembered(p.match_state().gametype_name())
+                    .map_or_else(|| "Choose your kit".to_owned(), loadout_picker::describe_loadout),
+            ),
+            _ => None,
+        };
         let pause_menu = &mut self.pause_menu;
+        let loadout = &mut self.loadout_picker;
+        let mut loadout_outcome = None;
         let demo_hud = self.demo_hud.as_ref().filter(|_| cards);
         let ui = s.egui.run(&s.window, |ui| {
             if let (Some(reel), Some(Feed::Demo(demo)), true) = (reel, feed, cards) {
@@ -1492,6 +1585,7 @@ impl App {
                 demo_action = hud.ui(ui.ctx(), demo, followed.map(|id| (id, name.unwrap_or(id))));
             }
             menu_action = pause_menu.ui(ui.ctx(), &kicker, &player);
+            loadout_outcome = loadout.ui(ui.ctx());
             console.ui(ui.ctx());
         });
         s.egui
@@ -1515,6 +1609,10 @@ impl App {
         if let Some(action) = menu_action {
             self.pause_menu_action(action);
         }
+        if let Some(outcome) = loadout_outcome {
+            self.loadout_outcome(outcome);
+        }
+        self.offer_loadout();
         // Back from the settings is back to the match menu (`FPSHud`).
         if self.settings_open && crate::lobby_webview::poll_match_settings() {
             self.settings_open = false;
@@ -1820,6 +1918,7 @@ impl ApplicationHandler for App {
                     && !self.opened_up
                     && !self.pause_menu.open
                     && !self.settings_open
+                    && !self.loadout_picker.is_open()
                 {
                     self.set_captured(true);
                 } else {
@@ -2301,6 +2400,7 @@ pub fn run(
         audio,
         leave: false,
         pause_menu: PauseMenu::default(),
+        loadout_picker: LoadoutPicker::default(),
         settings_open: false,
         menu_kicker: String::new(),
         reel,

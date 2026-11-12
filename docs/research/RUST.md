@@ -2710,6 +2710,21 @@ whole areas rather than single items. 0.2.0 closes them in two steps.
 
 ## 24. Progress log
 
+### 0.3.3 (November 12, 2026)
+
+- **Fixes since 0.3.2**: the loading screen's rail shows the Washoi logo
+  (shagger's `TwinStyle` takes the game's logo, as `LobbyTwin`'s brand).
+  Modes with kits (FFA, Amphi, SnD) open the kit picker before the join, as
+  `Game.joinGame` does, instead of sending the default kit unasked
+  (`client/hud/widgets/loadout_picker.rs`, `LoadoutPicker.ts`); the Esc
+  menu has the mode's Loadout key under Resume, and the kit chosen in a
+  mode is remembered in `loadouts.json`. The stand shows the weapon's slot
+  colour and initials: `WeaponPreview`'s turning model is not ported. The
+  trigger on a launcher (`hipfireBlocked`: GL, RL) now raises the sights
+  on screen as well as for the server.
+- **Engine**: shagger d1f92fa.
+- **Version 0.3.3**.
+
 ### 0.3.2 (November 12, 2026)
 
 - **Fixes since 0.3.1**: closed doors are drawn. The world now builds

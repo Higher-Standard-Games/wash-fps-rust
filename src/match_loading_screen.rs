@@ -97,11 +97,28 @@ impl Screen {
     }
 }
 
+/// The lobby's logo (`/data/washoi.png`), which the browser's rail shows.
+const LOGO_PNG: &[u8] = include_bytes!("../assets/brand/washoi.png");
+
+/// The logo, decoded once.
+fn twin_logo() -> Option<Arc<egui::ColorImage>> {
+    static LOGO: std::sync::OnceLock<Option<Arc<egui::ColorImage>>> = std::sync::OnceLock::new();
+    LOGO.get_or_init(|| {
+        let image = image::load_from_memory_with_format(LOGO_PNG, image::ImageFormat::Png)
+            .ok()?
+            .into_rgba8();
+        let size = [image.width() as usize, image.height() as usize];
+        Some(Arc::new(egui::ColorImage::from_rgba_unmultiplied(size, image.as_raw())))
+    })
+    .clone()
+}
+
 /// The game's look for the twin.
 #[must_use]
 pub fn twin_style() -> TwinStyle {
     TwinStyle {
         brand: "WASHOI".into(),
+        logo: twin_logo(),
         display: display_family(),
         body: egui::FontFamily::Proportional,
         engine: "SHAGGER".into(),
