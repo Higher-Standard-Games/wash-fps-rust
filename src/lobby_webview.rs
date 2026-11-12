@@ -13,6 +13,7 @@
 //! and Quit. There is no native lobby behind it.
 
 use std::cell::{Cell, RefCell};
+use std::mem::ManuallyDrop;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -90,8 +91,11 @@ const BACKGROUND: wgpu::Color = wgpu::Color {
 };
 
 thread_local! {
-    /// The page, alive from the first lobby to the end of the process.
-    static HOST: RefCell<Option<WebviewHost>> = const { RefCell::new(None) };
+    /// The page, alive from the first lobby to the end of the process, and
+    /// never dropped: on macOS a quit from the Dock or Cmd+Q ends the process
+    /// inside the event loop, and the web view's teardown in the thread-local
+    /// destructor then aborts, which macOS reports as a crash.
+    static HOST: RefCell<Option<ManuallyDrop<WebviewHost>>> = const { RefCell::new(None) };
     /// The page said hello at least once.
     static GREETED: Cell<bool> = const { Cell::new(false) };
     /// The page has been told of the newer release (`native:update`).
@@ -345,7 +349,7 @@ impl LobbyApp {
     }
 
     fn with_host<R>(f: impl FnOnce(&mut WebviewHost) -> R) -> Option<R> {
-        HOST.with(|h| h.borrow_mut().as_mut().map(f))
+        HOST.with(|h| h.borrow_mut().as_mut().map(|host| f(host)))
     }
 
     fn handle(&mut self, event_loop: &ActiveEventLoop) {
@@ -623,7 +627,9 @@ impl ApplicationHandler for LobbyApp {
                     host.show();
                     Ok(())
                 }
-                None => WebviewHost::new(&*window, size, &self.config()).map(|host| *slot = Some(host)),
+                None => {
+                    WebviewHost::new(&*window, size, &self.config()).map(|host| *slot = Some(ManuallyDrop::new(host)))
+                }
             }
         });
         if let Err(why) = made {
@@ -708,7 +714,20 @@ pub fn run(url: &str, mirror: &StorageMirror, after: Option<AfterMatch>) -> Resu
         error: None,
     };
     let ran = run_on_event_loop(&mut app);
+    if let Some(open) = &app.open {
+        crate::window::remember_placement(&open.window);
+    }
     app.open = None;
+    if !crate::window::WINDOW_SURVIVES_LOOPS {
+        // The window closed with the loop, and the page with it: the next
+        // lobby builds a new one in its own window. Without the page there
+        // are no settings over the match.
+        if let Some(host) = HOST.with(|h| h.borrow_mut().take()) {
+            drop(ManuallyDrop::into_inner(host));
+        }
+        GREETED.with(|g| g.set(false));
+        SETTINGS_READY.with(|r| r.set(false));
+    }
     ran?;
     if let Some(e) = app.error {
         return Err(e);

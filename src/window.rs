@@ -2255,8 +2255,13 @@ pub fn kept_window() -> Option<Arc<Window>> {
     KEPT_WINDOW.with(|w| w.borrow().clone())
 }
 
+/// One window can serve every screen. Not on macOS: there winit closes every
+/// window when an event loop exits (winit #4135), and each screen runs a loop
+/// of its own, so each opens a new window where the last one was.
+pub const WINDOW_SURVIVES_LOOPS: bool = !cfg!(target_os = "macos");
+
 pub fn open_window(event_loop: &ActiveEventLoop) -> Result<OpenWindow, String> {
-    let kept = if KEEP_WINDOW.with(Cell::get) {
+    let kept = if KEEP_WINDOW.with(Cell::get) && WINDOW_SURVIVES_LOOPS {
         kept_window()
     } else {
         None
