@@ -2722,11 +2722,13 @@ whole areas rather than single items. 0.2.0 closes them in two steps.
   colour and initials: `WeaponPreview`'s turning model is not ported. The
   trigger on a launcher (`hipfireBlocked`: GL, RL) now raises the sights
   on screen as well as for the server. On Linux the lobby page no longer
-  comes up blank on NVIDIA's driver: unless `WEBKIT_DISABLE_DMABUF_RENDERER`
-  is already set, the game restarts itself once with it set to 1 before
-  WebKitGTK starts (setting it in the running process would take `unsafe`).
-  Without that renderer the page drew at a few frames a second, so on Linux
-  the webview also turns off the page's `backdrop-filter` blurs.
+  comes up blank on NVIDIA's driver: when `/proc/driver/nvidia/version`
+  exists and `WEBKIT_DISABLE_DMABUF_RENDERER` is not already set, the game
+  restarts itself once with it set to 1 before WebKitGTK starts (setting it
+  in the running process would take `unsafe`). Other drivers keep the
+  faster DMA-BUF path. Without that renderer the page drew at a few frames
+  a second, so whenever the variable is set the webview also turns off the
+  page's `backdrop-filter` blurs.
 - **Engine**: shagger d1f92fa.
 - **Version 0.3.3**.
 
