@@ -38,6 +38,7 @@ use crate::client::hud::widgets::ready_bar::ReadyBar;
 use crate::client::hud::widgets::round_result::RoundResult;
 use crate::client::hud::widgets::scoreboard::Scoreboard;
 use crate::client::hud::widgets::spectator_bar::SpectatorBar;
+use crate::client::hud::widgets::spectator_cue::SpectatorCue;
 use crate::client::hud::widgets::speedometer::Speedometer;
 use crate::client::hud::widgets::timer::Timer;
 use crate::client::hud::widgets::vitals_block::VitalsBlock;
@@ -77,6 +78,7 @@ pub struct FpsHud {
     air: AirMeter,
     ready: ReadyBar,
     spectator_bar: SpectatorBar,
+    spectator_cue: SpectatorCue,
     round_result: RoundResult,
     bomb_status: BombStatus,
     death: DeathScreen,
@@ -151,6 +153,7 @@ impl FpsHud {
             ready: ReadyBar::default(),
             round_result: RoundResult::default(),
             spectator_bar: SpectatorBar::default(),
+            spectator_cue: SpectatorCue::default(),
             bomb_status: BombStatus::default(),
             death: DeathScreen::default(),
             damage: DamageOverlay::default(),
@@ -426,6 +429,8 @@ impl FpsHud {
         }
         // `.fps-spectator-bar`: 210 px up, centred.
         self.spectator_bar.draw(&mut self.hud, &fonts, vw / 2.0, vh - 210.0 * s);
+        // `.fps-spectator-cue`: bottom left, 200 px up.
+        self.spectator_cue.draw(&mut self.hud, &fonts, 28.0 * s, vh - 200.0 * s);
         self.scoreboard.draw(&mut self.hud, &fonts, 0.0, 0.0);
         // `.fps-chat`: clear of the bottom bar, over the scoreboard's veil.
         self.chat.draw(
@@ -467,9 +472,10 @@ impl FpsHud {
         }
     }
 
-    fn widgets_mut(&mut self) -> [&mut dyn FpsHudWidget; 19] {
+    fn widgets_mut(&mut self) -> [&mut dyn FpsHudWidget; 20] {
         [
             &mut self.spectator_bar,
+            &mut self.spectator_cue,
             &mut self.powerup_timer,
             &mut self.air,
             &mut self.ready,
