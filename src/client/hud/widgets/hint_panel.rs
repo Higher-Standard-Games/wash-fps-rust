@@ -18,7 +18,7 @@ use shagger::input::input_system::InputSystem;
 use shagger::input::input_types::MouseButton;
 use shagger::ui::hud_2d::{Hud2d, TextStyle};
 
-use crate::client::fps_actions::{action_key_label, fps, key_label};
+use crate::client::fps_actions::{action_key_label, device_key_label, fps, key_label};
 use crate::client::game_events::canonical_weapon_id;
 use crate::client::hud::hint_coach::{HINT_SHOW_MS, HintCoach, HintId, MovementSample, StatusSample};
 use crate::client::hud::hud_widget::{FpsHudWidget, HudFrame};
@@ -319,7 +319,7 @@ impl HintPanel {
         self.gamepad = gamepad;
         for action in NAMED.into_iter().chain([fps::SCOREBOARD]) {
             let labels = if gamepad {
-                vec![action_key_label(input, action)]
+                vec![device_key_label(input, action, true)]
             } else {
                 key_labels(input, action)
             };

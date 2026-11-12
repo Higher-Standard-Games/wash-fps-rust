@@ -482,7 +482,11 @@ fn main() {
         .and_then(|p| p.parent())
         .map(std::path::Path::to_path_buf);
     shagger::core::cvar::init_cvars(storage, !cfg!(debug_assertions));
-    shagger::input::input_system::with_input(washoi::client::fps_actions::register_fps_actions);
+    shagger::input::input_system::with_input(|i| {
+        washoi::client::fps_actions::register_fps_actions(i);
+        // `ControllerInput.start`: the controller's bindings, beside the keys.
+        washoi::client::settings::controller_model::register_controller_settings(i);
+    });
     shagger::input::input_system::init_input(input_dir);
     shagger::core::cvar::with_cvars(washoi::client::settings::settings_model::register_client_cvars);
     let code = match mode.as_str() {

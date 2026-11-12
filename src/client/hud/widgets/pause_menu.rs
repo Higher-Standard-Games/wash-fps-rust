@@ -19,6 +19,7 @@ use shagger::ui::components::lobby_twin::{clamp_css as clamp, gradient_polygon, 
 use shagger::ui::egui_layer::egui;
 use shagger::ui::egui_layer::egui::{Color32, Pos2, Rect, Vec2, pos2, vec2};
 
+use crate::client::controller_input::UiIntent;
 use crate::client::washoi_style::display_family;
 
 /// What a key on the menu asked for.
@@ -42,6 +43,9 @@ pub struct PauseMenu {
     shown_at: Option<f64>,
     /// `buildRailBrand`'s logo, sized for the rail, and the height it was made for.
     logo: Option<(egui::TextureHandle, u32)>,
+    /// The key a controller has lit (`UINavigation`'s focus), by its place
+    /// on the rail.
+    focus: Option<usize>,
 }
 
 /// `fps-match-menu__note`.
@@ -193,9 +197,10 @@ fn raised_key(
     hint: &str,
     stacked: bool,
     label_size: f32,
+    focused: bool,
 ) -> bool {
     let response = ui.interact(rect, ui.scope_id().with(id), egui::Sense::click());
-    let hovered = response.hovered();
+    let hovered = response.hovered() || focused;
     let pressed = response.is_pointer_button_down_on();
     if hovered {
         ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
@@ -309,6 +314,36 @@ impl PauseMenu {
     pub fn close(&mut self) {
         self.open = false;
         self.shown_at = None;
+        self.focus = None;
+    }
+
+    /// The rail's keys, in order.
+    fn keys(&self) -> Vec<PauseMenuAction> {
+        let mut keys = vec![PauseMenuAction::Resume];
+        if self.settings {
+            keys.push(PauseMenuAction::Settings);
+        }
+        keys.push(PauseMenuAction::Leave);
+        keys
+    }
+
+    /// `UINavigation.handle` on the rail: up and down step through the
+    /// keys (the first is lit at the first step), confirm presses the lit
+    /// key (the first, before any step) and back resumes.
+    pub fn nav(&mut self, intent: UiIntent) -> Option<PauseMenuAction> {
+        if !self.open {
+            return None;
+        }
+        let keys = self.keys();
+        let last = keys.len() - 1;
+        match intent {
+            UiIntent::Up => self.focus = Some(self.focus.map_or(0, |f| f.saturating_sub(1))),
+            UiIntent::Down => self.focus = Some(self.focus.map_or(0, |f| (f + 1).min(last))),
+            UiIntent::Left | UiIntent::Right => {}
+            UiIntent::Confirm => return keys.get(self.focus.unwrap_or(0)).copied(),
+            UiIntent::Back => return Some(PauseMenuAction::Resume),
+        }
+        None
     }
 
     /// The logo's texture at `height` pixels, made again when the size changes.
@@ -352,6 +387,8 @@ impl PauseMenu {
         let logo_h = clamp(96.0, h * 0.19, 205.0);
         let logo = self.logo(ctx, (logo_h * ctx.pixels_per_point()).round() as u32);
         let settings = self.settings;
+        let focus = self.focus;
+        let leave_at = self.keys().len() - 1;
         let mut action = None;
         egui::Area::new(egui::Id::unique("pause-menu"))
             .order(egui::Order::Foreground)
@@ -497,7 +534,7 @@ impl PauseMenu {
                     // The first key is inked: what Esc most likely came for.
                     let kind = if i == 0 { KeyKind::Ink } else { KeyKind::Nav };
                     let rect = Rect::from_min_size(pos2(left, y), vec2(key_w, 66.0));
-                    if raised_key(ui, id, rect, kind, label, hint, stacked, label_size) {
+                    if raised_key(ui, id, rect, kind, label, hint, stacked, label_size, focus == Some(i)) {
                         action = Some(act);
                     }
                     y += 66.0 + 6.0 + 8.0;
@@ -556,6 +593,7 @@ impl PauseMenu {
                     "Back to the lobby",
                     stacked,
                     14.0,
+                    focus == Some(leave_at),
                 ) {
                     action = Some(PauseMenuAction::Leave);
                 }
@@ -600,5 +638,26 @@ mod tests {
     fn the_logo_decodes() {
         let image = image::load_from_memory_with_format(LOGO_PNG, image::ImageFormat::Png).unwrap();
         assert_eq!((image.width(), image.height()), (936, 468));
+    }
+
+    #[test]
+    fn a_controller_walks_the_rail() {
+        let mut menu = PauseMenu {
+            settings: true,
+            ..PauseMenu::default()
+        };
+        assert_eq!(menu.nav(UiIntent::Confirm), None);
+        menu.open();
+        // Before a step, A presses the first key; B resumes.
+        assert_eq!(menu.nav(UiIntent::Confirm), Some(PauseMenuAction::Resume));
+        assert_eq!(menu.nav(UiIntent::Back), Some(PauseMenuAction::Resume));
+        menu.nav(UiIntent::Down);
+        menu.nav(UiIntent::Down);
+        assert_eq!(menu.nav(UiIntent::Confirm), Some(PauseMenuAction::Settings));
+        menu.nav(UiIntent::Down);
+        menu.nav(UiIntent::Down);
+        assert_eq!(menu.nav(UiIntent::Confirm), Some(PauseMenuAction::Leave));
+        menu.nav(UiIntent::Up);
+        assert_eq!(menu.nav(UiIntent::Confirm), Some(PauseMenuAction::Settings));
     }
 }

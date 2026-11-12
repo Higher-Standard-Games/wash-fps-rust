@@ -77,9 +77,9 @@ pub struct FpsHud {
     pub pickup_prompt: PickupPrompt,
     powerup_timer: PowerupTimer,
     air: AirMeter,
-    ready: ReadyBar,
+    pub ready: ReadyBar,
     spectator_bar: SpectatorBar,
-    spectator_cue: SpectatorCue,
+    pub spectator_cue: SpectatorCue,
     /// `FPSHintPanel`: tips for new players, fed by the window.
     pub hints: HintPanel,
     round_result: RoundResult,

@@ -8,7 +8,9 @@
 //!
 //! The browser reads the keys from the bindings (`getActionKeyLabel`) and
 //! offers Join Game; the native watch mode flies on fixed keys, follows
-//! with F and has no join, so the card names those.
+//! with F and has no join, so the card names those. With a controller in
+//! hand it names the sticks and the pad's buttons instead
+//! ([`pad_bindings`]).
 
 use shagger::ui::hud_2d::{Align, Hud2d, TextStyle};
 
@@ -29,19 +31,44 @@ pub const BINDINGS: [Binding; 7] = [
     ("ESC", "Menu"),
 ];
 
+/// A controller's keys for the native watch mode, given the labels of the
+/// buttons bound to jump, crouch and fire (`refreshControls` with a
+/// controller): the sticks fly and look, jump and crouch fly up and down,
+/// and fire chases a player.
+#[must_use]
+pub fn pad_bindings(swap: bool, jump: &str, crouch: &str, fire: &str) -> Vec<(String, &'static str)> {
+    let (fly, look) = if swap {
+        ("Right stick", "Left stick")
+    } else {
+        ("Left stick", "Right stick")
+    };
+    vec![
+        (fly.to_owned(), "Fly"),
+        (look.to_owned(), "Look"),
+        (jump.to_owned(), "Fly Up"),
+        (crouch.to_owned(), "Fly Down"),
+        (fire.to_owned(), "Chase Player"),
+    ]
+}
+
 /// `FPSSpectatorCue` (the overlay's `freeflyCue`).
 #[derive(Debug, Default)]
 pub struct SpectatorCue {
     shown: bool,
+    /// A controller's keys, when one is in hand; the keyboard's otherwise.
+    pub pad: Option<Vec<(String, &'static str)>>,
 }
+
+/// A row: a key and what it does on the left, and maybe one on the right.
+pub type Row<K> = ((K, &'static str), Option<(K, &'static str)>);
 
 /// The grid's rows: the first half of the bindings down the left
 /// columns, the rest down the right (`refreshControls`).
 #[must_use]
-pub fn rows() -> Vec<(Binding, Option<Binding>)> {
-    let half = BINDINGS.len().div_ceil(2);
+pub fn rows<K: Clone>(bindings: &[(K, &'static str)]) -> Vec<Row<K>> {
+    let half = bindings.len().div_ceil(2);
     (0..half)
-        .map(|i| (BINDINGS[i], BINDINGS.get(i + half).copied()))
+        .map(|i| (bindings[i].clone(), bindings.get(i + half).cloned()))
         .collect()
 }
 
@@ -79,13 +106,21 @@ impl SpectatorCue {
         (hud.measure(key, &Self::key_style(fonts)) + 18.0 * s).max(28.0 * s)
     }
 
+    /// The keys on the card.
+    fn bindings(&self) -> Vec<(String, &'static str)> {
+        self.pad
+            .clone()
+            .unwrap_or_else(|| BINDINGS.iter().map(|(k, a)| ((*k).to_owned(), *a)).collect())
+    }
+
     /// The four columns' widths (key, action, key, action), the row
     /// height, and the card's size.
-    fn layout(hud: &Hud2d, fonts: &Fonts) -> ([f32; 4], f32, [f32; 2]) {
+    fn layout(&self, hud: &Hud2d, fonts: &Fonts) -> ([f32; 4], f32, [f32; 2]) {
         let s = UI_SCALE;
         let mut cols = [0.0f32; 4];
-        for (left, right) in rows() {
-            for (i, pair) in [Some(left), right].into_iter().enumerate() {
+        let rows = rows(&self.bindings());
+        for (left, right) in &rows {
+            for (i, pair) in [Some(left), right.as_ref()].into_iter().enumerate() {
                 let Some((key, action)) = pair else { continue };
                 cols[i * 2] = cols[i * 2].max(Self::chip_w(hud, fonts, key));
                 cols[i * 2 + 1] = cols[i * 2 + 1].max(hud.measure(action, &Self::action_style(fonts)));
@@ -93,7 +128,7 @@ impl SpectatorCue {
         }
         // The chip (12 + 4 + 5) or the action's line (15 * 1.2).
         let row = (21.0 * s).max(18.0 * s);
-        let n = rows().len() as f32;
+        let n = rows.len() as f32;
         let grid_w = cols.iter().sum::<f32>() + 3.0 * 12.0 * s + 18.0 * s;
         let grid_h = n * row + (n - 1.0) * 8.0 * s;
         let w = 6.0 * s + 20.0 * s + grid_w + 30.0 * s;
@@ -110,7 +145,7 @@ impl FpsHudWidget for SpectatorCue {
 
     fn size(&self, hud: &Hud2d, fonts: &Fonts) -> [f32; 2] {
         if self.shown {
-            Self::layout(hud, fonts).2
+            self.layout(hud, fonts).2
         } else {
             [0.0, 0.0]
         }
@@ -122,7 +157,7 @@ impl FpsHudWidget for SpectatorCue {
             return;
         }
         let s = UI_SCALE;
-        let (cols, row, [w, h]) = Self::layout(hud, fonts);
+        let (cols, row, [w, h]) = self.layout(hud, fonts);
         let (left, top) = (x, y - h);
         // `clip-path`: the top right corner cut 16 px.
         let cut = 16.0 * s;
@@ -147,7 +182,7 @@ impl FpsHudWidget for SpectatorCue {
         let grid_top = top + 16.0 * s + 12.0 * s + 12.0 * s;
         let key_style = Self::key_style(fonts);
         let action_style = Self::action_style(fonts);
-        for (r, (first, second)) in rows().into_iter().enumerate() {
+        for (r, (first, second)) in rows(&self.bindings()).into_iter().enumerate() {
             let row_top = grid_top + r as f32 * (row + 8.0 * s);
             let mut at = inner;
             for (i, pair) in [Some(first), second].into_iter().enumerate() {
@@ -156,6 +191,7 @@ impl FpsHudWidget for SpectatorCue {
                     at = inner + cols[0] + 12.0 * s + cols[1] + 12.0 * s + 18.0 * s;
                 }
                 let Some((key, action)) = pair else { continue };
+                let key = key.as_str();
                 // The cream chip, its sides slanted (`clip-path` 8 %).
                 let chip_w = Self::chip_w(hud, fonts, key);
                 Slab {
@@ -193,9 +229,18 @@ mod tests {
 
     #[test]
     fn rows_split_the_keys_into_two_columns() {
-        let rows = rows();
+        let rows = rows(&BINDINGS);
         assert_eq!(rows.len(), 4);
         assert_eq!(rows[0], (("WASD", "Fly"), Some(("C", "Fly Down"))));
         assert_eq!(rows[3], (("SPACE", "Fly Up"), None));
+    }
+
+    #[test]
+    fn a_controller_names_the_sticks_and_its_buttons() {
+        let pad = pad_bindings(false, "A", "B", "RT");
+        assert_eq!(pad[0], ("Left stick".to_owned(), "Fly"));
+        assert_eq!(pad[4], ("RT".to_owned(), "Chase Player"));
+        assert_eq!(pad_bindings(true, "A", "B", "RT")[1].0, "Left stick");
+        assert_eq!(rows(&pad).len(), 3);
     }
 }

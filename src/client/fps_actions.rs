@@ -230,6 +230,34 @@ pub fn action_key_label(input: &InputSystem, id: &str) -> String {
     .to_owned()
 }
 
+/// `getActionKeyLabel` with a controller in hand: the move actions are the
+/// move stick, fly up and down are jump and crouch, and the rest are the
+/// pad buttons bound to the action (`gamepad:v1:<action>`).
+#[must_use]
+pub fn pad_action_key_label(input: &InputSystem, id: &str, swap: bool) -> String {
+    use fps::*;
+    if [MOVE_FORWARD, MOVE_BACKWARD, MOVE_LEFT, MOVE_RIGHT].contains(&id) {
+        return if swap { "Right stick" } else { "Left stick" }.to_owned();
+    }
+    let id = match id {
+        FLY_UP => JUMP,
+        FLY_DOWN => CROUCH,
+        other => other,
+    };
+    crate::client::settings::controller_model::controller_label(input, id)
+}
+
+/// `getActionKeyLabel` for the device in hand.
+#[must_use]
+pub fn device_key_label(input: &InputSystem, id: &str, gamepad: bool) -> String {
+    if gamepad {
+        let swap = shagger::core::cvar::with_cvars(|c| c.exists("in_pad_swap") && c.get_number("in_pad_swap") != 0.0);
+        pad_action_key_label(input, id, swap)
+    } else {
+        action_key_label(input, id)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
