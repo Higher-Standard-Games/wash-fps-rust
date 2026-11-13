@@ -2779,7 +2779,9 @@ impl MapRenderer {
         if let Some(water) = &self.water {
             water.draw(pass, self.world.vertex_buffer(), self.world.index_buffer(), visible);
         }
-        self.world.draw_visible_blended(pass, visible);
+        // The map's blended surfaces (alpha indices 0-999); its additive
+        // ones (1000 and up) come after the effects and the map particles.
+        self.world.draw_visible_alpha_blended(pass, visible);
         // Wall marks lie on the walls, under the shots' effects.
         self.hitscan.wall_marks.draw(pass);
         // The effects' alpha indices (40 to 46) put them before the models'.
@@ -2792,9 +2794,12 @@ impl MapRenderer {
         self.hitscan.impact_sparks.draw(pass);
         self.rings.draw(pass);
         self.splash.draw(pass);
-        self.map_particles.draw(pass);
         self.teleport_renderer.draw(pass);
         self.explosions.draw(pass);
+        // `PARTICLE_ALPHA_INDEX`: between the map's blended and additive
+        // surfaces, so additive glass in front of a puff adds over it.
+        self.map_particles.draw(pass);
+        self.world.draw_visible_additive(pass, visible);
         self.models.draw_blended(pass);
         self.damage_number_renderer.draw(pass);
         // Rendering group 1: over everything, so last and without depth.

@@ -22,7 +22,7 @@ use shagger::weapon::muzzle::muzzle_flash_renderer::{MuzzleFlashSpawn, MuzzleFla
 use shagger::weapon::weapon_barrels::{BarrelSpin, babylon_euler, barrel_material_mode};
 use shagger::weapon::weapon_view_manager::{
     FlashLight, ShotStyle, ViewModelDef, WEAPON_CAMERA_MAX_Z, WEAPON_CAMERA_MIN_Z, WEAPON_OUTLINE_WIDTH, WeaponView,
-    blade_light, blade_reflection, view_material_mode, weapon_light, weapon_outline,
+    blade_light, blade_reflection, outline_units, view_material_mode, weapon_light, weapon_outline,
 };
 
 use crate::client::quad_damage_visual::{
@@ -376,9 +376,10 @@ impl WeaponViewModel {
                 .map_or(ModelMaterialMode::Lit, |m| view_material_mode(name, m));
             // `applyWeaponOutlines`: the powerup's colour and width when
             // one is on, else the blade's charge (`WeaponCharge`), divided
-            // by the root's scale like the black one. The quad wins.
+            // by the mesh's own units like the black one (`outlineUnits`).
+            // The quad wins.
             let over = self.powerup_outline.or(self.view.charge_outline);
-            let outline = weapon_outline(&mode, self.view.scale)
+            let outline = weapon_outline(&mode, outline_units(self.view.scale, primitive.node_matrix))
                 .filter(|_| over.is_some() || black_outline)
                 .map(|black| match over {
                     Some(powerup) => Outline {
