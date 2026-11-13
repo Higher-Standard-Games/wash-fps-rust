@@ -541,6 +541,16 @@ fn across(painter: &egui::Painter, quad: [Pos2; 4], stops: &[(f32, Color32)]) {
             mesh.add_triangle(n - 1, n, n + 1);
         }
     }
+    // The edges anti-aliased, the colour at each point along the gradient.
+    let along = |p: Pos2| {
+        let t = ((p - tl).dot(tr - tl) / (tr - tl).length_sq().max(1e-6)).clamp(0.0, 1.0);
+        let i = stops.iter().rposition(|(at, _)| *at <= t).unwrap_or(0);
+        let (a, ca) = stops[i];
+        stops
+            .get(i + 1)
+            .map_or(ca, |&(b, cb)| ca.lerp_to_gamma(cb, (t - a) / (b - a).max(1e-6)))
+    };
+    shagger::ui::components::lobby_twin::feather_convex(&mut mesh, &quad, along, 1.0 / painter.pixels_per_point());
     painter.add(egui::Shape::mesh(mesh));
 }
 
