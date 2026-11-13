@@ -786,9 +786,19 @@ impl App {
         s.renderer.world.animate(&s.gpu, f64::from(dt));
         // The rotators turn and the lifts stand where the lift state says.
         let feed = self.feed.as_ref();
-        s.renderer
-            .world
-            .move_movers(&s.gpu, f64::from(dt), |model| feed.and_then(|f| f.lift_travel(model)));
+        if let Some(f) = feed {
+            s.renderer.lifts.restore(&f.lift_states());
+        }
+        let lifts = &s.renderer.lifts;
+        s.renderer.world.move_movers(
+            &s.gpu,
+            f64::from(dt),
+            |model| feed.and_then(|f| f.lift_travel(model)),
+            |model| {
+                let o = lifts.button_offset(model);
+                (o.x != 0.0 || o.y != 0.0 || o.z != 0.0).then_some([o.x, o.y, o.z])
+            },
+        );
         s.renderer.item_time += f64::from(dt);
         if let Some(feed) = &mut self.feed {
             if let (Some(reel), Feed::Demo(demo)) = (&mut self.reel, &mut *feed) {

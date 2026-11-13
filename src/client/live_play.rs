@@ -443,6 +443,16 @@ impl LivePlay {
         &self.feed.roster
     }
 
+    /// The lifts that press the buttons in: the predicted lift system's,
+    /// else the newest snapshot's.
+    #[must_use]
+    pub fn lift_states(&self) -> Vec<shagger::shared::bsp::lift_system::LiftState> {
+        self.predictor
+            .collision_world()
+            .and_then(|c| c.backend.backend.lifts.as_ref())
+            .map_or_else(|| self.feed.lift_states.clone(), |l| l.snapshot())
+    }
+
     /// A lift's travel by its model index: the predicted lift system's,
     /// which carries our body, else the newest snapshot's.
     #[must_use]

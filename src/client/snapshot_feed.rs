@@ -78,6 +78,9 @@ pub struct SnapshotFeed {
     /// The newest `lift_state`: each lift's travel, by model index, which
     /// places its brush model (`handleLift` reads the lift system).
     pub lift_travel: HashMap<usize, f64>,
+    /// The newest `lift_state` whole, whose callers' cooldowns press the
+    /// buttons in (`restore`, then `buttonOffset`).
+    pub lift_states: Vec<shagger::shared::bsp::lift_system::LiftState>,
     /// Effect events waiting for the next frame.
     effects: Vec<SnapshotEvent>,
     weapons: HashMap<String, String>,
@@ -141,6 +144,7 @@ impl SnapshotFeed {
         for event in &state.events {
             if let SnapshotEvent::LiftState { lifts } = event {
                 self.lift_travel = lifts.iter().map(|l| (usize::from(l.model_index), l.offset)).collect();
+                self.lift_states = crate::client::prediction::sim_lifts(lifts);
             }
             match event {
                 SnapshotEvent::ProjectileSpawn { entity_id, def_id } => {

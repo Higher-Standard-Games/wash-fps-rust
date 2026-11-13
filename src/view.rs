@@ -4,10 +4,12 @@
 //! given with `--player` stand on the map as the Vanguard model.
 
 use shagger::lighting::map_emissive_surfaces::{SurfaceEmission, extract_emissive_surfaces};
+use shagger::loader::bsp::map_particles::MapParticles;
 use shagger::physics::physics_system::world_triangles;
 use shagger::physics::sweep_backend_adapter::to_shared_contents;
 use shagger::rendering::water::water_surface_lighting::{water_map_lights, water_surface_lights};
 use shagger::shared::bsp::brush_model_state::{BrushModelState, extract_brush_models};
+use shagger::shared::bsp::lift_system::{LiftState, LiftSystem, extract_lifts};
 use shagger::shared::js::js_hypot;
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
@@ -20,9 +22,9 @@ use washoi::client::dropped_weapon_renderer::{DropThrow, DroppedWeaponInfo, Drop
 use washoi::client::fps_liquid_audio::play_liquid_crossing;
 use washoi::client::fps_player_audio::{player_voice_for_entity, set_local_player_voice};
 use washoi::client::gib_system::{GibRenderer, GibSystem};
-use washoi::client::kill_taunt::{KillFacts, choose_kill_taunt};
 use washoi::client::hud::widgets::loadout_picker;
 use washoi::client::hud::widgets::pickup_prompt::{horizontal_distance_sq, in_pickup_range};
+use washoi::client::kill_taunt::{KillFacts, choose_kill_taunt};
 use washoi::client::player_appearance::{AppearanceView, PlayerAppearance};
 use washoi::client::player_model_selection::{PlayerModelSide, player_model_choice};
 use washoi::client::post_game_showcase::{PostGameShowcase, ShowcaseStart};
@@ -623,6 +625,17 @@ impl Feed {
         }
     }
 
+    /// The lifts as they stand, whose callers' cooldowns press the buttons
+    /// in (`handleButton` reads `buttonOffset`).
+    #[must_use]
+    pub fn lift_states(&self) -> Vec<LiftState> {
+        match self {
+            Self::Demo(d) => d.lift_states().to_vec(),
+            Self::Live(l) => l.lift_states().to_vec(),
+            Self::Play(p, _) => p.lift_states(),
+        }
+    }
+
     /// A lift's travel by its model index, which places its brush model.
     #[must_use]
     pub fn lift_travel(&self, model_index: usize) -> Option<f64> {
@@ -1108,6 +1121,8 @@ pub struct MapRenderer {
     /// Ghosts and speed-line bursts where players teleport.
     pub teleports: TeleportEffect,
     teleport_renderer: TeleportRenderer,
+    /// The map's `misc_particles` emitters (`MapParticles`).
+    pub map_particles: MapParticles,
     /// Each live player's last origin and yaw, for spotting a teleport.
     teleport_last: HashMap<String, (DVec3, f64)>,
     /// Bodies breaking into shards on a gib death.
@@ -1116,6 +1131,9 @@ pub struct MapRenderer {
     /// The map's `func_explosive` brush models and which are up
     /// (`BrushModelState`), and the disabled list last applied.
     brush_models: BrushModelState,
+    /// The map's lifts, restored from the feed each frame so the buttons
+    /// press in (`handleButton`).
+    pub lifts: LiftSystem,
     applied_disabled: Option<Vec<usize>>,
     /// The bomb sites' beacons and detonation (`BombSiteMarkers`).
     pub bomb_sites: BombSiteMarkers,
@@ -2659,6 +2677,7 @@ impl MapRenderer {
         self.rings
             .prepare(gpu, &frame, self.held_rings.iter().chain(self.liquid.rings()));
         self.teleport_renderer.prepare(gpu, &frame, &self.teleports);
+        self.map_particles.prepare(gpu, &frame, self.item_time * 1000.0);
         self.damage_number_renderer.prepare(gpu, &frame, &self.damage_numbers);
         if let Some(cartoon) = &mut self.cartoon_hit_renderer {
             cartoon.prepare(gpu, &frame, &self.cartoon_hits);
@@ -2773,6 +2792,7 @@ impl MapRenderer {
         self.hitscan.impact_sparks.draw(pass);
         self.rings.draw(pass);
         self.splash.draw(pass);
+        self.map_particles.draw(pass);
         self.teleport_renderer.draw(pass);
         self.explosions.draw(pass);
         self.models.draw_blended(pass);
@@ -3348,6 +3368,10 @@ pub fn build_renderer(gpu: &Gpu, map: &mut LoadedMap, output_format: wgpu::Textu
     let damage_font = shagger::ui::font::Font::from_bytes(include_bytes!("../assets/fonts/Rajdhani-Bold.ttf").to_vec())
         .expect("the client ships Rajdhani");
     let cartoon_hit_renderer = CartoonHitRenderer::load(gpu, format, &mut map.pk3);
+    let map_particles = MapParticles::load(gpu, format, &map.bsp.entities, &map.shaders, &mut map.pk3, 0.0);
+    if map_particles.emitter_count() > 0 {
+        println!("misc_particles: {} emitters", map_particles.emitter_count());
+    }
     let mut damage_numbers = DamageNumbers::new();
     let mut cartoon_hits = CartoonHitEffect::new(
         cartoon_hit_renderer
@@ -3413,10 +3437,12 @@ pub fn build_renderer(gpu: &Gpu, map: &mut LoadedMap, output_format: wgpu::Textu
         held_rings: Vec::new(),
         teleports,
         teleport_renderer,
+        map_particles,
         teleport_last: HashMap::new(),
         gibs: GibSystem::default(),
         gib_renderer,
         brush_models,
+        lifts: LiftSystem::new(extract_lifts(&map.bsp.entities, &map.bsp.models, None)),
         applied_disabled: None,
         bomb_sites: BombSiteMarkers::default(),
         bomb_debris: BombSiteDebris::default(),
@@ -3749,8 +3775,15 @@ pub fn start_prepared(o: &ViewOptions, prepared: Prepared) -> Result<i32, String
     // Shader animation as it stands `--time` seconds after the map loads.
     renderer.world.animate(&gpu, o.time);
     // The rotators as they have turned by then; the lifts at rest.
-    renderer.world.move_movers(&gpu, o.time, |_| None);
+    renderer.world.move_movers(&gpu, o.time, |_| None, |_| None);
     renderer.item_time = o.time;
+    // The map's particles as they have flowed by then, at 60 frames a second.
+    for step in 0..=(o.time * 60.0).round() as usize {
+        renderer.map_particles.advance(
+            camera.position.as_dvec3(),
+            (step as f64 * 1000.0 / 60.0).min(o.time * 1000.0),
+        );
+    }
     let mut hud: Option<FpsHud> = None;
     let mut overlay = crate::reel_overlay::ReelOverlay::default();
     // Whom a demo's transport bar says the view follows.

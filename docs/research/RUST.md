@@ -2715,6 +2715,39 @@ whole areas rather than single items. 0.2.0 closes them in two steps.
 
 ## 24. Progress log
 
+### Staging catch-up: taunts, victory clips, buttons, map particles (November 13, 2026)
+
+Ported from SHAG and wash-fps staging (beta.12):
+
+- **Rating policy v2.** `leaderboard_view::POLICY_VERSION` is
+  `shag-trueskill-v2`, so the boards accept the lobby's new policy.
+- **Taunts.** shagger's `PlayerModelManager` plays `taunt_1`..`taunt_3` as
+  upper-body one-shots beside the blade swing (`active_one_shot` names the
+  playing one), and `VICTORY_ANIMS` holds the six post-game clips, from
+  which `post_game_showcase::pick_victory_clip` draws among the loaded ones.
+  `client/kill_taunt.rs` (`KillTaunt.ts`) picks a killer's taunt from a hash
+  of the death event, so every viewer and demo replay agrees; its test holds
+  V8's choices for forty kills. `RemotePlayerRenderer` plays it once no
+  swing is playing, and a weapon switch, aiming, firing or running ends it.
+- **`func_button`.** shagger's `LiftSystem` (`LiftSystem.ts`) reads buttons:
+  one with health fires only when shot or caught in a blast (`strike`), as
+  in Warsow; one without fires on touch. Buttons are drawn, solid
+  (`SweepCollisionBackend` traces them where they are pressed to) and press
+  in by `button_offset`, which comes from the callers' cooldowns already in
+  `lift_state`, so nothing changed on the wire. The renderer keeps a
+  `LiftSystem` from the map and restores it from the feed each frame (in
+  play, from the predicted one). The `strike` calls are the TypeScript
+  server's; the native client only draws the result. Not ported: the
+  button's press sound (native movers have no sounds yet).
+- **`misc_particles`.** shagger's `loader/bsp/map_particles.rs`
+  (`MapParticles.ts`): the emitters' plans, Warsow's sprite fade and growth,
+  seeded sprites (V8's seed and first draws in its test), and one
+  `EffectQuadBatch` per shader, drawn with the blended effects. A still
+  `washoi view` runs the emitters up to `--time`.
+- **New maps.** DM16, DM17, DM18 and Amphi3 need nothing native beyond the
+  credits: the pools, names and material aliases come from the lobby and
+  the packages.
+
 ### Model previews (November 13, 2026)
 
 The native client now draws the browser's three model previews. Two are UI:

@@ -69,7 +69,13 @@ mod tests {
     use super::*;
 
     fn kill(i: usize) -> (String, String, f64, f64, f64) {
-        (format!("e{}", i % 7), format!("k{}", i % 5), i as f64 * 13.7, 24.0, -(i as f64) * 3.1)
+        (
+            format!("e{}", i % 7),
+            format!("k{}", i % 5),
+            i as f64 * 13.7,
+            24.0,
+            -(i as f64) * 3.1,
+        )
     }
 
     fn facts(k: &(String, String, f64, f64, f64)) -> KillFacts<'_> {
@@ -93,8 +99,14 @@ mod tests {
         }
         let taunted: usize = counts.values().sum();
         let share = taunted as f64 / kills as f64;
-        assert!(share > KILL_TAUNT_CHANCE - 0.03 && share < KILL_TAUNT_CHANCE + 0.03, "{share}");
-        assert_eq!(counts.keys().copied().collect::<Vec<_>>(), ["taunt_1", "taunt_2", "taunt_3"]);
+        assert!(
+            share > KILL_TAUNT_CHANCE - 0.03 && share < KILL_TAUNT_CHANCE + 0.03,
+            "{share}"
+        );
+        assert_eq!(
+            counts.keys().copied().collect::<Vec<_>>(),
+            ["taunt_1", "taunt_2", "taunt_3"]
+        );
         for count in counts.values() {
             assert!(*count as f64 / taunted as f64 > 0.25);
         }
@@ -121,10 +133,46 @@ mod tests {
     fn matches_the_browser_kill_for_kill() {
         // `chooseKillTaunt` in V8 over the test's first forty kills.
         let golden = [
-            None, None, None, None, None, None, Some("taunt_1"), None, None, None, None, None, Some("taunt_1"), None,
-            Some("taunt_1"), None, None, None, None, Some("taunt_2"), None, None, None, None, Some("taunt_3"),
-            Some("taunt_3"), None, None, Some("taunt_3"), None, None, None, Some("taunt_1"), None, None, None, None,
-            None, None, Some("taunt_2"),
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            Some("taunt_1"),
+            None,
+            None,
+            None,
+            None,
+            None,
+            Some("taunt_1"),
+            None,
+            Some("taunt_1"),
+            None,
+            None,
+            None,
+            None,
+            Some("taunt_2"),
+            None,
+            None,
+            None,
+            None,
+            Some("taunt_3"),
+            Some("taunt_3"),
+            None,
+            None,
+            Some("taunt_3"),
+            None,
+            None,
+            None,
+            Some("taunt_1"),
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            Some("taunt_2"),
         ];
         for (i, want) in golden.iter().enumerate() {
             assert_eq!(choose_kill_taunt(&facts(&kill(i))), *want, "kill {i}");
