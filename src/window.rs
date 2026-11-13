@@ -201,12 +201,10 @@ struct App {
     /// The kit dialog (`FPSLoadoutPicker`), before the join in a mode
     /// with kits and from the Esc menu's Loadout key.
     loadout_picker: LoadoutPicker,
-    /// The lobby page's settings are up over the match.
+    /// The settings are up over the match.
     settings_open: bool,
-    /// With the native lobby, its settings screen over the match instead.
+    /// The lobby's settings screen, over the match.
     native_settings: Option<washoi::client::settings::fps_settings_view::FpsSettingsView>,
-    /// The match as the menu names it (gametype · map).
-    menu_kicker: String,
     /// A demo's highlight reel, driving the demo and the camera.
     reel: Option<CinematicDemoPlayer>,
     overlay: ReelOverlay,
@@ -340,9 +338,9 @@ impl App {
             self.pause_menu.close();
             return false;
         }
-        // The page has the keyboard; what reaches the window is not the game's.
-        // Over the native settings, Escape closes what the page has open,
-        // then the settings, back to the menu.
+        // The settings have the keyboard; what reaches the window is not
+        // the game's. Escape closes what the settings have open, then the
+        // settings, back to the menu.
         if self.settings_open {
             if code == KeyCode::Escape
                 && event.state == ElementState::Pressed
@@ -395,15 +393,8 @@ impl App {
                 }
             }
             PauseMenuAction::Settings => {
-                if crate::lobby_webview::open_match_settings(&self.menu_kicker) {
-                    self.settings_open = true;
-                } else if native_lobby() {
-                    self.native_settings =
-                        Some(washoi::client::settings::fps_settings_view::FpsSettingsView::new(true));
-                    self.settings_open = true;
-                } else {
-                    self.pause_menu.open();
-                }
+                self.native_settings = Some(washoi::client::settings::fps_settings_view::FpsSettingsView::new(true));
+                self.settings_open = true;
             }
             PauseMenuAction::Leave => {
                 println!("lobby: back to the lobby");
@@ -1588,7 +1579,7 @@ impl App {
             }
             _ => (String::new(), String::new()),
         };
-        self.pause_menu.settings = crate::lobby_webview::match_settings_available() || native_lobby();
+        self.pause_menu.settings = true;
         // `matchMenuModeKeys`: Loadout, in a mode with kits, hinted with the kit.
         self.pause_menu.loadout = match feed {
             Some(Feed::Play(p, _)) if p.match_state().loadout_mode().is_some() => Some(
@@ -1600,7 +1591,6 @@ impl App {
         let pause_menu = &mut self.pause_menu;
         let native_settings = &mut self.native_settings;
         let mut settings_back = false;
-        let settings_kicker = kicker.clone();
         let loadout = &mut self.loadout_picker;
         let mut loadout_outcome = None;
         let demo_hud = self.demo_hud.as_ref().filter(|_| cards);
@@ -1619,7 +1609,7 @@ impl App {
             }
             menu_action = pause_menu.ui(ui.ctx(), &kicker, &player);
             if let Some(view) = native_settings {
-                settings_back = washoi::client::settings::fps_settings_view::over_match(ui, view, &settings_kicker);
+                settings_back = washoi::client::settings::fps_settings_view::over_match(ui, view, &kicker);
             }
             loadout_outcome = loadout.ui(ui.ctx());
             console.ui(ui.ctx());
@@ -1641,7 +1631,6 @@ impl App {
             b.end_frame(&s.gpu);
         }
         self.frames += 1;
-        self.menu_kicker = kicker;
         if let Some(action) = menu_action {
             self.pause_menu_action(action);
         }
@@ -1651,16 +1640,6 @@ impl App {
         self.offer_loadout();
         if settings_back {
             self.close_native_settings();
-        }
-        // Back from the settings is back to the match menu (`FPSHud`).
-        if self.settings_open && self.native_settings.is_none() && crate::lobby_webview::poll_match_settings() {
-            self.settings_open = false;
-            if self.in_play() {
-                self.pause_menu.open();
-            }
-            if let Some(s) = &self.surface {
-                s.window.focus_window();
-            }
         }
         if let (Some(action), Some(Feed::Demo(demo))) = (demo_action, &mut self.feed) {
             match action {
@@ -2055,13 +2034,6 @@ pub fn run_on_event_loop(app: &mut impl ApplicationHandler) -> Result<(), String
         let mut slot = cell.borrow_mut();
         if slot.is_none() {
             let mut builder = EventLoop::builder();
-            // The lobby's child webview needs X11 (WEBVIEW_LOBBY.md 3): on a
-            // Wayland desktop the game runs on XWayland.
-            #[cfg(all(unix, not(target_os = "macos")))]
-            if KEEP_WINDOW.with(Cell::get) {
-                use winit::platform::x11::EventLoopBuilderExtX11;
-                builder.with_x11();
-            }
             *slot = Some(builder.build().map_err(|e| format!("no window system: {e}"))?);
         }
         let event_loop = slot.as_mut().expect("made above");
@@ -2192,8 +2164,6 @@ impl<A: ApplicationHandler> ApplicationHandler for Exiting<'_, A> {
         self.app.device_event(event_loop, device_id, event);
     }
     fn about_to_wait(&mut self, event_loop: &ActiveEventLoop) {
-        // The lobby page keeps running under every screen (GTK on Linux).
-        shagger::webview::pump();
         self.app.about_to_wait(event_loop);
     }
     fn suspended(&mut self, event_loop: &ActiveEventLoop) {
@@ -2331,13 +2301,13 @@ pub fn remember_placement(window: &Window) {
 
 thread_local! {
     /// The window every screen shares once [`keep_window_between_screens`]
-    /// is on: the lobby's webview lives in it through the match.
+    /// is on: the lobby and every match.
     static KEPT_WINDOW: std::cell::RefCell<Option<Arc<Window>>> = const { std::cell::RefCell::new(None) };
     static KEEP_WINDOW: Cell<bool> = const { Cell::new(false) };
 }
 
-/// From now on every screen opens on one window, made once
-/// (WEBVIEW_LOBBY.md 3): the lobby page, a child of it, survives the match.
+/// From now on every screen opens on one window, made once: the lobby,
+/// the loading screen and the match.
 pub fn keep_window_between_screens() {
     KEEP_WINDOW.with(|k| k.set(true));
 }
@@ -2496,7 +2466,6 @@ pub fn run(
         loadout_picker: LoadoutPicker::default(),
         settings_open: false,
         native_settings: None,
-        menu_kicker: String::new(),
         reel,
         overlay: ReelOverlay::default(),
         demo_hud: None,
@@ -2556,10 +2525,4 @@ fn name_order(
     let mut ids: Vec<&str> = drawn.iter().map(|(id, _, _)| id.as_str()).collect();
     ids.sort_by(|a, b| locale_compare(&name(a), &name(b)).then(a.cmp(b)));
     ids.into_iter().map(str::to_owned).collect()
-}
-
-/// The player chose the native lobby (`ui_lobby native`), whose settings
-/// open over a match natively too.
-fn native_lobby() -> bool {
-    with_cvars(|c| c.get_string("ui_lobby") == "native")
 }

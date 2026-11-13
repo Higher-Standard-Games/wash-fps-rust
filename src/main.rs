@@ -4,7 +4,7 @@
 
 //! The native client binary. Run without arguments, it is the game: it
 //! brings the game data up to date (`data_sync_screen`), then opens the
-//! region's lobby page (`lobby_webview`). Without arguments it reads them
+//! region's lobby (`lobby_screen`, docs/research/NATIVE_LOBBY.md). Without arguments it reads them
 //! from `washoi.args` beside the executable when that exists
 //! (`launch_args`). The modes below are the tools the port was built with.
 //!
@@ -82,7 +82,6 @@ mod bench;
 mod data_sync_screen;
 mod demo_overlay;
 mod lobby_screen;
-mod lobby_webview;
 mod match_loading_screen;
 mod reel_overlay;
 mod region_screen;
@@ -111,7 +110,7 @@ use washoi::shared::players::player_look::LOOK_MODELS;
 fn usage() -> ! {
     eprintln!(
         "washoi {}\n\
-         usage: washoi [--region eu|us] [--data DIR] [--offline] [--lobby native|web]\n\
+         usage: washoi [--region eu|us] [--data DIR] [--offline] [--join ROOM-LINK]\n\
          \x20      washoi sync [--region eu|us] [--data DIR]\n\
          \x20      washoi regions [--screenshot FILE.png [--seconds N] [--size WxH]]\n\
          \x20      washoi loading <map> --screenshot FILE.png [--levelshot FILE.jpg] [--seconds N] [--size WxH]\n\
@@ -174,11 +173,10 @@ struct Options {
     cvars: Option<PathBuf>,
     /// The region whose lobby and data the game uses (`--region`).
     region: Option<String>,
+    /// `--join`: a shared room link (or its id) to join once logged in.
+    join: Option<String>,
     /// Start with the data on disk, without checking for new data.
     offline: bool,
-    /// `--lobby native|web`: which lobby the game shows, kept in `ui_lobby`
-    /// for the next start (NATIVE_LOBBY.md 3).
-    lobby: Option<String>,
     /// `washoi loading`: the levelshot to draw behind the stage.
     levelshot: Option<PathBuf>,
     players: Vec<view::PlayerView>,
@@ -206,7 +204,6 @@ fn parse_options(args: impl Iterator<Item = String>) -> Options {
             "--page" => o.page = Some(value()),
             "--seed" => o.seed = Some(PathBuf::from(value())),
             "--key-file" => o.key_file = Some(PathBuf::from(value())),
-            "--lobby" => o.lobby = Some(value()),
             "--play" => o.play = true,
             "--data" => o.data = Some(PathBuf::from(value())),
             "--screenshot" => o.screenshot = Some(PathBuf::from(value())),
@@ -232,6 +229,7 @@ fn parse_options(args: impl Iterator<Item = String>) -> Options {
             "--window" => o.window = true,
             "--cvars" => o.cvars = Some(PathBuf::from(value())),
             "--region" => o.region = Some(value()),
+            "--join" => o.join = Some(value()),
             "--offline" => o.offline = true,
             "--player" => {
                 let v = value();
@@ -440,31 +438,7 @@ fn parse_options(args: impl Iterator<Item = String>) -> Options {
 /// Standard output and error go to `washoi.log` (no terminal to print to).
 static CONSOLE_LOGGED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
-/// WebKitGTK's DMA-BUF renderer draws the lobby page blank (black or white)
-/// on NVIDIA's proprietary driver. With that driver loaded, and unless the
-/// player chose otherwise, the process starts over with the renderer off;
-/// other drivers keep it, since it is the faster path. The variable has to
-/// be there before WebKit starts, and setting it in a running process is
-/// unsafe, so the process replaces itself with one that has it.
-#[cfg(target_os = "linux")]
-fn webkit_environment() {
-    use std::os::unix::process::CommandExt;
-    const VAR: &str = "WEBKIT_DISABLE_DMABUF_RENDERER";
-    if std::env::var_os(VAR).is_some() || !lobby_webview::nvidia_driver_loaded() {
-        return;
-    }
-    let Ok(exe) = std::env::current_exe() else { return };
-    let why = std::process::Command::new(exe)
-        .args(std::env::args_os().skip(1))
-        .env(VAR, "1")
-        .exec();
-    // Still here: the restart failed. Carry on as we are.
-    eprintln!("could not restart with {VAR}=1: {why}");
-}
-
 fn main() {
-    #[cfg(target_os = "linux")]
-    webkit_environment();
     // Lossy rather than `args()`, which panics on a path that is not UTF-8.
     let mut args: Vec<String> = std::env::args_os()
         .skip(1)
@@ -528,18 +502,6 @@ fn main() {
     });
     shagger::input::input_system::init_input(input_dir);
     shagger::core::cvar::with_cvars(washoi::client::settings::settings_model::register_client_cvars);
-    shagger::core::cvar::with_cvars(|c| {
-        c.register(
-            UI_LOBBY,
-            "web",
-            shagger::core::cvar::CvarOptions::describe(
-                "The lobby: web (the region's page in a web view) or native (NATIVE_LOBBY.md, in progress)",
-            ),
-        );
-        if let Some(lobby) = o.lobby.as_deref() {
-            c.set(UI_LOBBY, lobby);
-        }
-    });
     let code = match mode.as_str() {
         "menu" => {
             let Some(path) = &o.screenshot else { usage() };
@@ -715,12 +677,8 @@ fn game_data_dir(o: &Options) -> PathBuf {
 /// The game as a player starts it: the data brought up to date, then the
 /// region's lobby page, with the packages from that data.
 fn game(mut o: Options) -> i32 {
-    // One window for the session, the lobby page a child of it
-    // (WEBVIEW_LOBBY.md 3); GTK first on Linux.
+    // One window for the session: the lobby and every match.
     window::keep_window_between_screens();
-    if let Err(why) = shagger::webview::init_platform() {
-        return fatal(&format!("the lobby needs a web view: {why}"));
-    }
     // The region picker first, unless the command line names one.
     let (lobby, data) = if named_region(&o).is_some() {
         region(&o)
@@ -753,56 +711,28 @@ fn game(mut o: Options) -> i32 {
     lobby_mode(&lobby, &o)
 }
 
-/// The cvar that picks the lobby (NATIVE_LOBBY.md 3).
-const UI_LOBBY: &str = "ui_lobby";
-
 /// The region's lobby until the player quits, each match it starts played
-/// in the same window: the web page (WEBVIEW_LOBBY.md 6) or, with
-/// `ui_lobby native`, the native lobby (NATIVE_LOBBY.md).
+/// in the same window (NATIVE_LOBBY.md).
 fn lobby_mode(lobby: &str, o: &Options) -> i32 {
-    let Some(page) = lobby_webview::page_url(lobby) else {
-        return fatal(&format!("no lobby page for {lobby}"));
-    };
     if !o.offline {
         washoi::update_check::start();
     }
-    // The page's account key and settings live in the config dir
-    // (WEBVIEW_LOBBY.md 7 and 8); the native lobby uses the same files.
+    // The account key lives in the config dir.
     let Some(dir) = config_dir() else {
         return fatal("no config directory for the lobby's settings");
     };
     let _ = std::fs::create_dir_all(&dir);
     let key_file = o.key_file.clone().or_else(default_key_file);
-    let mirror = shagger::lobby::storage_mirror::StorageMirror::new(dir, key_file.clone());
-    let mut after: Option<lobby_webview::AfterMatch> = None;
-    // The native lobby's connection lasts the session, through every match.
-    let mut native: Option<washoi::client::lobby_panel::LobbyPanel> = None;
+    // The lobby's connection lasts the session, through every match.
+    println!("lobby: at {lobby}");
+    let mut panel = washoi::client::lobby_panel::LobbyPanel::connect(lobby, key_file);
+    if let Some(link) = &o.join {
+        panel.set_deep_link(link);
+    }
     loop {
-        let wants_native = shagger::core::cvar::with_cvars(|c| c.get_string(UI_LOBBY)) == "native";
-        let outcome = if wants_native {
-            let panel = native.get_or_insert_with(|| {
-                println!("lobby: native, at {lobby}");
-                washoi::client::lobby_panel::LobbyPanel::connect(lobby, key_file.clone())
-            });
-            if let Some(a) = after.take() {
-                panel.after_match(a.error);
-            }
-            match lobby_screen::run(panel, match_loading_screen::twin_style()) {
-                Ok(lobby_screen::NativeOutcome::Lobby(outcome)) => Ok(outcome),
-                Ok(lobby_screen::NativeOutcome::WebLobby) => {
-                    println!("lobby: back to the web lobby");
-                    shagger::core::cvar::with_cvars(|c| c.set(UI_LOBBY, "web"));
-                    native = None;
-                    continue;
-                }
-                Err(e) => Err(e),
-            }
-        } else {
-            lobby_webview::run(&page, &mirror, after.take())
-        };
-        match outcome {
-            Ok(lobby_webview::LobbyOutcome::Quit) => return 0,
-            Ok(lobby_webview::LobbyOutcome::Match(c)) => {
+        match lobby_screen::run(&mut panel, match_loading_screen::twin_style(), &data_dir(o)) {
+            Ok(lobby_screen::LobbyOutcome::Quit) => return 0,
+            Ok(lobby_screen::LobbyOutcome::Match(c)) => {
                 let (v, handoff) = if let Some(demo) = &c.demo {
                     println!("lobby: demo {}", demo.display());
                     let mut v = view_options(o, c.map.clone(), Some(demo.clone()), None, false);
@@ -821,19 +751,14 @@ fn lobby_mode(lobby: &str, o: &Options) -> i32 {
                     (v, Some(handoff))
                 };
                 let Some(started) = load_and_start(v, handoff, Some(lobby)) else {
-                    if let Some(panel) = &mut native {
-                        panel.leave();
-                    }
+                    panel.leave();
                     return 0;
                 };
                 let error = started.err();
                 if let Some(why) = &error {
                     eprintln!("{why}");
                 }
-                after = Some(lobby_webview::AfterMatch {
-                    error,
-                    demo: c.demo.is_some(),
-                });
+                panel.after_match(error);
             }
             Err(e) => return fatal(&format!("lobby: {e}")),
         }

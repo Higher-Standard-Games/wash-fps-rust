@@ -1,10 +1,10 @@
 //! wash-fps's `writePreference` and the `localStorage` reads beside it
 //! (`engine/core/PreferenceStorage.ts`), for the lobby's own choices: the
-//! terms agreed to and whether the welcome guide opens by itself.
+//! terms agreed to, whether the welcome guide opens by itself and whether
+//! the lobby music is off.
 //!
 //! The browser keeps these in local storage; here they live in
-//! `preferences.json` beside the bindings, one string per key. Not
-//! mirrored with the web lobby's storage: the web view asks again.
+//! `preferences.json` beside the bindings, one string per key.
 
 use std::collections::BTreeMap;
 use std::path::PathBuf;

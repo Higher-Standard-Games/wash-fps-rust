@@ -10,20 +10,22 @@
 use std::path::Path;
 use std::time::{Duration, Instant};
 
+use shagger::audio::audio_v2_sfx::AudioV2Sfx;
 use shagger::rendering::gpu::Gpu;
 use shagger::rendering::offscreen::{OFFSCREEN_FORMAT, render_encoded_to_rgba};
 use shagger::rendering::wgpu;
 use shagger::ui::components::lobby_twin::TwinStyle;
 use shagger::ui::egui_layer::{EguiLayer, egui};
 use washoi::client::demos_view::DemoInfo;
+use washoi::client::game_events::GameAudio;
 use washoi::client::lobby_panel::{LobbyChoice, LobbyPanel, PanelAction};
 use washoi::client::washoi_style::install_style;
+use washoi::console::GameConsole;
 use winit::application::ApplicationHandler;
 use winit::event::WindowEvent;
 use winit::event_loop::ActiveEventLoop;
 use winit::window::WindowId;
 
-use crate::lobby_webview::LobbyOutcome;
 use crate::window::{OpenWindow, end_screen, next_frame, open_window, present, run_on_event_loop};
 
 /// The stage's blue, under the egui backdrop.
@@ -34,12 +36,12 @@ const BACKGROUND: wgpu::Color = wgpu::Color {
     a: 1.0,
 };
 
-/// What the native lobby ended in.
+/// What the lobby decided.
 #[derive(Debug)]
-pub enum NativeOutcome {
-    Lobby(LobbyOutcome),
-    /// Back to the web lobby, for a page the native one does not have yet.
-    WebLobby,
+pub enum LobbyOutcome {
+    Quit,
+    /// A match, or a recording (`demo` set) from the Demos page.
+    Match(LobbyChoice),
 }
 
 struct Open {
@@ -52,9 +54,13 @@ struct Open {
 
 struct LobbyApp<'a> {
     panel: &'a mut LobbyPanel,
+    /// The console, dropped over the lobby by its key or `` ` ``.
+    console: GameConsole,
     style: TwinStyle,
+    /// The menus' music, with the time of the last frame.
+    music: Option<(GameAudio, Instant)>,
     open: Option<Open>,
-    outcome: Option<NativeOutcome>,
+    outcome: Option<LobbyOutcome>,
     error: Option<String>,
 }
 
@@ -62,9 +68,15 @@ impl LobbyApp<'_> {
     fn redraw(&mut self, event_loop: &ActiveEventLoop) {
         self.panel.poll();
         if let Some(choice) = self.panel.take_choice() {
-            self.outcome = Some(NativeOutcome::Lobby(LobbyOutcome::Match(choice)));
+            self.outcome = Some(LobbyOutcome::Match(choice));
             end_screen(event_loop);
             return;
+        }
+        if let Some((audio, last)) = &mut self.music {
+            let now = Instant::now();
+            audio.set_menu_muted(self.panel.music_muted);
+            audio.update_menu_music(now.duration_since(*last).as_secs_f64());
+            *last = now;
         }
         let Some(m) = &mut self.open else { return };
         let frame = match next_frame(&m.gpu, &m.window, &mut m.surface, &m.config) {
@@ -80,9 +92,23 @@ impl LobbyApp<'_> {
             .texture
             .texture
             .create_view(&wgpu::TextureViewDescriptor::default());
-        let (panel, style) = (&mut *self.panel, &self.style);
+        let (panel, style, console) = (&mut *self.panel, &self.style, &mut self.console);
         let mut action = None;
-        let ui = m.layer.run(&m.window, |ui| action = panel.ui(ui, style));
+        let ui = m.layer.run(&m.window, |ui| {
+            action = panel.ui(ui, style);
+            // `` ` `` or the Console key: the console over the lobby.
+            let backquote = ui.input(|i| i.key_pressed(egui::Key::Backtick));
+            if std::mem::take(&mut panel.console_toggle) || backquote {
+                console.console.toggle();
+            }
+            panel.console_open = console.console.open;
+            console.ui(ui.ctx());
+        });
+        // What the console's commands ask of a match does not apply here.
+        self.console.ctx.requests.clear();
+        if std::mem::take(&mut self.console.ctx.quit) {
+            action = Some(PanelAction::Quit);
+        }
         let mut encoder = m
             .gpu
             .device
@@ -108,12 +134,8 @@ impl LobbyApp<'_> {
         m.gpu.queue.submit([encoder.finish()]);
         present(&m.gpu, &m.window, &mut m.surface, &m.config, frame);
         match action {
-            Some(PanelAction::WebLobby) => {
-                self.outcome = Some(NativeOutcome::WebLobby);
-                end_screen(event_loop);
-            }
             Some(PanelAction::Quit) => {
-                self.outcome = Some(NativeOutcome::Lobby(LobbyOutcome::Quit));
+                self.outcome = Some(LobbyOutcome::Quit);
                 end_screen(event_loop);
             }
             Some(PanelAction::OpenUrl(url)) => open_url(&url),
@@ -161,7 +183,7 @@ impl ApplicationHandler for LobbyApp<'_> {
         }
         match event {
             WindowEvent::CloseRequested => {
-                self.outcome = Some(NativeOutcome::Lobby(LobbyOutcome::Quit));
+                self.outcome = Some(LobbyOutcome::Quit);
                 end_screen(event_loop);
             }
             WindowEvent::Resized(size) => {
@@ -197,16 +219,22 @@ fn open_url(url: &str) {
     }
 }
 
-/// The lobby until it hands out a match, the player quits, or asks for
-/// the web lobby. On a quit the panel uploads the settings and lets go of
-/// the connection.
+/// The lobby until it hands out a match or the player quits. On a quit
+/// the panel uploads the settings and lets go of the connection. `data`
+/// (the packages' folder) holds the menu playlist and its music, which
+/// plays until the lobby closes.
 ///
 /// # Errors
 /// No window could open, or its surface failed.
-pub fn run(panel: &mut LobbyPanel, style: TwinStyle) -> Result<NativeOutcome, String> {
+pub fn run(panel: &mut LobbyPanel, style: TwinStyle, data: &Path) -> Result<LobbyOutcome, String> {
+    let mut audio = GameAudio::new(AudioV2Sfx::open_device_or_wait());
+    let tracks = audio.start_menu_music(data, panel.music_muted);
+    println!("lobby: {tracks} music tracks");
     let mut app = LobbyApp {
         panel,
+        console: GameConsole::new(washoi::config_dir()),
         style,
+        music: Some((audio, Instant::now())),
         open: None,
         outcome: None,
         error: None,
@@ -222,11 +250,8 @@ pub fn run(panel: &mut LobbyPanel, style: TwinStyle) -> Result<NativeOutcome, St
     if let Some(why) = error {
         return Err(why);
     }
-    let outcome = outcome.unwrap_or(NativeOutcome::Lobby(LobbyOutcome::Quit));
-    if matches!(
-        outcome,
-        NativeOutcome::Lobby(LobbyOutcome::Quit) | NativeOutcome::WebLobby
-    ) {
+    let outcome = outcome.unwrap_or(LobbyOutcome::Quit);
+    if matches!(outcome, LobbyOutcome::Quit) {
         panel.leave();
     }
     Ok(outcome)

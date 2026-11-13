@@ -44,6 +44,8 @@ pub mod leaderboard_view;
 pub mod levelshots;
 pub mod live_play;
 pub mod live_watch;
+pub mod lobby_full_notice;
+pub mod lobby_music_key;
 pub mod lobby_page_parts;
 pub mod lobby_panel;
 pub mod lobby_preferences;
