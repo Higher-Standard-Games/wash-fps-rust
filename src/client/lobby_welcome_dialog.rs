@@ -261,13 +261,30 @@ pub fn scroll_body(
 /// `.lobby-guide-help` and `.lobby-guide-back`: the dark key of the links
 /// bar, its label in the display face. True when pressed.
 pub fn dark_key(ui: &mut egui::Ui, id: &str, r: Rect, label: &str, size: f32) -> bool {
+    let (clicked, face) = dark_key_face(ui, id, r, false);
+    let g = text(
+        ui.painter(),
+        label,
+        size,
+        display_family(),
+        Color32::from_rgb(0xff, 0xf6, 0xdf),
+        0.0,
+    );
+    ui.painter().galley(face.center() - g.size() / 2.0, g, Color32::WHITE);
+    clicked
+}
+
+/// The dark key without its label: true when pressed, and the face to draw
+/// the label on. `down` holds it sunk onto its base, darker (a toggle that
+/// is on, as `.lobby-music-key[aria-pressed="true"]`).
+pub fn dark_key_face(ui: &mut egui::Ui, id: &str, r: Rect, down: bool) -> (bool, Rect) {
     let response = ui.interact(
         r.expand2(vec2(0.0, 5.0)),
         egui::Id::NULL.with(("dark-key", id)),
         Sense::click(),
     );
     let painter = ui.painter().clone();
-    let held = response.is_pointer_button_down_on();
+    let held = response.is_pointer_button_down_on() || down;
     let hovered = response.hovered();
     if hovered {
         ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
@@ -280,7 +297,9 @@ pub fn dark_key(ui: &mut egui::Ui, id: &str, r: Rect, label: &str, size: f32) ->
     );
     painter.rect_filled(r.translate(vec2(0.0, 5.0)), 4.0, Color32::from_rgb(0x0d, 0x0b, 0x16));
     let face = r.translate(vec2(0.0, sink));
-    let (top, foot) = if hovered {
+    let (top, foot) = if down {
+        (Color32::from_rgb(0x22, 0x1f, 0x31), Color32::from_rgb(0x12, 0x0f, 0x1c))
+    } else if hovered {
         (Color32::from_rgb(0x57, 0x4b, 0x6d), Color32::from_rgb(0x28, 0x21, 0x37))
     } else {
         (Color32::from_rgb(0x39, 0x35, 0x4b), Color32::from_rgb(0x19, 0x16, 0x26))
@@ -299,18 +318,16 @@ pub fn dark_key(ui: &mut egui::Ui, id: &str, r: Rect, label: &str, size: f32) ->
     painter.hline(
         (face.left() + 3.0)..=(face.right() - 3.0),
         face.top() + 0.5,
-        Stroke::new(1.0, Color32::from_rgba_unmultiplied(255, 255, 255, 53)),
+        Stroke::new(
+            1.0,
+            if down {
+                Color32::from_black_alpha(136)
+            } else {
+                Color32::from_rgba_unmultiplied(255, 255, 255, 53)
+            },
+        ),
     );
-    let g = text(
-        &painter,
-        label,
-        size,
-        display_family(),
-        Color32::from_rgb(0xff, 0xf6, 0xdf),
-        0.0,
-    );
-    painter.galley(face.center() - g.size() / 2.0, g, Color32::WHITE);
-    response.clicked()
+    (response.clicked(), face)
 }
 
 /// `« Back to welcome`'s size: padding 12 18 around 17px.

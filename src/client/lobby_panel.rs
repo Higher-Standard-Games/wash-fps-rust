@@ -19,9 +19,7 @@
 //! The Profile key widens the rail into the account's gold panel
 //! (`client/profile_view.rs`) over everything, as the browser does.
 //!
-//! Not yet (NATIVE_LOBBY.md 5): the Console page, which says so and offers
-//! the web lobby; the welcome dialog and guide,
-//! credits, music, deep links and the drop-in from a spectated match.
+//! Not yet: deep links and the drop-in from a spectated match.
 
 use std::collections::VecDeque;
 use std::path::{Path, PathBuf};
@@ -34,7 +32,6 @@ use shagger::lobby::lobby_client::{CLIENT_DISCONNECT_REASON, LobbyClient, LobbyE
 use shagger::lobby::player_identity::normalize_key;
 use shagger::lobby::settings_sync::SettingsSync;
 use shagger::lobby::types::{AuthError, GametypeInfo, LiveMatchInfo, LobbyConnect, LobbyIn};
-use shagger::shared::js::js_round;
 use shagger::ui::components::lobby_twin::{
     RAIL_SKEW, TwinRail, TwinStyle, clamp_css, cream, elide, gradient_polygon, horizontal_gradient, hsl, hsla,
     paint_backdrop, paint_brand, paint_light_in, paint_rail, text, violet,
@@ -51,6 +48,8 @@ use crate::client::credits::credits_dialog::{CreditsAnswer, CreditsDialog};
 use crate::client::demos_view::DemosView;
 use crate::client::leaderboard_view::LeaderboardView;
 use crate::client::levelshots::{Levelshots, site_base};
+use crate::client::lobby_full_notice::{NoticeKind, lobby_full_notice, offline_retry_delay_sec, retry_delay_sec};
+use crate::client::lobby_music_key::{lobby_music_key, lobby_music_muted, set_lobby_music_muted};
 use crate::client::lobby_rooms::{PlayKeysInput, RoomAction, describe_room, play_keys, room_count_label, sort_rooms};
 use crate::client::lobby_welcome_dialog::{back_key, back_key_size, dark_key};
 use crate::client::lobby_welcome_guide::{GuideEvent, LobbyWelcomeGuide};
@@ -178,8 +177,6 @@ pub struct LobbyChoice {
 /// What the panel asks of the window, besides a match.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum PanelAction {
-    /// Back to the web lobby (`ui_lobby web`), for a page not built here yet.
-    WebLobby,
     /// The links row's Quit.
     Quit,
     /// A page for the system's browser, such as the devlog.
@@ -189,29 +186,22 @@ pub enum PanelAction {
 /// The team's devlog, opened from the Play page's links bar (`DEVLOG_URL`).
 pub const DEVLOG_URL: &str = "https://washoi.net/devlog";
 
-/// The rail's pages (`switchTab`), and the keys under the player card that
-/// open a page here.
+/// The rail's pages (`switchTab`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Tab {
     Play,
     Leaderboard,
     Demos,
     Settings,
-    Profile,
-    Console,
 }
 
-impl Tab {
-    fn title(self) -> &'static str {
-        match self {
-            Self::Play => "Play",
-            Self::Leaderboard => "Leaderboard",
-            Self::Demos => "Demos",
-            Self::Settings => "Settings",
-            Self::Profile => "Profile",
-            Self::Console => "Console",
-        }
-    }
+/// The keys under the player card: the Profile over the lobby, the
+/// Settings page, and the console dropped over everything.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum UtilityKey {
+    Profile,
+    Settings,
+    Console,
 }
 
 /// A line in the lobby chat.
@@ -258,18 +248,28 @@ fn login_failure_text(code: &str) -> String {
     }
 }
 
-/// `LobbyFullNotice.retryDelaySec`: the lobby's wait, give or take ten seconds.
-fn retry_delay_sec(retry_after_sec: Option<u32>, random: f64) -> u64 {
-    let base = retry_after_sec.filter(|&s| s > 0).unwrap_or(60);
-    let jitter = js_round((random * 2.0 - 1.0) * 10.0);
-    (f64::from(base) + jitter).max(5.0) as u64
-}
-
-/// `offlineRetryDelaySec`: 2, 5, 10, then 30 seconds, each give or take a fifth.
-fn offline_retry_delay_sec(attempt: u32, random: f64) -> u64 {
-    const WAITS: [f64; 4] = [2.0, 5.0, 10.0, 30.0];
-    let base = WAITS[(attempt.max(1) as usize - 1).min(WAITS.len() - 1)];
-    js_round(base * (0.8 + random * 0.4)).max(1.0) as u64
+/// `runDeepLinkJoin`'s reading of a link: `?lobby=` first, else
+/// `/lobby/<id>` in the path, else the bare id; `?invite=` beside it.
+fn parse_lobby_link(link: &str) -> Option<(String, Option<String>)> {
+    let link = link.trim();
+    let valid = |id: &str| !id.is_empty() && id.chars().all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-');
+    let (path, query) = link.split_once('?').unwrap_or((link, ""));
+    let query = query.split('#').next().unwrap_or("");
+    let param = |name: &str| {
+        query
+            .split('&')
+            .filter_map(|pair| pair.split_once('='))
+            .find(|(k, _)| *k == name)
+            .map(|(_, v)| v.to_owned())
+            .filter(|v| !v.is_empty())
+    };
+    let from_path = path
+        .split_once("/lobby/")
+        .map(|(_, rest)| rest.split(['/', '#']).next().unwrap_or("").to_owned());
+    let id = param("lobby")
+        .or(from_path)
+        .or_else(|| (!link.contains('/') && !link.contains('?')).then(|| link.to_owned()))?;
+    valid(&id).then(|| (id, param("invite")))
 }
 
 fn now_seed() -> u64 {
@@ -323,7 +323,7 @@ pub struct LobbyPanel {
     pub client: LobbyClient,
     url: String,
     key: Option<String>,
-    /// Where the account's key lives (the web lobby's too).
+    /// Where the account's key lives.
     key_file: Option<PathBuf>,
     /// The key file exists but could not be read: a new account's key must
     /// not replace it.
@@ -384,6 +384,19 @@ pub struct LobbyPanel {
     pub credits: Option<CreditsDialog>,
     /// A page for the system's browser, asked for from a dialog.
     open_url: Option<String>,
+    /// The Console key was pressed: the window toggles its console.
+    pub console_toggle: bool,
+    /// Whether the window's console is down (the key shows pressed).
+    pub console_open: bool,
+    /// The lobby music key's state (`lobbyMusicMuted`), which the screen
+    /// applies to the menu music.
+    pub music_muted: bool,
+    /// `LobbyFullNotice`: shown while the lobby turns this player away or
+    /// is out of reach, counting down to `retry_at`.
+    full_notice: Option<NoticeKind>,
+    /// `runDeepLinkJoin`'s room and invite, from `--join`: joined once,
+    /// after login and the welcome guide.
+    deep_link: Option<(String, Option<String>)>,
     /// `--page update`: the notice as if a newer release were out.
     shown_update: Option<crate::update_check::Update>,
     /// The page drawn last frame: a page coming into view asks again.
@@ -455,6 +468,11 @@ impl LobbyPanel {
             guide: LobbyWelcomeGuide::default(),
             credits: None,
             open_url: None,
+            console_toggle: false,
+            console_open: false,
+            music_muted: lobby_music_muted(),
+            full_notice: None,
+            deep_link: None,
             shown_update: None,
             shown_tab: None,
             levelshots: Levelshots::new(url),
@@ -592,7 +610,7 @@ impl LobbyPanel {
         if !deliberate && !self.lobby_full && self.retry_at.is_none() {
             self.login_failures += 1;
             let seconds = offline_retry_delay_sec(self.login_failures, random01());
-            self.notice = format!("Lobby server unavailable. Trying again in {seconds}s.");
+            self.full_notice = Some(NoticeKind::Offline);
             self.retry_at = Some(Instant::now() + Duration::from_secs(seconds));
         }
         self.lobby_full = false;
@@ -630,12 +648,14 @@ impl LobbyPanel {
         // any other refusal tries again after the outage backoff.
         let seconds = if e.code == "lobby_full" {
             self.lobby_full = true;
+            self.full_notice = Some(NoticeKind::Full);
             retry_delay_sec(e.retry_after_sec, random01())
         } else {
             self.login_failures += 1;
+            self.full_notice = Some(NoticeKind::Offline);
+            self.notice = login_failure_text(&e.code);
             offline_retry_delay_sec(self.login_failures, random01())
         };
-        self.notice = format!("{} Trying again in {seconds}s.", login_failure_text(&e.code));
         self.retry_at = Some(Instant::now() + Duration::from_secs(seconds));
     }
 
@@ -708,6 +728,7 @@ impl LobbyPanel {
                 }
                 self.login_failures = 0;
                 self.retry_at = None;
+                self.full_notice = None;
                 self.account_id = w.identity.as_ref().map(|i| i.id.clone());
                 self.server_gametypes.clone_from(&w.gametypes);
                 self.private_lobby_supported = w
@@ -1165,8 +1186,15 @@ impl LobbyPanel {
         }
         self.stage(ui, &layout, style, &mut action);
         self.rail(ui, &layout, style);
+        // Above the links bar (its keys, 44 tall on a 5 px base, 17 px up).
+        if let Some(kind) = self.full_notice
+            && lobby_full_notice(ui, screen, screen.max.y - 17.0 - 49.0, kind, self.retry_at)
+        {
+            self.retry_at = Some(Instant::now());
+        }
         self.overlays_ui(ui, screen, time, accent.face, style);
         self.dialogs_ui(ui, screen);
+        self.run_deep_link_join();
         self.update_notice(ui, screen);
         if let Some(url) = self.open_url.take() {
             action = Some(PanelAction::OpenUrl(url));
@@ -1179,8 +1207,33 @@ impl LobbyPanel {
 
 impl LobbyPanel {
     /// Whether the welcome guide may be over the lobby (`canOpen`).
+    /// A shared room link to join once the lobby lets this player in:
+    /// `https://…/lobby/<id>`, `…?lobby=<id>&invite=<token>` or the bare id.
+    pub fn set_deep_link(&mut self, link: &str) {
+        self.deep_link = parse_lobby_link(link);
+        if self.deep_link.is_none() {
+            println!("lobby: no room in the link {link}");
+        }
+    }
+
+    /// `runDeepLinkJoin`: once, when logged in and the guide is done.
+    fn run_deep_link_join(&mut self) {
+        if self.deep_link.is_none()
+            || !self.connected
+            || self.account_id.is_none()
+            || self.welcome.is_open()
+            || !self.guide.ready_for_join()
+        {
+            return;
+        }
+        if let Some((lobby, invite)) = self.deep_link.take() {
+            println!("lobby: deep link, joining room {lobby}");
+            self.client.join_lobby(&lobby, invite.as_deref());
+        }
+    }
+
     fn guide_can_open(&self) -> bool {
-        !self.welcome.is_open() && !self.profile.is_open()
+        !self.welcome.is_open() && !self.profile.is_open() && self.full_notice != Some(NoticeKind::Full)
     }
 
     /// wash-fps `native/ShellControls.ts`'s `installUpdateNotice`: a newer
@@ -1383,6 +1436,10 @@ impl LobbyPanel {
             });
             return;
         }
+        if tab == "console" {
+            self.console_toggle = true;
+            return;
+        }
         if tab == "credits" {
             self.credits = Some(CreditsDialog::default());
             return;
@@ -1400,7 +1457,6 @@ impl LobbyPanel {
             "leaderboard" => Tab::Leaderboard,
             "demos" => Tab::Demos,
             "settings" => Tab::Settings,
-            "console" => Tab::Console,
             _ => Tab::Play,
         };
         if self.tab == Tab::Settings {
@@ -1432,6 +1488,7 @@ impl LobbyPanel {
         };
         self.connection_lost(true);
         self.retry_at = None;
+        self.full_notice = None;
         self.switch_key = Some(key);
         self.client = LobbyClient::connect(&self.url);
     }
@@ -1574,19 +1631,19 @@ impl LobbyPanel {
         let gap = 10.0;
         let util_w = (nav_w - 2.0 * gap) / 3.0;
         for (i, (label, tab)) in [
-            ("Profile", Tab::Profile),
-            ("Settings", Tab::Settings),
-            ("Console", Tab::Console),
+            ("Profile", UtilityKey::Profile),
+            ("Settings", UtilityKey::Settings),
+            ("Console", UtilityKey::Console),
         ]
         .into_iter()
         .enumerate()
         {
             let x = l.rail_left + i as f32 * (util_w + gap);
             let rect = Rect::from_min_size(pos2(x, util_top), vec2(util_w, util_h));
-            let current = if tab == Tab::Profile {
-                self.profile.showing()
-            } else {
-                self.tab == tab
+            let current = match tab {
+                UtilityKey::Profile => self.profile.showing(),
+                UtilityKey::Settings => self.tab == Tab::Settings,
+                UtilityKey::Console => self.console_open,
             };
             let face = RaisedKey::new(label, rect, KeyLook::gold().sm().flat())
                 .current(current)
@@ -1599,10 +1656,10 @@ impl LobbyPanel {
                 .layout(KeyTextLayout::Centered)
                 .paint(&painter, &face);
             if face.clicked {
-                if tab == Tab::Profile {
-                    self.open_profile(ProfileScreen::Key);
-                } else {
-                    self.tab = tab;
+                match tab {
+                    UtilityKey::Profile => self.open_profile(ProfileScreen::Key),
+                    UtilityKey::Settings => self.tab = Tab::Settings,
+                    UtilityKey::Console => self.console_toggle = true,
                 }
             }
         }
@@ -1767,7 +1824,6 @@ impl LobbyPanel {
             Tab::Settings => Some(self.settings_view().ghost().to_owned()),
             Tab::Leaderboard => Some("TOP".to_owned()),
             Tab::Demos => Some("REPLAY".to_owned()),
-            _ => None,
         };
         if let Some(word) = ghost {
             let size = clamp_css(200.0, l.w * 0.25, 440.0);
@@ -1821,11 +1877,6 @@ impl LobbyPanel {
                     });
                 }
             }
-            other => {
-                if not_yet_page(ui, content, other, &accent) {
-                    *action = Some(PanelAction::WebLobby);
-                }
-            }
         }
     }
 
@@ -1855,6 +1906,13 @@ impl LobbyPanel {
                 if dark_key(ui, "help", r, "?", 17.0) {
                     self.guide.help(can_open);
                 }
+            }
+            // `.lobby-music-key`: the menus' music off and on.
+            let r = Rect::from_min_max(pos2(right - 44.0, bottom - 44.0), pos2(right, bottom));
+            right = r.left() - 12.0;
+            if lobby_music_key(ui, r, self.music_muted) {
+                self.music_muted = !self.music_muted;
+                set_lobby_music_muted(self.music_muted);
             }
             if key(ui, &mut right, "CREDITS") && self.credits.is_none() {
                 self.credits = Some(CreditsDialog::default());
@@ -2581,57 +2639,6 @@ fn chat_row(ui: &mut egui::Ui, chat: &ChatLine, mine: &str, width: f32, time_w: 
     painter.galley(pos2(x, y), body_text, color);
 }
 
-/// A page the native lobby does not have yet: says so, and offers the web
-/// lobby, which has it. True when the player asks for the web lobby.
-fn not_yet_page(ui: &mut egui::Ui, content: Rect, tab: Tab, accent: &Accent) -> bool {
-    let painter = ui.painter().clone();
-    let kicker = line(&painter, &tab.title().to_uppercase(), 12.0, body(), accent.face, 0.32);
-    let kh = kicker.size().y;
-    painter.galley(content.min, kicker, accent.face);
-    let title = line(
-        &painter,
-        "Not here yet",
-        clamp_css(36.0, content.width() * 0.04, 60.0),
-        display_family(),
-        cream(),
-        0.0,
-    );
-    let ty = content.top() + kh + 8.0;
-    painter.galley_with_override_text_color(
-        pos2(content.left() + 5.0, ty + 6.0),
-        title.clone(),
-        hsl(250.0, 50.0, 3.0),
-    );
-    let th = title.size().y;
-    painter.galley(pos2(content.left(), ty), title, cream());
-    let why = wrapped(
-        &painter,
-        &format!(
-            "{} comes to the native lobby in a later step. The web lobby has it now; \
-             the game switches back to it until you start with --lobby native again.",
-            tab.title()
-        ),
-        FontId::proportional(22.0),
-        hsla(45.0, 100.0, 95.0, 0.85),
-        content.width().min(620.0),
-    );
-    let wy = ty + th + 22.0;
-    let wh = why.size().y;
-    painter.galley(pos2(content.left(), wy), why, cream());
-    let label = "Open the web lobby";
-    let lw = line(&painter, &label.to_uppercase(), 16.0, display_family(), cream(), 0.1)
-        .size()
-        .x;
-    let key = Rect::from_min_size(pos2(content.left(), wy + wh + 28.0), vec2(lw + 62.0, 60.0));
-    let face = RaisedKey::new("web-lobby", key, KeyLook::cream()).show(ui);
-    KeyText::new(label, "", display_family(), body())
-        .size(16.0, 13.0)
-        .spacing(0.1)
-        .pad(32.0, 30.0)
-        .paint(&painter, &face);
-    face.clicked
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -2651,13 +2658,20 @@ mod tests {
     }
 
     #[test]
-    fn retry_waits_match_the_browsers() {
-        assert_eq!(offline_retry_delay_sec(1, 0.5), 2);
-        assert_eq!(offline_retry_delay_sec(4, 0.5), 30);
-        assert_eq!(offline_retry_delay_sec(9, 0.0), 24);
-        assert_eq!(retry_delay_sec(Some(30), 0.5), 30);
-        assert_eq!(retry_delay_sec(None, 1.0), 70);
-        assert_eq!(retry_delay_sec(Some(1), 0.0), 5);
+    fn room_links_read_as_the_browser_reads_them() {
+        let room = |id: &str, invite: Option<&str>| Some((id.to_owned(), invite.map(str::to_owned)));
+        assert_eq!(
+            parse_lobby_link("https://eu.washoi.net/lobby/abc_1-2"),
+            room("abc_1-2", None)
+        );
+        assert_eq!(
+            parse_lobby_link("https://eu.washoi.net/client/?lobby=r9&invite=t0k"),
+            room("r9", Some("t0k"))
+        );
+        assert_eq!(parse_lobby_link("https://x/lobby/a?invite=b"), room("a", Some("b")));
+        assert_eq!(parse_lobby_link(" r42 "), room("r42", None));
+        assert_eq!(parse_lobby_link("https://eu.washoi.net/"), None);
+        assert_eq!(parse_lobby_link("https://x/lobby/a%20b"), None);
     }
 
     #[test]
@@ -2787,7 +2801,7 @@ mod tests {
                 screen_rect: Some(Rect::from_min_size(Pos2::ZERO, vec2(size.0, size.1))),
                 ..Default::default()
             };
-            let mut action = Some(PanelAction::WebLobby);
+            let mut action = Some(PanelAction::Quit);
             let mut output = ctx.run_ui(input, |ui| {
                 action = panel.ui(ui, &TwinStyle::default());
             });

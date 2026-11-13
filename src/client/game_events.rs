@@ -466,6 +466,50 @@ impl GameAudio {
         playable
     }
 
+    /// The menus' music for the lobby (`DemoService`'s
+    /// `loadPlaylist(MENU_PLAYLIST)`): the menu playlist from `data`, with
+    /// only the packages that hold its tracks read, so the lobby does not
+    /// read every map. `muted` is the lobby music key's stored choice.
+    /// Returns how many tracks can play.
+    pub fn start_menu_music(&mut self, data: &Path, muted: bool) -> usize {
+        let Some(playlist) = std::fs::read_to_string(data.join(MENU_PLAYLIST.trim_start_matches("data/")))
+            .ok()
+            .and_then(|text| Playlist::parse(&text).ok())
+        else {
+            return 0;
+        };
+        let paths: Vec<String> = playlist
+            .tracks
+            .iter()
+            .flat_map(|t| [t.file.clone(), format!("music/{}", t.file)])
+            .collect();
+        shagger::loader::pk3::node_pk3::ingest_pk3_dir_holding(&mut self.music_packages, data, &paths);
+        let playable = playlist
+            .tracks
+            .iter()
+            .filter(|t| {
+                self.music_packages.has_file(&t.file) || self.music_packages.has_file(&format!("music/{}", t.file))
+            })
+            .count();
+        self.playlists.insert(MENU_PLAYLIST.to_owned(), playlist);
+        self.set_menu_muted(muted);
+        self.load_playlist(MENU_PLAYLIST);
+        playable
+    }
+
+    /// `setPlaylistMuted(MENU_PLAYLIST, muted)`: the lobby music key.
+    pub fn set_menu_muted(&mut self, muted: bool) {
+        let packages = &mut self.music_packages;
+        self.music
+            .set_playlist_muted(&mut self.sfx, &mut |p| packages.get_file(p), MENU_PLAYLIST, muted);
+    }
+
+    /// The lobby's frame: the menu music's fades and next track.
+    pub fn update_menu_music(&mut self, dt: f64) {
+        self.sfx.maintain();
+        self.tick_music(dt);
+    }
+
     /// `loadPlaylist`: a playlist read by `load_music`, by its path.
     pub fn load_playlist(&mut self, key: &str) {
         let Some(playlist) = self.playlists.get(key).cloned() else {
@@ -497,6 +541,11 @@ impl GameAudio {
             Some(_) => {}
         }
         self.music_phase = Some(phase);
+        self.tick_music(dt);
+    }
+
+    /// The music's clock and the audio cvars, once a frame.
+    fn tick_music(&mut self, dt: f64) {
         let packages = &mut self.music_packages;
         // The audio cvars' onChange: applied when the registry changed.
         let serial = with_cvars(|c| c.serial());
@@ -689,5 +738,25 @@ mod tests {
     fn colours_follow_the_canonical_id() {
         assert_eq!(weapon_effect_color("lasergun"), weapon_effect_color("voltaic"));
         assert_eq!(weapon_effect_color("plasmagun"), None);
+    }
+
+    #[test]
+    fn menu_music_waits_for_its_playlist_and_keeps_the_mute() {
+        let dir = std::env::temp_dir().join(format!("washoi-menu-music-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let mut audio = GameAudio::new(AudioV2Sfx::offline(48_000));
+        assert_eq!(audio.start_menu_music(&dir, true), 0);
+        std::fs::write(
+            dir.join("menu.playlist.json"),
+            r#"{"name": "Menu", "loop": true, "tracks": [{"file": "Track.mp3"}]}"#,
+        )
+        .unwrap();
+        // No package holds the track: nothing plays, the key still applies.
+        assert_eq!(audio.start_menu_music(&dir, true), 0);
+        let _ = std::fs::remove_dir_all(&dir);
+        assert!(audio.music.is_playlist_muted(MENU_PLAYLIST));
+        audio.set_menu_muted(false);
+        assert!(!audio.music.is_playlist_muted(MENU_PLAYLIST));
+        audio.update_menu_music(0.016);
     }
 }

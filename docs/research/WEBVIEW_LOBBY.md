@@ -1,5 +1,10 @@
 # The webview lobby: how the native client and the web lobby share one UI
 
+> **Superseded (November 13, 2026).** The webview lobby was built, shipped
+> in 0.2.0 to 0.4.0 and then removed: the lobby is native again
+> ([NATIVE_LOBBY.md](NATIVE_LOBBY.md), RUST.md progress log "Web lobby
+> removed"). This document is kept as history.
+
 Status: spec, November 3, 2026. Nothing here is built yet. It follows the
 decision in RUST.md 23: after 0.1.1 the native menu becomes the system's own
 webview showing the washoi.net lobby, with no bundled Chromium and no native

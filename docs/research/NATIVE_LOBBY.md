@@ -1,9 +1,9 @@
 # Native lobby and settings: plan
 
-Status: steps 1 to 4 built, step 5 under way (November 13, 2026), behind `ui_lobby native`
-(`washoi --lobby native` once; the cvar persists). The defaults for the
-questions in section 7: the welcome guide stays web-only until step 5, the
-native lobby opens straight onto Play, and the web view goes at parity.
+Status: built, and the only lobby (November 13, 2026). Steps 1 to 5 are
+done and step 6 removed the web view, its switch and WebKitGTK. The
+answers to section 7: the native lobby opens straight onto Play, and the
+web view went at parity.
 
 ## 1. Why reverse the November 3 decision
 
@@ -48,7 +48,7 @@ TS + CSS.
 | Play stage: mode tiles, tagline, Find, private lobby key | `LobbyPanel.ts` (`showPlayStage`) | (above) | new screen on the same kit |
 | Quick play and queue | `LobbyPanel.ts`, SHAG `LobbyClient.ts` | — | shagger `lobby::lobby_client` (`join_queue`, `create_lobby`) |
 | Room before a match: players, ready, map vote, bots, shuffle, teams | SHAG `engine/ui/components/MatchLobbyView.ts` | 1,081 | shagger `ui/components/match_lobby_view.rs` (513 lines, egui, logic done), restyled |
-| Private lobbies, invites, deep links | `LobbyPanel.ts` (`showPrivateLobby`, `runDeepLinkJoin`) | — | `lobby_client` (`join_lobby` with invite token); links as a command-line argument |
+| Private lobbies, invites, deep links | `LobbyPanel.ts` (`showPrivateLobby`, `runDeepLinkJoin`) | — | `lobby_client` (`join_lobby` with invite token); links as `washoi --join <link>` |
 | Lobby chat | `LobbyPanel.ts`, `ChatScroll.ts` | 43 | `lobby_client` (`chat_send`); text input from the in-match chat (`chat_key`) |
 | Live matches: watch, drop in | `LobbyPanel.ts` | — | `lobby_client`; hands off through `LobbyOutcome::Match`, as now |
 | Connecting, failure | SHAG `ConnectingOverlay.ts`, `MatchConnectionFailure.ts` | — | shagger `ui/components/connecting_overlay.rs` (555 lines) |
@@ -60,8 +60,8 @@ TS + CSS.
 | Settings sync with the account | SHAG `lobby/SettingsSync.ts` | 274 | shagger `lobby::settings_sync` (498 lines, ported); it runs natively instead of in the page |
 | Welcome and terms | `LobbyWelcomeDialog.ts`, `LobbyWelcomeGuide.ts` | 462 + 458 css | removed `lobby_welcome_*.rs` for the flow; terms text in `assets/docs` |
 | Credits | `credits/CreditsDialog.ts`, `MarkdownLite.ts` | 289 | removed `credits/markdown_lite.rs` (431 lines) |
-| Lobby music, its mute key | `LobbyMusicKey.ts` | 59 | shagger audio |
-| Full-server notice | `LobbyFullNotice.ts` | 132 | small new screen |
+| Lobby music, its mute key | `LobbyMusicKey.ts` | 59 | shagger audio; `client/lobby_music_key.rs` |
+| Full-server notice | `LobbyFullNotice.ts` | 132 | `client/lobby_full_notice.rs` |
 | Map packages before a match | `LobbyAssetPreparation.ts`, `LobbyDownloadIndicator.ts` | 210 | already native (`data_sync_screen.rs`, the package store) |
 | Update notice, Quit key, client version | `native/ShellControls.ts` | — | the update check is native already (`update_check.rs`) |
 | Console key | page opens the console | — | the native console |
@@ -91,9 +91,10 @@ past that is added later, piece by piece, if it's wanted.
 - **The lobby connection lives for the session.** It stays open through
   matches, so the room, chat and queue survive the round trip as they do in
   the browser.
-- **A switch while both exist**: cvar `ui_lobby native|web`, default `web`
-  until the native lobby covers section 2, then `native`. The web view is
-  removed one release after that, along with WebKitGTK from the Linux build.
+- **A switch while both existed**: cvar `ui_lobby native|web`, default
+  `web` until the native lobby covered section 2. At parity the web view
+  went at once (step 6) rather than a release later, along with WebKitGTK
+  from the Linux build.
 
 ## 4. Look
 
@@ -181,13 +182,28 @@ tests, and can ship.
    open from CREDITS in the links bar, on the guide's card. TERMS.md and
    CREDITS.md are copies in `assets/docs/`; wash-fps is the master, `tools/sync_docs.sh` copies them over and CI's `docs-sync` job fails when one is outdated. The agreed
    terms' version and "Don't show this again" live in `preferences.json`
-   beside the bindings (`client/lobby_preferences.rs`); the web view's
-   local storage keeps its own, so it asks once more. `--page guide/N`
-   and `credits` draw them. Left out: the lobby music key (the native
-   lobby plays no music yet) and the blur behind the card (egui has none;
-   the lobby is only darkened). The update notice (`ShellControls.ts`'s
+   beside the bindings (`client/lobby_preferences.rs`), so a player who
+   agreed in the web view is asked once more. `--page guide/N`
+   and `credits` draw them. Left out: the blur behind the card (egui has
+   none; the lobby is only darkened). The update notice (`ShellControls.ts`'s
    `installUpdateNotice`) sits in the upper right once `update_check` has
    found a newer release; `--page update` shows it with a made-up one.
+6. **Parity and the web view's removal.** *Built:* the review against
+   section 2 found four gaps, now closed. The lobby music plays the menu
+   playlist from the data folder (`GameAudio::start_menu_music`, reading
+   only the packages that hold its tracks), and a speaker key in the links
+   bar (`client/lobby_music_key.rs`) mutes it, kept in `preferences.json`
+   as `washoi.lobby.musicMuted`. The servers-full and lobby-offline notice
+   (`client/lobby_full_notice.rs`) sits above the links bar with its
+   countdown and Try now. Deep links come as `washoi --join <link>` (a
+   `/lobby/<id>` or `?lobby=<id>&invite=<token>` link, or the bare id),
+   joined once after login and the welcome guide. The rail's Console key
+   drops the native console over the lobby. Then the web view went:
+   `lobby_webview.rs`, `ui_lobby`, `--lobby`, wry and shagger's `webview`
+   feature, and WebKitGTK from the Linux build; the game now runs on
+   Wayland itself where the desktop has it. Still left out, as section 2's
+   scope allows: the record's match history on the Profile, "Save in
+   browser", and the demo viewer's video export.
 
 As a rough size, steps 1 and 3 are each about the size of the kit picker plus
 the Esc menu several times over. Steps 2, 4 and 5 are smaller. Each step
@@ -209,4 +225,5 @@ comes back for your review in the game before the next one starts.
 2. Should the native lobby open straight onto Play, skipping the boot screen
    the page shows? The native loading and data screens already cover start-up.
 3. Is it fine to drop the web view entirely once native reaches parity,
-   including the WebKitGTK dependency on Linux?
+   including the WebKitGTK dependency on Linux? Yes (November 13): it is
+   gone.

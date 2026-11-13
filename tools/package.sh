@@ -91,12 +91,7 @@ Categories=Game;ActionGame;
 DESKTOP
     cat >> "$stage/$name/README.txt" <<TXT
 
-Linux needs WebKitGTK 4.1 for the lobby and ALSA for sound:
-  Arch, Manjaro        sudo pacman -S webkit2gtk-4.1
-  Debian, Ubuntu       sudo apt install libwebkit2gtk-4.1-0
-  Fedora               sudo dnf install webkit2gtk4.1
-  openSUSE             sudo zypper install libwebkit2gtk-4_1-0
-(Arch's webkit2gtk package is the older 4.0, not the one needed.)
+Linux needs ALSA for sound (libasound2; every desktop has it).
 
 The AppImage (washoi-$version-linux-$arch.AppImage) is the same game as one
 file: chmod +x it and run it. It updates itself when a new version is out.
@@ -110,7 +105,7 @@ TXT
     tar -C "$stage" -czf "dist/$name.tar.gz" "$name"
     echo "dist/$name.tar.gz"
     # The AppImage: the same files in an AppDir. Like the tar.gz it uses the
-    # system's WebKitGTK 4.1 and ALSA rather than carrying them.
+    # system's ALSA rather than carrying it.
     tool=${APPIMAGETOOL:-$(command -v appimagetool || true)}
     if [ -z "$tool" ]; then
       echo "no appimagetool: the AppImage is skipped" >&2
@@ -125,7 +120,7 @@ TXT
       cp assets/icon/washoi-512.png "$appdir/.DirIcon"
       cp "$stage/$name/net.washoi.Washoi.desktop" "$appdir/net.washoi.Washoi.desktop"
       cp "$stage/$name/net.washoi.Washoi.desktop" "$appdir/usr/share/applications/"
-      # A script, not a link: it names the package when WebKitGTK is missing.
+      # A script, not a link: it names the package when ALSA is missing.
       cp tools/linux/AppRun "$appdir/AppRun"
       # No FUSE on build machines: the tool runs extracted.
       APPIMAGE_EXTRACT_AND_RUN=1 ARCH=$arch "$tool" --no-appstream "$appdir" "dist/$name.AppImage" >/dev/null

@@ -75,6 +75,13 @@ impl LobbyWelcomeGuide {
         self.refresh(can_open);
     }
 
+    /// `readyForJoin`: the guide is done with, so a deep link may open
+    /// its room.
+    #[must_use]
+    pub fn ready_for_join(&self) -> bool {
+        COMPLETED.load(Ordering::Relaxed) && self.dialog.is_none() && !self.suspended
+    }
+
     /// Whether the guide is over the lobby.
     #[must_use]
     pub fn is_open(&self) -> bool {

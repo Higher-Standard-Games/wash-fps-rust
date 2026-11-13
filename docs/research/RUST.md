@@ -2683,6 +2683,11 @@ profile, leaderboard, demos and welcome views, the egui settings screen and
 `washoi menu`) was removed: the webview lobby replaces it, and the log
 entries below that name those files are history (WEBVIEW_LOBBY.md 16).
 
+**Reversed November 13, 2026.** The webview caused a bug on every platform
+and is gone: the lobby is native again, on the look of the web lobby rather
+than the old egui one ([NATIVE_LOBBY.md](NATIVE_LOBBY.md); progress log
+"Web lobby removed").
+
 ### 0.2.0: the goal (November 4, 2026)
 
 The second play-through, on the webview lobby build, found gaps across
@@ -2709,6 +2714,28 @@ whole areas rather than single items. 0.2.0 closes them in two steps.
 0.2.0 is released when both are done.
 
 ## 24. Progress log
+
+### Web lobby removed (November 13, 2026)
+
+The native lobby is now the only lobby ([NATIVE_LOBBY.md](NATIVE_LOBBY.md)
+step 6). Removed: `lobby_webview.rs`, the `ui_lobby` cvar and `--lobby`, the
+webview spike and lobby smoke tools and workflows, wry and its dependencies
+(in shagger too: the `webview` feature and `lobby/storage_mirror.rs`), and
+WebKitGTK from the Linux build, the AppImage's needs and `deny.toml`'s
+exceptions. With the webview gone, nothing holds the game to X11: on a
+Wayland desktop it now runs on Wayland itself (winit picks it), with X11 or
+XWayland as before elsewhere. The in-match Settings key always opens the
+native settings.
+
+What the parity review added: the lobby music (`data/menu.playlist.json`,
+played by `GameAudio::start_menu_music`, which reads only the packages
+holding its tracks through shagger's `ingest_pk3_dir_holding`) and its
+speaker key in the links bar (`client/lobby_music_key.rs`, its choice in
+`preferences.json`); the servers-full and lobby-offline notice
+(`client/lobby_full_notice.rs`) with its countdown and Try now; deep links
+as `washoi --join <room link or id>`, joined once after login and the
+welcome guide; and the Console key in the rail, which drops the console
+over the lobby (as `` ` `` does).
 
 ### Native lobby proposed (November 12, 2026)
 
