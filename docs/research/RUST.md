@@ -2686,7 +2686,7 @@ entries below that name those files are history (WEBVIEW_LOBBY.md 16).
 **Reversed November 13, 2026.** The webview caused a bug on every platform
 and is gone: the lobby is native again, on the look of the web lobby rather
 than the old egui one ([NATIVE_LOBBY.md](NATIVE_LOBBY.md); progress log
-"Web lobby removed").
+"0.5.0: web lobby removed").
 
 ### 0.2.0: the goal (November 4, 2026)
 
@@ -2715,7 +2715,7 @@ whole areas rather than single items. 0.2.0 closes them in two steps.
 
 ## 24. Progress log
 
-### Web lobby removed (November 13, 2026)
+### 0.5.0: web lobby removed (November 13, 2026)
 
 The native lobby is now the only lobby ([NATIVE_LOBBY.md](NATIVE_LOBBY.md)
 step 6). Removed: `lobby_webview.rs`, the `ui_lobby` cvar and `--lobby`, the
@@ -2736,6 +2736,9 @@ speaker key in the links bar (`client/lobby_music_key.rs`, its choice in
 as `washoi --join <room link or id>`, joined once after login and the
 welcome guide; and the Console key in the rail, which drops the console
 over the lobby (as `` ` `` does).
+
+**Version 0.5.0**: a minor step rather than 0.4.1, for the lobby's switch
+and the move to native Wayland.
 
 ### Native lobby proposed (November 12, 2026)
 
