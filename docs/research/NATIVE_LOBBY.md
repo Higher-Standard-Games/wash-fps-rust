@@ -179,7 +179,7 @@ tests, and can ship.
    keyboard setup" leaves a "Back to welcome" key over Settings. The
    credits (`client/credits/`, with MarkdownLite back from the egui menu)
    open from CREDITS in the links bar, on the guide's card. TERMS.md and
-   CREDITS.md are copied into `assets/docs/` from wash-fps. The agreed
+   CREDITS.md are copies in `assets/docs/`; wash-fps is the master, `tools/sync_docs.sh` copies them over and CI's `docs-sync` job fails when one is outdated. The agreed
    terms' version and "Don't show this again" live in `preferences.json`
    beside the bindings (`client/lobby_preferences.rs`); the web view's
    local storage keeps its own, so it asks once more. `--page guide/N`
