@@ -80,7 +80,9 @@ use washoi::client::hud::widgets::loadout_picker::{self, LoadoutOutcome, Loadout
 use washoi::client::hud::widgets::pause_menu::{PauseMenu, PauseMenuAction};
 use washoi::client::hud::widgets::pickup_prompt::{asks_to_swap, swap_text};
 use washoi::client::hud::widgets::spectator_cue::pad_bindings;
+use washoi::client::match_state_manager::MatchPhase;
 use washoi::client::move_stick::{MoveAxis, stick_direction, stick_keys};
+use washoi::client::remote_player_logic::CLIENT_KEY_PREFIX;
 use washoi::client::settings::controller_model::controller_buttons;
 use washoi::client::spectate_view::{DeathCameraCue, SpectateView};
 use washoi::client::teleport_effect::TeamColor;
@@ -160,6 +162,10 @@ struct App {
     demo_discontinuity: u64,
     /// The view after our own death, and what it follows (`DeathCamera`).
     death_camera: DeathCamera,
+    /// The match phase last seen, for the post-game showcase
+    /// (`watchMatchPhase`), and the look the showcase's camera took over.
+    showcase_phase: Option<MatchPhase>,
+    showcase_look: Option<(f32, f32)>,
     /// The first-person camera's motion on top of the mouse, in play.
     first_person: FirstPersonView,
     /// The viewed player's weapon was reloading in the last weapon state.
@@ -991,6 +997,46 @@ impl App {
             };
             s.renderer.set_local_style(local_style);
             s.renderer.live_models = models;
+            // `watchMatchPhase`: the winner on show through the post-game,
+            // gone with the next phase.
+            let phase = feed.match_state().phase();
+            if self.showcase_phase != Some(phase) {
+                self.showcase_phase = Some(phase);
+                if s.renderer.showcase.take().is_some()
+                    && let Some((yaw, pitch)) = self.showcase_look.take()
+                {
+                    (self.camera.yaw, self.camera.pitch) = (yaw, pitch);
+                }
+                let winner = (phase == MatchPhase::PostGame)
+                    .then(|| feed.match_state().resolve_winner_player_id())
+                    .flatten()
+                    .and_then(|id| {
+                        let key = format!("{CLIENT_KEY_PREFIX}{id}");
+                        feed.roster()
+                            .iter()
+                            .find(|(k, _)| *k == key)
+                            .map(|(_, p)| p.entity_id.clone())
+                    });
+                if let Some(entity) = winner {
+                    // Our own gun is the one on screen; anyone else's the
+                    // last seen in their hand.
+                    let weapon = if feed.local_entity() == Some(entity.as_str()) {
+                        s.renderer.view_model.as_ref().map(|v| v.view.weapon.clone())
+                    } else {
+                        None
+                    }
+                    .or_else(|| view.weapons.get(&entity).cloned());
+                    let style = self.appearance.style(
+                        &entity,
+                        &appearance_view,
+                        washoi::client::remote_player_renderer::MODEL_SCALE,
+                    );
+                    let aspect = f64::from(s.config.width) / f64::from(s.config.height.max(1));
+                    s.renderer
+                        .start_showcase(appearance_view.model_for(&entity), style, weapon, &self.camera, aspect);
+                    self.showcase_look = Some((self.camera.yaw, self.camera.pitch));
+                }
+            }
             let base_fov = self.camera.fov_y;
             let eyes = self.reel.as_ref().and_then(|r| {
                 self.follow = None;
@@ -1124,6 +1170,7 @@ impl App {
                 .collect();
             s.renderer.set_live_weapons(&view.weapons);
             s.renderer.set_live_players(&drawn, f64::from(dt), effect_dt);
+            s.renderer.play_showcase(f64::from(dt));
             let local = match feed {
                 Feed::Play(..) => feed.local_entity(),
                 _ => None,
@@ -1174,6 +1221,10 @@ impl App {
                     self.camera.yaw = yaw as f32;
                     self.camera.pitch = pitch as f32;
                 }
+            }
+            // The diorama camera frames the post-game's winner.
+            if let Some(showcase) = &s.renderer.showcase {
+                showcase.frame(&mut self.camera);
             }
             // `presentFire` and the reload, for the eyes we look through:
             // the server's shots and weapon state (wash-fps `FPSPlayer`).
@@ -1456,7 +1507,10 @@ impl App {
         // The view's motion goes on for drawing and comes off after, so the
         // mouse and the aim never carry it.
         let mouse = (self.camera.pitch, self.camera.yaw);
-        let offset = self.view_offset.take().filter(|_| !self.death_camera.is_active());
+        let offset = self
+            .view_offset
+            .take()
+            .filter(|_| !self.death_camera.is_active() && s.renderer.showcase.is_none());
         if let Some(o) = offset {
             self.camera.pitch += o.pitch as f32;
             self.camera.yaw += o.yaw as f32;
@@ -2446,6 +2500,8 @@ pub fn run(
         free_camera: false,
         demo_discontinuity: 0,
         death_camera: DeathCamera::default(),
+        showcase_phase: None,
+        showcase_look: None,
         first_person: FirstPersonView::default(),
         view_reloading: false,
         beam_wanted: false,

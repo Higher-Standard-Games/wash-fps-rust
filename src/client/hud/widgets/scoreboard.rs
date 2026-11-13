@@ -11,8 +11,9 @@
 //! everyone; a one-a-side match gets a head-to-head line; team modes get a
 //! column per side, coloured by allegiance.
 //!
-//! Not drawn: the winner's 3D model (`PostGameShowcase`), the backdrop blur
-//! and the stamp animations.
+//! The winner's model beside the board is the scene's
+//! (`client/post_game_showcase.rs`). Not drawn: the backdrop blur and the
+//! stamp animations.
 
 use std::cell::Cell;
 use std::collections::BTreeMap;

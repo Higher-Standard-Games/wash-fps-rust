@@ -58,6 +58,7 @@ pub mod move_stick;
 pub mod player_appearance;
 pub mod player_model_selection;
 pub mod player_model_visual_settings;
+pub mod post_game_showcase;
 pub mod prediction;
 pub mod preview_packages;
 pub mod profile_view;

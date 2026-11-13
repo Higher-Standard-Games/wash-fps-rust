@@ -340,6 +340,12 @@ impl RemotePlayerRenderer {
         self.bodies.iter().position(|b| b.key == choice).unwrap_or(0)
     }
 
+    /// The loaded body a choice draws with ([`Self::body_for`]).
+    #[must_use]
+    pub fn body_by_choice(&self, choice: &str) -> &PlayerBody {
+        &self.bodies[self.body_for(choice)]
+    }
+
     /// The body a player wears now.
     #[must_use]
     pub fn body_of(&self, id: &str) -> Option<&PlayerBody> {
@@ -517,17 +523,12 @@ impl RemotePlayerRenderer {
     pub fn hand_world(&self, id: &str, interp: &InterpolatedEntity) -> Option<HeldFrame> {
         let remote = self.instances.get(id)?;
         let model = &self.bodies[remote.body].model;
-        let skeleton = &model.model.skeleton;
-        let hand = skeleton.find(RIGHT_HAND)?;
-        let globals = skeleton.global_matrices(&remote.instance.locals);
-        let bone = body_matrix(interp, model) * *globals.get(hand)?;
-        let basis = model.hand_basis;
-        Some(HeldFrame {
-            hand: basis.map_or(bone, |b| bone * b.matrix()),
-            model_scale: MODEL_SCALE * model.scale_factor(),
-            gun_support: basis.and(model.gun_support),
-            blade_stance: basis.and(model.blade_stance).filter(|_| remote.blade_upright),
-        })
+        held_frame(
+            model,
+            &remote.instance,
+            body_matrix(interp, model),
+            remote.blade_upright,
+        )
     }
 
     /// `getBoneAnchor`: where a bone of a player's body is in the world
@@ -557,26 +558,62 @@ impl RemotePlayerRenderer {
         };
         let body = &self.bodies[remote.body];
         let world = body_matrix(interp, &body.model);
-        // `applyVisualStyle`: the outline is in world units, the mesh scaled by its fit.
-        let outline_width = style.outline_width / body.model.scale_factor();
-        let mut palettes: HashMap<usize, u32> = HashMap::new();
-        for (index, primitive) in body.model.model.primitives.iter().enumerate() {
-            let Some(skin) = &primitive.skin else { continue };
-            let offset = *palettes.entry(skin.skin).or_insert_with(|| {
-                let at = joints.len() as u32;
-                joints.extend(body.model.joint_matrices(&remote.instance, skin.skin));
-                at
-            });
-            draws.push(ModelDraw {
-                tint: style.tint_color,
-                skin: Some(offset),
-                outline: style.outline_enabled.then_some(Outline {
-                    color: style.outline_color,
-                    width: outline_width,
-                }),
-                ..ModelDraw::new(body.handle, index, world)
-            });
-        }
+        body_draws(body, &remote.instance, world, style, joints, draws);
+    }
+}
+
+/// Where the weapon hangs on a body posed by `instance` at `world`
+/// ([`RemotePlayerRenderer::hand_world`]); `blade_upright` when the blade
+/// stands in its stance.
+#[must_use]
+pub fn held_frame(
+    model: &PlayerModel,
+    instance: &PlayerModelInstance,
+    world: Mat4,
+    blade_upright: bool,
+) -> Option<HeldFrame> {
+    let skeleton = &model.model.skeleton;
+    let hand = skeleton.find(RIGHT_HAND)?;
+    let globals = skeleton.global_matrices(&instance.locals);
+    let bone = world * *globals.get(hand)?;
+    let basis = model.hand_basis;
+    Some(HeldFrame {
+        hand: basis.map_or(bone, |b| bone * b.matrix()),
+        model_scale: MODEL_SCALE * model.scale_factor(),
+        gun_support: basis.and(model.gun_support),
+        blade_stance: basis.and(model.blade_stance).filter(|_| blade_upright),
+    })
+}
+
+/// A body's draws posed by `instance` at `world`, in `style`, appending its
+/// joint palettes to `joints` ([`RemotePlayerRenderer::draws`]).
+pub fn body_draws(
+    body: &PlayerBody,
+    instance: &PlayerModelInstance,
+    world: Mat4,
+    style: &PlayerModelVisualStyle,
+    joints: &mut Vec<Mat4>,
+    draws: &mut Vec<ModelDraw>,
+) {
+    // `applyVisualStyle`: the outline is in world units, the mesh scaled by its fit.
+    let outline_width = style.outline_width / body.model.scale_factor();
+    let mut palettes: HashMap<usize, u32> = HashMap::new();
+    for (index, primitive) in body.model.model.primitives.iter().enumerate() {
+        let Some(skin) = &primitive.skin else { continue };
+        let offset = *palettes.entry(skin.skin).or_insert_with(|| {
+            let at = joints.len() as u32;
+            joints.extend(body.model.joint_matrices(instance, skin.skin));
+            at
+        });
+        draws.push(ModelDraw {
+            tint: style.tint_color,
+            skin: Some(offset),
+            outline: style.outline_enabled.then_some(Outline {
+                color: style.outline_color,
+                width: outline_width,
+            }),
+            ..ModelDraw::new(body.handle, index, world)
+        });
     }
 }
 

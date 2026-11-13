@@ -2717,7 +2717,7 @@ whole areas rather than single items. 0.2.0 closes them in two steps.
 
 ### Model previews (November 13, 2026)
 
-The native client now draws two of the browser's three model previews:
+The native client now draws the browser's three model previews. Two are UI:
 the loadout picker's turning weapon (`client/hud/widgets/weapon_preview.rs`,
 `WeaponPreview.ts`) and the Gameplay page's team figures, each side's body
 in its colour and outline, idle and swaying
@@ -2728,8 +2728,19 @@ on shagger's `rendering/model_stage.rs`: a small scene with its own
 asks for a frame with `egui_layer::queue_gpu_job`, which `EguiLayer::paint`
 runs before egui draws. The models are read from the packages on first use
 (`client/preview_packages.rs`, through `ingest_pk3_dir_holding`). The stand's
-glow is cyan, as the browser's. The post-game winner's model
-(`PostGameShowcase.ts`) is next.
+glow is cyan, as the browser's.
+
+The third is the post-game winner (`client/post_game_showcase.rs`,
+`PostGameShowcase.ts`), in the match's scene: when the phase turns to
+PostGame, a copy of the winner's body in their colour (no outline), holding
+the weapon they last held, dancing when the packages have the dance clips,
+stands at a clear spot traced from the frozen camera, and a diorama camera
+in front of it frames it in the left third beside the result board. The
+view model is not drawn meanwhile, and the look the camera had comes back
+with the next phase. The model's own light from in front and above
+(`includedOnlyMeshes`) is shagger's new `ModelDraw::key_light`, a
+hemispheric light per draw. `washoi view <map> --showcase WEAPON
+--screenshot F` shows it in front of the view.
 
 ### 0.5.0: web lobby removed (November 13, 2026)
 

@@ -24,6 +24,7 @@ use washoi::client::hud::widgets::loadout_picker;
 use washoi::client::hud::widgets::pickup_prompt::{horizontal_distance_sq, in_pickup_range};
 use washoi::client::player_appearance::{AppearanceView, PlayerAppearance};
 use washoi::client::player_model_selection::{PlayerModelSide, player_model_choice};
+use washoi::client::post_game_showcase::{PostGameShowcase, ShowcaseStart};
 use washoi::client::quad_damage_visual::{get_quad_damage_pulse, mask_has_quad};
 use washoi::client::ragdoll::death_clip::DeathFacts;
 use washoi::client::ragdoll_system::{RagdollSystem, RagdollTrails};
@@ -212,6 +213,9 @@ pub struct ViewOptions {
     pub bench: Option<(u64, u64, Option<PathBuf>)>,
     /// Hold the scoreboard open (`--scoreboard`, Tab in the window).
     pub scoreboard: bool,
+    /// Show the post-game's winner in front of the camera (`--showcase`),
+    /// holding this weapon (`none` for none), in the enemy side's style.
+    pub showcase: Option<String>,
     /// Open the loadout picker over the shot (`--loadout`), on this weapon
     /// (`""` for the kit's primary).
     pub loadout: Option<String>,
@@ -1196,6 +1200,8 @@ pub struct MapRenderer {
     pub image_processing: ImageProcessingConfiguration,
     /// The first-person weapon, drawn after the scene with depth cleared.
     pub view_model: Option<WeaponViewModel>,
+    /// The post-game's winner on show; the view model is not drawn meanwhile.
+    pub showcase: Option<PostGameShowcase>,
     /// The other weapons a player in the match may switch to, by id.
     pub holster: HashMap<String, WeaponViewModel>,
     /// `WeaponSwitchAnim`: the slide between weapons in hand.
@@ -1692,6 +1698,45 @@ impl MapRenderer {
                 interp.vy,
                 false,
             );
+        }
+    }
+
+    /// `startPostGameShowcase`: the winner, `entity_id`, on show in their
+    /// body (`choice`) and `style`, holding `weapon`, in front of `camera`.
+    pub fn start_showcase(
+        &mut self,
+        choice: &str,
+        style: PlayerModelVisualStyle,
+        weapon: Option<String>,
+        camera: &Camera,
+        aspect: f64,
+    ) {
+        self.showcase = None;
+        let Some(renderer) = &self.remote_players else {
+            return;
+        };
+        let body = renderer.body_by_choice(choice).clone();
+        // `Math.random()` for the dance's shuffle.
+        let pick = (std::hash::BuildHasher::hash_one(&std::collections::hash_map::RandomState::new(), 0u8) >> 11)
+            as f64
+            / (1u64 << 53) as f64;
+        let start = ShowcaseStart {
+            body,
+            style,
+            weapon,
+            camera,
+            aspect,
+            pick,
+        };
+        self.showcase = Some(PostGameShowcase::start(start, |from, to| self.trace_map(from, to)));
+    }
+
+    /// Moves the showcase on by `dt` and adds its draws to the frame's,
+    /// after [`Self::set_live_players`].
+    pub fn play_showcase(&mut self, dt: f64) {
+        if let Some(showcase) = &mut self.showcase {
+            showcase.advance(dt);
+            showcase.draws(&self.hand_weapons, &mut self.joints, &mut self.live_draws);
         }
     }
 
@@ -2648,6 +2693,9 @@ impl MapRenderer {
     /// Records the first-person weapon, in a pass after [`Self::draw`]'s
     /// with the depth cleared.
     pub fn draw_overlay(&self, pass: &mut wgpu::RenderPass<'_>) {
+        if self.showcase.is_some() {
+            return;
+        }
         if let Some(view_model) = &self.view_model {
             view_model.draw(pass);
         }
@@ -3360,6 +3408,7 @@ pub fn build_renderer(gpu: &Gpu, map: &mut LoadedMap, output_format: wgpu::Textu
         ragdoll_trails: RagdollTrails::default(),
         slash_trails: SlashTrailRenderer::default(),
         hand_weapons,
+        showcase: None,
         live_weapons: HashMap::new(),
         live_models: HashMap::new(),
         ragdolled: HashSet::new(),
@@ -3620,7 +3669,7 @@ pub fn start_prepared(o: &ViewOptions, prepared: Prepared) -> Result<i32, String
     map.rings.clone_from(&o.rings);
     map.ragdolls.clone_from(&o.ragdolls);
     map.weapon.clone_from(&o.weapon);
-    map.remote_players = feed.is_some();
+    map.remote_players = feed.is_some() || o.showcase.is_some();
     // The highlight reel: analyzed and cut before the first frame, its
     // ground probe against the map's brushes.
     let mut reel = match (&mut feed, o.reel) {
@@ -3958,6 +4007,20 @@ pub fn start_prepared(o: &ViewOptions, prepared: Prepared) -> Result<i32, String
     // `--fire AGE`: our gun fires once along the view, AGE seconds ago.
     if let (Some(age), Some(weapon)) = (o.fire, renderer.view_model.as_ref().map(|v| v.view.weapon.clone())) {
         fire_view_shot(&mut renderer, &camera, &weapon, age, o.aim);
+    }
+    if let Some(weapon) = &o.showcase {
+        use washoi::client::player_model_visual_settings::{PlayerTeamSlot, get_player_model_visual_style};
+        let style = get_player_model_visual_style(PlayerTeamSlot::Enemy, MODEL_SCALE);
+        let weapon = (weapon != "none").then(|| weapon.clone());
+        let aspect = f64::from(o.width) / f64::from(o.height.max(1));
+        renderer.start_showcase("police", style, weapon, &camera, aspect);
+        if let Some(showcase) = &mut renderer.showcase {
+            for _ in 0..90 {
+                showcase.advance(1.0 / 60.0);
+            }
+            showcase.frame(&mut camera);
+        }
+        renderer.play_showcase(0.0);
     }
     // One long step: a still is fully under or fully dry.
     renderer.update_underwater(&mut camera, 1.0);

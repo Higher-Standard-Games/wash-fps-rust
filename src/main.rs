@@ -117,7 +117,7 @@ fn usage() -> ! {
          \x20      washoi bench <file.shagdemo> [--data DIR] [--frames N] [--warmup N] [--follow N] [--out FILE.json]\n\
          \x20      washoi --version\n\
          \x20      washoi view <map> [--data DIR] [--spawn N] [--screenshot FILE.png] [--size WxH] [--time T] [--at X,Y,Z,YAW] [--pitch DEG] [--player X,Y,Z,YAW[,CLIP[,FRAME[,quad][,WEAPON][,BODY]]]]... [--projectile ID,X,Y,Z,YAW[,PITCH]]... [--explosion ID,X,Y,Z,AGE]... [--weapon ID [--aim] [--quad] [--fire AGE]] [--no-cull] [--no-lights] [--seconds N]\n\
-         \x20      washoi demo <file.shagdemo> [--data DIR] [--screenshot FILE.png] [--size WxH] [--time T] [--at X,Y,Z,YAW] [--pitch DEG] [--follow N] [--reel MINUTES] [--audio-out FILE.wav] [--scoreboard] [--loadout WEAPON] [--seconds N]\n\
+         \x20      washoi demo <file.shagdemo> [--data DIR] [--screenshot FILE.png] [--size WxH] [--time T] [--at X,Y,Z,YAW] [--pitch DEG] [--follow N] [--reel MINUTES] [--audio-out FILE.wav] [--scoreboard] [--loadout WEAPON] [--showcase WEAPON] [--seconds N]\n\
          \x20      washoi watch <ws://game-server> [--name NAME] [--ticket TICKET] [--data DIR] [--screenshot FILE.png] [--time T] [--at X,Y,Z,YAW] [--follow N] [--seconds N]\n\
          \x20      washoi play <ws://game-server> [--name NAME] [--ticket TICKET] [--data DIR] [--screenshot FILE.png] [--time T] [--say TEXT] [--seconds N]\n\
          \x20      washoi connect <ws://game-server> [--name NAME] [--ticket TICKET] [--seconds N] [--play]\n\
@@ -167,6 +167,7 @@ struct Options {
     out: Option<PathBuf>,
     scoreboard: bool,
     loadout: Option<String>,
+    showcase: Option<String>,
     say: Option<String>,
     /// From the lobby into the window rather than headless (`--window`).
     window: bool,
@@ -227,6 +228,7 @@ fn parse_options(args: impl Iterator<Item = String>) -> Options {
             "--out" => o.out = Some(PathBuf::from(value())),
             "--scoreboard" => o.scoreboard = true,
             "--loadout" => o.loadout = Some(value()),
+            "--showcase" => o.showcase = Some(value()),
             "--say" => o.say = Some(value()),
             "--window" => o.window = true,
             "--cvars" => o.cvars = Some(PathBuf::from(value())),
@@ -917,6 +919,7 @@ fn view_options(
         bench: None,
         scoreboard: o.scoreboard,
         loadout: o.loadout.clone(),
+        showcase: o.showcase.clone(),
         join,
         say: o.say.clone(),
     }
