@@ -2750,6 +2750,22 @@ Video and Audio, on `settings_model.rs` and `controller_model.rs`, drawn
 with `client/settings/settings_fields.rs`. The fields stay in the game
 crate, as `SettingsFields.ts` is the game's.
 
+### 0.4.0 (November 13, 2026)
+
+- **The native lobby** (docs/research/NATIVE_LOBBY.md), still behind
+  `ui_lobby native` (`--lobby native` once); the web lobby stays the
+  default. Steps 1 to 4 and most of 5: the shell and the Play page, rooms
+  and room chat, the settings screen (also over a match), the
+  Leaderboard, Demos, the Profile (key, name, another key, delete), the
+  Welcome for a new player, the welcome guide (terms, keys, tip of the
+  day, `?`), Credits and the update notice. Left: the lobby music key, a
+  parity review and the switch of the default.
+- **macOS**: the lobby and every match in one window.
+- **The lobby's documents**: TERMS.md and CREDITS.md are copies of
+  wash-fps's; `tools/sync_docs.sh` copies them and CI's `docs-sync` job
+  fails when one is outdated.
+- **Version 0.4.0**.
+
 ### 0.3.5 (November 12, 2026)
 
 - **Fixes since 0.3.4**: the lobby page on NVIDIA under Linux still drew at
