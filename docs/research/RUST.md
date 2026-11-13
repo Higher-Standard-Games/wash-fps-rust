@@ -2744,9 +2744,9 @@ Ported from SHAG and wash-fps staging (beta.12):
   seeded sprites (V8's seed and first draws in its test), and one
   `EffectQuadBatch` per shader, drawn with the blended effects. A still
   `washoi view` runs the emitters up to `--time`.
-- **New maps.** DM16, DM17, DM18 and Amphi3 need nothing native beyond the
-  credits: the pools, names and material aliases come from the lobby and
-  the packages.
+- **New maps.** DM16, DM17, DM18 and Amphi3 need nothing native: the
+  pools, names and material aliases come from the lobby and the packages,
+  and `CREDITS.md` follows wash-fps main (`tools/sync_docs.sh`).
 
 ### Model previews (November 13, 2026)
 
