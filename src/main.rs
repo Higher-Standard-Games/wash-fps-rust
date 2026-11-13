@@ -81,6 +81,7 @@
 mod bench;
 mod data_sync_screen;
 mod demo_overlay;
+mod lobby_screen;
 mod lobby_webview;
 mod match_loading_screen;
 mod reel_overlay;
@@ -110,7 +111,7 @@ use washoi::shared::players::player_look::LOOK_MODELS;
 fn usage() -> ! {
     eprintln!(
         "washoi {}\n\
-         usage: washoi [--region eu|us] [--data DIR] [--offline]\n\
+         usage: washoi [--region eu|us] [--data DIR] [--offline] [--lobby native|web]\n\
          \x20      washoi sync [--region eu|us] [--data DIR]\n\
          \x20      washoi regions [--screenshot FILE.png [--seconds N] [--size WxH]]\n\
          \x20      washoi loading <map> --screenshot FILE.png [--levelshot FILE.jpg] [--seconds N] [--size WxH]\n\
@@ -121,6 +122,7 @@ fn usage() -> ! {
          \x20      washoi watch <ws://game-server> [--name NAME] [--ticket TICKET] [--data DIR] [--screenshot FILE.png] [--time T] [--at X,Y,Z,YAW] [--follow N] [--seconds N]\n\
          \x20      washoi play <ws://game-server> [--name NAME] [--ticket TICKET] [--data DIR] [--screenshot FILE.png] [--time T] [--say TEXT] [--seconds N]\n\
          \x20      washoi connect <ws://game-server> [--name NAME] [--ticket TICKET] [--seconds N] [--play]\n\
+         \x20      washoi menu <ws://lobby> --screenshot FILE.png [--key-file FILE] [--size WxH] [--seconds N] [--play | --room FILE.json] [--page settings/audio]\n\
          \x20      washoi lobby <ws://lobby> [--key-file FILE] list\n\
          \x20      washoi lobby <ws://lobby> [--key-file FILE] spectate [--window] [--seconds N]\n\
          \x20      washoi lobby <ws://lobby> [--key-file FILE] queue <gametype> [--seconds N] [--play | --window]\n\
@@ -136,6 +138,12 @@ struct Options {
     name: Option<String>,
     ticket: Option<String>,
     seconds: Option<f64>,
+    /// `menu --room FILE.json`: a room's state to draw, without a lobby.
+    room: Option<PathBuf>,
+    /// `menu --page settings/video`: a page of the lobby to open.
+    page: Option<String>,
+    /// `menu --seed FILE.json`: leaderboard pages and demos to show.
+    seed: Option<PathBuf>,
     play: bool,
     key_file: Option<PathBuf>,
     data: Option<PathBuf>,
@@ -168,6 +176,9 @@ struct Options {
     region: Option<String>,
     /// Start with the data on disk, without checking for new data.
     offline: bool,
+    /// `--lobby native|web`: which lobby the game shows, kept in `ui_lobby`
+    /// for the next start (NATIVE_LOBBY.md 3).
+    lobby: Option<String>,
     /// `washoi loading`: the levelshot to draw behind the stage.
     levelshot: Option<PathBuf>,
     players: Vec<view::PlayerView>,
@@ -191,7 +202,11 @@ fn parse_options(args: impl Iterator<Item = String>) -> Options {
             "--name" => o.name = Some(value()),
             "--ticket" => o.ticket = Some(value()),
             "--seconds" => o.seconds = Some(value().parse().unwrap_or_else(|_| usage())),
+            "--room" => o.room = Some(PathBuf::from(value())),
+            "--page" => o.page = Some(value()),
+            "--seed" => o.seed = Some(PathBuf::from(value())),
             "--key-file" => o.key_file = Some(PathBuf::from(value())),
+            "--lobby" => o.lobby = Some(value()),
             "--play" => o.play = true,
             "--data" => o.data = Some(PathBuf::from(value())),
             "--screenshot" => o.screenshot = Some(PathBuf::from(value())),
@@ -513,7 +528,59 @@ fn main() {
     });
     shagger::input::input_system::init_input(input_dir);
     shagger::core::cvar::with_cvars(washoi::client::settings::settings_model::register_client_cvars);
+    shagger::core::cvar::with_cvars(|c| {
+        c.register(
+            UI_LOBBY,
+            "web",
+            shagger::core::cvar::CvarOptions::describe(
+                "The lobby: web (the region's page in a web view) or native (NATIVE_LOBBY.md, in progress)",
+            ),
+        );
+        if let Some(lobby) = o.lobby.as_deref() {
+            c.set(UI_LOBBY, lobby);
+        }
+    });
     let code = match mode.as_str() {
+        "menu" => {
+            let Some(path) = &o.screenshot else { usage() };
+            let size = o.size.unwrap_or((1280, 720));
+            let key = o.key_file.as_deref();
+            match lobby_screen::screenshot(
+                &url,
+                key,
+                path,
+                size,
+                o.seconds.unwrap_or(3.0),
+                lobby_screen::Shot {
+                    quick_play: o.play,
+                    room: o.room.as_deref(),
+                    page: o.page.as_deref(),
+                    seed: o.seed.as_deref(),
+                },
+            ) {
+                Ok(None) if o.play => {
+                    eprintln!("lobby: no match was handed out");
+                    1
+                }
+                Ok(None) => 0,
+                // Quick play's match, played for a few seconds as `connect --play`.
+                Ok(Some(choice)) => {
+                    println!("lobby: handed {} on {}", choice.server_url, choice.map);
+                    play_match(
+                        &choice.server_url,
+                        &choice.name,
+                        choice.admission_ticket,
+                        5.0,
+                        true,
+                        &data_dir(&o),
+                    )
+                }
+                Err(why) => {
+                    eprintln!("lobby: {why}");
+                    1
+                }
+            }
+        }
         "connect" => play_match(
             &url,
             o.name.as_deref().unwrap_or("RustClient"),
@@ -686,8 +753,12 @@ fn game(mut o: Options) -> i32 {
     lobby_mode(&lobby, &o)
 }
 
-/// The region's lobby page until the player quits, each match it starts
-/// played in the same window (WEBVIEW_LOBBY.md 6).
+/// The cvar that picks the lobby (NATIVE_LOBBY.md 3).
+const UI_LOBBY: &str = "ui_lobby";
+
+/// The region's lobby until the player quits, each match it starts played
+/// in the same window: the web page (WEBVIEW_LOBBY.md 6) or, with
+/// `ui_lobby native`, the native lobby (NATIVE_LOBBY.md).
 fn lobby_mode(lobby: &str, o: &Options) -> i32 {
     let Some(page) = lobby_webview::page_url(lobby) else {
         return fatal(&format!("no lobby page for {lobby}"));
@@ -696,16 +767,40 @@ fn lobby_mode(lobby: &str, o: &Options) -> i32 {
         washoi::update_check::start();
     }
     // The page's account key and settings live in the config dir
-    // (WEBVIEW_LOBBY.md 7 and 8).
+    // (WEBVIEW_LOBBY.md 7 and 8); the native lobby uses the same files.
     let Some(dir) = config_dir() else {
         return fatal("no config directory for the lobby's settings");
     };
     let _ = std::fs::create_dir_all(&dir);
     let key_file = o.key_file.clone().or_else(default_key_file);
-    let mirror = shagger::lobby::storage_mirror::StorageMirror::new(dir, key_file);
-    let mut after = None;
+    let mirror = shagger::lobby::storage_mirror::StorageMirror::new(dir, key_file.clone());
+    let mut after: Option<lobby_webview::AfterMatch> = None;
+    // The native lobby's connection lasts the session, through every match.
+    let mut native: Option<washoi::client::lobby_panel::LobbyPanel> = None;
     loop {
-        match lobby_webview::run(&page, &mirror, after.take()) {
+        let wants_native = shagger::core::cvar::with_cvars(|c| c.get_string(UI_LOBBY)) == "native";
+        let outcome = if wants_native {
+            let panel = native.get_or_insert_with(|| {
+                println!("lobby: native, at {lobby}");
+                washoi::client::lobby_panel::LobbyPanel::connect(lobby, key_file.clone())
+            });
+            if let Some(a) = after.take() {
+                panel.after_match(a.error);
+            }
+            match lobby_screen::run(panel, match_loading_screen::twin_style()) {
+                Ok(lobby_screen::NativeOutcome::Lobby(outcome)) => Ok(outcome),
+                Ok(lobby_screen::NativeOutcome::WebLobby) => {
+                    println!("lobby: back to the web lobby");
+                    shagger::core::cvar::with_cvars(|c| c.set(UI_LOBBY, "web"));
+                    native = None;
+                    continue;
+                }
+                Err(e) => Err(e),
+            }
+        } else {
+            lobby_webview::run(&page, &mirror, after.take())
+        };
+        match outcome {
             Ok(lobby_webview::LobbyOutcome::Quit) => return 0,
             Ok(lobby_webview::LobbyOutcome::Match(c)) => {
                 let (v, handoff) = if let Some(demo) = &c.demo {
@@ -726,6 +821,9 @@ fn lobby_mode(lobby: &str, o: &Options) -> i32 {
                     (v, Some(handoff))
                 };
                 let Some(started) = load_and_start(v, handoff, Some(lobby)) else {
+                    if let Some(panel) = &mut native {
+                        panel.leave();
+                    }
                     return 0;
                 };
                 let error = started.err();

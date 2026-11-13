@@ -2710,6 +2710,62 @@ whole areas rather than single items. 0.2.0 closes them in two steps.
 
 ## 24. Progress log
 
+### Native lobby proposed (November 12, 2026)
+
+The web view lobby (WEBVIEW_LOBBY.md, decided November 3) has caused a bug
+on every platform: NVIDIA under Linux, the macOS window, the WebKitGTK
+dependency. [NATIVE_LOBBY.md](NATIVE_LOBBY.md) proposes bringing the lobby
+and settings back as native screens, in pieces behind a `ui_lobby` switch,
+on the style of the native loading screen and Esc menu. The removed egui
+lobby's look is not restored; only its logic is reused.
+
+**One window on macOS.** Every screen change (lobby, loading screen, match
+and back) moved the fullscreen game to another desktop: winit closes every
+window when an event loop exits (winit #4135), so each screen opened a new
+one (0.3.3's `WINDOW_SURVIVES_LOOPS`). On macOS the event loop now never
+exits between screens: `window::run_on_event_loop` pumps it
+(`pump_app_events`) until the screen calls `window::end_screen`, which
+every screen calls in place of `event_loop.exit()`, and sends each later
+screen the `resumed` winit sends only once. The window, its fullscreen
+Space and the lobby page now live through the match there too, as on
+Windows and Linux.
+
+**Step 1 built.** The rail, the Play page (mode tiles, Find, quick play,
+rooms list, lobby chat) and the handoff to a match and back run natively
+when `ui_lobby` is `native` (`--lobby native` sets it; it is a `ui_` cvar,
+so it stays on this machine). One `LobbyPanel` lives for the session, so
+the connection, room and chat survive each match. The pause menu's keys
+became shagger's `RaisedKey` and `TextField` components, shared with the
+lobby. The room card is still the plain `match_lobby_view.rs` until step 2.
+
+**Step 2 built.** shagger's `match_lobby_view.rs` now draws the room as
+`MatchLobbyView.ts` and its CSS do, and the rail shows the room's chat
+while the player is in one. Levelshots moved to `client/levelshots.rs` for
+the room and the loading screen. Glyph outlines come from skrifa (already
+in the tree through egui) for outlined display text.
+
+**Step 3's pages built.** The settings screen is native in the lobby:
+Controls (keyboard, mouse, actions, key capture), Controller, Gameplay,
+Video and Audio, on `settings_model.rs` and `controller_model.rs`, drawn
+with `client/settings/settings_fields.rs`. The fields stay in the game
+crate, as `SettingsFields.ts` is the game's.
+
+### 0.4.0 (November 13, 2026)
+
+- **The native lobby** (docs/research/NATIVE_LOBBY.md), still behind
+  `ui_lobby native` (`--lobby native` once); the web lobby stays the
+  default. Steps 1 to 4 and most of 5: the shell and the Play page, rooms
+  and room chat, the settings screen (also over a match), the
+  Leaderboard, Demos, the Profile (key, name, another key, delete), the
+  Welcome for a new player, the welcome guide (terms, keys, tip of the
+  day, `?`), Credits and the update notice. Left: the lobby music key, a
+  parity review and the switch of the default.
+- **macOS**: the lobby and every match in one window.
+- **The lobby's documents**: TERMS.md and CREDITS.md are copies of
+  wash-fps's; `tools/sync_docs.sh` copies them and CI's `docs-sync` job
+  fails when one is outdated.
+- **Version 0.4.0**.
+
 ### 0.3.5 (November 12, 2026)
 
 - **Fixes since 0.3.4**: the lobby page on NVIDIA under Linux still drew at

@@ -17,9 +17,12 @@
 
 use std::sync::Arc;
 
-use shagger::ui::components::lobby_twin::{clamp_css as clamp, gradient_polygon, horizontal_gradient, hsl, hsla};
+use shagger::ui::components::lobby_twin::{
+    clamp_css as clamp, gradient_polygon, horizontal_gradient, hsl, hsla, paint_rail,
+};
+use shagger::ui::components::raised_key::{Accent, KeyLook, KeyText, KeyTextLayout, RaisedKey};
 use shagger::ui::egui_layer::egui;
-use shagger::ui::egui_layer::egui::{Color32, Pos2, Rect, Vec2, pos2, vec2};
+use shagger::ui::egui_layer::egui::{Color32, Pos2, Rect, pos2, vec2};
 
 use crate::client::controller_input::UiIntent;
 use crate::client::washoi_style::display_family;
@@ -106,15 +109,6 @@ pub(crate) fn galley_wrapped(
     painter.layout_job(job)
 }
 
-/// The face's colours: (gradient stops, label, hint).
-struct KeyLook {
-    face: [(f32, Color32); 3],
-    side: [Color32; 2],
-    text: Color32,
-    sub: Color32,
-    shadow: Color32,
-}
-
 /// `RaisedKey`'s variants this menu uses.
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(crate) enum KeyKind {
@@ -130,95 +124,20 @@ pub(crate) enum KeyKind {
 }
 
 impl KeyKind {
-    fn look(self, hovered: bool, pressed: bool) -> KeyLook {
-        if pressed {
-            // `:active`
-            return KeyLook {
-                face: [
-                    (0.0, hsl(272.0, 76.0, 58.0)),
-                    (0.5, hsl(269.0, 73.0, 51.5)),
-                    (1.0, hsl(266.0, 70.0, 45.0)),
-                ],
-                side: [hsl(266.0, 72.0, 34.0), hsl(258.0, 72.0, 19.0)],
-                text: hsl(45.0, 100.0, 96.0),
-                sub: hsla(45.0, 100.0, 96.0, 0.72),
-                shadow: hsla(268.0, 80.0, 14.0, 0.5),
-            };
-        }
-        if hovered {
-            // `:hover`: the violet lift, which is also the focus ring.
-            return KeyLook {
-                face: [
-                    (0.0, hsl(278.0, 92.0, 75.0)),
-                    (0.55, hsl(273.0, 80.0, 61.0)),
-                    (1.0, hsl(268.0, 72.0, 50.0)),
-                ],
-                side: [hsl(266.0, 72.0, 34.0), hsl(258.0, 72.0, 19.0)],
-                text: hsl(45.0, 100.0, 96.0),
-                sub: hsla(45.0, 100.0, 96.0, 0.72),
-                shadow: hsla(268.0, 80.0, 14.0, 0.5),
-            };
-        }
+    /// The variant's custom properties (shagger's `RaisedKey`).
+    fn look(self) -> KeyLook {
         match self {
-            Self::Nav => KeyLook {
-                face: [
-                    (0.0, hsl(51.0, 100.0, 73.0)),
-                    (0.55, hsl(46.0, 100.0, 58.0)),
-                    (1.0, hsl(42.0, 100.0, 50.0)),
-                ],
-                side: [hsl(36.0, 92.0, 40.0), hsl(28.0, 88.0, 25.0)],
-                text: ink(1.0),
-                sub: ink(0.62),
-                shadow: hsla(28.0, 90.0, 14.0, 0.42),
-            },
-            Self::Ink => KeyLook {
-                face: [
-                    (0.0, hsl(250.0, 28.0, 21.0)),
-                    (0.6, hsl(250.0, 40.0, 10.0)),
-                    (1.0, hsl(252.0, 44.0, 6.0)),
-                ],
-                side: [hsl(252.0, 44.0, 5.0), hsl(252.0, 44.0, 3.0)],
-                text: hsl(46.0, 100.0, 60.0),
-                sub: hsla(46.0, 100.0, 60.0, 0.62),
-                shadow: hsla(28.0, 90.0, 14.0, 0.5),
-            },
-            Self::Cta => KeyLook {
-                face: [
-                    (0.0, hsl(51.0, 100.0, 73.0)),
-                    (0.58, hsl(46.0, 100.0, 57.0)),
-                    (1.0, hsl(42.0, 100.0, 50.0)),
-                ],
-                side: [hsl(36.0, 92.0, 40.0), hsl(28.0, 88.0, 25.0)],
-                text: ink(1.0),
-                sub: ink(0.62),
-                shadow: hsla(250.0, 70.0, 3.0, 0.62),
-            },
-            Self::Leave => KeyLook {
-                face: [
-                    (0.0, hsl(45.0, 100.0, 97.0)),
-                    (0.6, hsl(42.0, 62.0, 90.0)),
-                    (1.0, hsl(40.0, 42.0, 82.0)),
-                ],
-                side: [hsl(36.0, 26.0, 60.0), hsl(30.0, 22.0, 42.0)],
-                text: ink(1.0),
-                sub: ink(0.62),
-                shadow: hsla(28.0, 90.0, 14.0, 0.42),
-            },
+            Self::Nav => KeyLook::gold(),
+            Self::Ink => KeyLook::ink(),
+            Self::Leave => KeyLook::cream().sm(),
+            Self::Cta => KeyLook::cta(&Accent {
+                face: hsl(46.0, 100.0, 57.0),
+                hi: hsl(51.0, 100.0, 73.0),
+                lo: hsl(42.0, 100.0, 50.0),
+                side_hi: hsl(36.0, 92.0, 40.0),
+                side_lo: hsl(28.0, 88.0, 25.0),
+            }),
         }
-    }
-
-    /// `--key-d`: how far the face stands off its side.
-    fn depth(self) -> f32 {
-        match self {
-            Self::Leave => 3.6,
-            Self::Cta => 9.6,
-            _ => 6.0,
-        }
-    }
-
-    /// `--key-cut`, of the width.
-    fn cut(self) -> f32 {
-        if self == Self::Cta { 0.05 } else { 0.03 }
     }
 }
 
@@ -236,109 +155,19 @@ pub(crate) fn raised_key(
     label_size: f32,
     focused: bool,
 ) -> bool {
-    let response = ui.interact(rect, ui.scope_id().with(id), egui::Sense::click());
-    let hovered = response.hovered() || focused;
-    let pressed = response.is_pointer_button_down_on();
-    if hovered {
-        ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
-    }
-    let look = kind.look(hovered, pressed);
-    let d = kind.depth();
-    let dx = d * 0.75;
-    let press = if pressed {
-        1.0
-    } else if hovered {
-        -0.35
-    } else {
-        0.0
+    let face = RaisedKey::new(id, rect, kind.look()).focused(focused).show(ui);
+    let leave = kind == KeyKind::Leave;
+    let layout = match kind {
+        KeyKind::Cta => KeyTextLayout::Centered,
+        _ if stacked => KeyTextLayout::Stacked,
+        _ => KeyTextLayout::Row,
     };
-    // `--key-cut`: off the face's lower left and upper right.
-    let cut = rect.width() * kind.cut();
-    let shape = |offset: Vec2| {
-        [
-            rect.left_top() + vec2(cut, 0.0) + offset,
-            rect.right_top() + offset,
-            rect.right_bottom() + vec2(-cut, 0.0) + offset,
-            rect.left_bottom() + offset,
-        ]
-    };
-    let painter = ui.painter();
-    // The cast shadow: `drop-shadow`, softened by three widening copies.
-    let shadow_at = vec2(dx * (1.0 - press) + 2.0, d * (1.0 - press) + 5.0);
-    for (grow, alpha) in [(4.0, 0.25), (2.0, 0.35), (0.0, 0.45)] {
-        let [a, b, c, e] = shape(shadow_at);
-        let g = vec2(grow, grow);
-        let corners = [a - g, b + vec2(grow, -grow), c + g, e + vec2(-grow, grow)];
-        let color = look.shadow.gamma_multiply(alpha);
-        gradient_polygon(painter, &corners, &[(0.0, color), (1.0, color)]);
-    }
-    // The side it stands on.
-    gradient_polygon(
-        painter,
-        &shape(vec2(dx, d)),
-        &[(0.0, look.side[0]), (1.0, look.side[1])],
-    );
-    // The face, and its lit top edge and shaded foot.
-    let lift = vec2(dx * press, d * press);
-    let face = shape(lift);
-    gradient_polygon(painter, &face, &look.face);
-    let band = |from: f32, to: f32| {
-        let at = |t: f32| face[0].lerp(face[3], t);
-        let at_right = |t: f32| face[1].lerp(face[2], t);
-        let h = rect.height();
-        [at(from / h), at_right(from / h), at_right(to / h), at(to / h)]
-    };
-    let white = Color32::from_white_alpha(140);
-    gradient_polygon(painter, &band(0.0, 2.0), &[(0.0, white), (1.0, white)]);
-    let foot = hsla(250.0, 60.0, 5.0, 0.14);
-    let h = rect.height();
-    gradient_polygon(painter, &band(h - 3.0, h), &[(0.0, foot), (1.0, foot)]);
-    // `raised-key__label` and `__hint`, uppercase.
-    let label = galley(
-        painter,
-        &label.to_uppercase(),
-        egui::FontId::new(label_size, display_family()),
-        look.text,
-        label_size * 0.07,
-    );
-    let no_hint = hint.is_empty();
-    let hint_size = if kind == KeyKind::Leave { 12.0 } else { 13.0 };
-    let hint = galley(
-        painter,
-        &hint.to_uppercase(),
-        egui::FontId::proportional(hint_size),
-        look.sub,
-        hint_size * 0.12,
-    );
-    let (pad_left, pad_right) = if kind == KeyKind::Leave {
-        (20.0, 16.0)
-    } else {
-        (28.0, 24.0)
-    };
-    let inner = Rect::from_min_max(
-        rect.min + lift + vec2(pad_left, 0.0),
-        rect.max + lift - vec2(pad_right, 0.0),
-    );
-    if kind == KeyKind::Cta {
-        // `justify-content: center`, no hint.
-        painter.galley(inner.center() - label.size() / 2.0, label, look.text);
-    } else if no_hint {
-        let label_y = inner.center().y - label.size().y / 2.0;
-        painter.galley(pos2(inner.left(), label_y), label, look.text);
-    } else if stacked {
-        let gap = 5.0;
-        let total = label.size().y + gap + hint.size().y;
-        let top = inner.center().y - total / 2.0;
-        painter.galley(pos2(inner.left(), top), label, look.text);
-        painter.galley(pos2(inner.left(), top + total - hint.size().y), hint, look.sub);
-    } else {
-        let label_y = inner.center().y - label.size().y / 2.0;
-        let hint_y = inner.center().y - hint.size().y / 2.0;
-        let hint_x = inner.right() - hint.size().x;
-        painter.galley(pos2(inner.left(), label_y), label, look.text);
-        painter.galley(pos2(hint_x, hint_y), hint, look.sub);
-    }
-    response.clicked()
+    KeyText::new(label, hint, display_family(), egui::FontFamily::Proportional)
+        .size(label_size, if leave { 12.0 } else { 13.0 })
+        .pad(if leave { 20.0 } else { 28.0 }, if leave { 16.0 } else { 24.0 })
+        .layout(layout)
+        .paint(ui.painter(), &face);
+    face.clicked
 }
 
 /// The ease of `fps-match-menu-in` (`cubic-bezier(0.2, 0.9, 0.3, 1)`),
@@ -459,51 +288,7 @@ impl PauseMenu {
                 let x0 = r.left() - 36.0 * (1.0 - slide);
                 let fade = slide;
                 let alpha = |c: Color32| c.gamma_multiply(fade);
-                let rail = [
-                    pos2(x0, r.top()),
-                    pos2(x0 + rail_w, r.top()),
-                    pos2(x0 + rail_w - skew, r.bottom()),
-                    pos2(x0, r.bottom()),
-                ];
-                gradient_polygon(
-                    &painter,
-                    &rail,
-                    &[
-                        (0.0, alpha(hsl(46.0, 100.0, 57.0))),
-                        (1.0, alpha(hsl(41.0, 96.0, 48.0))),
-                    ],
-                );
-                // The radial glow at its head (`radial-gradient(120% 55% at 25% 0%)`).
-                let mut glow = egui::Mesh::default();
-                let centre = pos2(x0 + rail_w * 0.25, r.top());
-                let (rx, ry) = (rail_w * 1.2 * 0.62, h * 0.55 * 0.62);
-                glow.colored_vertex(centre, alpha(hsla(54.0, 100.0, 78.0, 0.55)));
-                let steps = 24;
-                for i in 0..=steps {
-                    let a = std::f32::consts::PI * i as f32 / steps as f32;
-                    let at = pos2(centre.x + rx * a.cos(), centre.y + ry * a.sin());
-                    // Kept inside the rail's slanted edge.
-                    let edge = x0 + rail_w - skew * ((at.y - r.top()) / h);
-                    glow.colored_vertex(pos2(at.x.min(edge).max(x0), at.y), Color32::TRANSPARENT);
-                    if i > 0 {
-                        glow.add_triangle(0, i, i + 1);
-                    }
-                }
-                painter.add(egui::Shape::mesh(glow));
-                // The violet edge along the slant.
-                gradient_polygon(
-                    &painter,
-                    &[
-                        pos2(x0 + rail_w - 8.0, r.top()),
-                        pos2(x0 + rail_w, r.top()),
-                        pos2(x0 + rail_w - skew, r.bottom()),
-                        pos2(x0 + rail_w - skew - 8.0, r.bottom()),
-                    ],
-                    &[
-                        (0.0, alpha(hsl(276.0, 90.0, 64.0))),
-                        (1.0, alpha(hsl(262.0, 75.0, 42.0))),
-                    ],
-                );
+                paint_rail(&painter, x0, r.top(), r.bottom(), rail_w, skew, fade);
 
                 let left = x0 + 26.0;
                 let right = x0 + rail_w - skew - 20.0;

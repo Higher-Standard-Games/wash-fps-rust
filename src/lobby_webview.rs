@@ -126,24 +126,8 @@ pub struct AfterMatch {
     pub demo: bool,
 }
 
-/// Where the lobby page sent this player.
-#[derive(Debug, Clone, PartialEq)]
-pub struct LobbyChoice {
-    pub server_url: String,
-    pub map: String,
-    pub admission_ticket: Option<String>,
-    /// The account's name, to join the game server as.
-    pub name: String,
-    /// True to play; false to watch.
-    pub play: bool,
-    /// A recording to play instead (the Demos page), saved on disk.
-    pub demo: Option<std::path::PathBuf>,
-    /// Its highlight reel instead, about this many minutes long.
-    pub reel: Option<f64>,
-    /// The side this player took in the room (`alpha` or `bravo`), for the
-    /// game server to honour on join; `None` in a mode without teams.
-    pub team: Option<String>,
-}
+/// Where the lobby page sent this player: the native lobby's choice.
+pub use washoi::client::lobby_panel::LobbyChoice;
 
 /// What the lobby decided.
 #[derive(Debug)]
@@ -388,7 +372,7 @@ impl LobbyApp {
                         }
                         Action::Quit => {
                             self.outcome = Some(LobbyOutcome::Quit);
-                            event_loop.exit();
+                            crate::window::end_screen(event_loop);
                         }
                         Action::Fullscreen => toggle_fullscreen(),
                         Action::External(url) => {
@@ -426,7 +410,7 @@ impl LobbyApp {
                                 h.hide();
                             });
                             self.outcome = Some(LobbyOutcome::Match(*choice));
-                            event_loop.exit();
+                            crate::window::end_screen(event_loop);
                             return;
                         }
                         Action::Nothing => {}
@@ -495,7 +479,7 @@ impl LobbyApp {
             reel: p.reel,
             team: None,
         }));
-        event_loop.exit();
+        crate::window::end_screen(event_loop);
         true
     }
 
@@ -520,7 +504,7 @@ impl LobbyApp {
             Ok(None) => return,
             Err(why) => {
                 self.error = Some(why);
-                event_loop.exit();
+                crate::window::end_screen(event_loop);
                 return;
             }
         };
@@ -551,7 +535,7 @@ impl LobbyApp {
         }
         if quit {
             self.outcome = Some(LobbyOutcome::Quit);
-            event_loop.exit();
+            crate::window::end_screen(event_loop);
         }
     }
 }
@@ -618,7 +602,7 @@ impl ApplicationHandler for LobbyApp {
             Ok(open) => open,
             Err(why) => {
                 self.error = Some(why);
-                event_loop.exit();
+                crate::window::end_screen(event_loop);
                 return;
             }
         };
@@ -686,7 +670,7 @@ impl ApplicationHandler for LobbyApp {
         match event {
             WindowEvent::CloseRequested => {
                 self.outcome = Some(LobbyOutcome::Quit);
-                event_loop.exit();
+                crate::window::end_screen(event_loop);
             }
             WindowEvent::Resized(size) => {
                 if let Some(m) = &mut self.open {
@@ -745,16 +729,6 @@ pub fn run(url: &str, mirror: &StorageMirror, after: Option<AfterMatch>) -> Resu
         crate::window::remember_placement(&open.window);
     }
     app.open = None;
-    if !crate::window::WINDOW_SURVIVES_LOOPS {
-        // The window closed with the loop, and the page with it: the next
-        // lobby builds a new one in its own window. Without the page there
-        // are no settings over the match.
-        if let Some(host) = HOST.with(|h| h.borrow_mut().take()) {
-            drop(ManuallyDrop::into_inner(host));
-        }
-        GREETED.with(|g| g.set(false));
-        SETTINGS_READY.with(|r| r.set(false));
-    }
     ran?;
     if let Some(e) = app.error {
         return Err(e);

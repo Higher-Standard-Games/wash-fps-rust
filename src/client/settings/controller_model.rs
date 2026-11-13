@@ -57,6 +57,95 @@ pub const CONTROLLER_ACTIONS: [ControllerAction; 15] = [
     action(fps::SCOREBOARD, "Scoreboard (hold)", "other", 8),
 ];
 
+/// `CONTROLLER_CVARS`: what the Controller page's reset puts back.
+pub const CONTROLLER_CVARS: [&str; 9] = [
+    "in_pad_yaw",
+    "in_pad_pitch",
+    "in_pad_curve",
+    "in_pad_move_deadzone",
+    "in_pad_look_deadzone",
+    "in_pad_ads",
+    "in_pad_invert",
+    "in_pad_swap",
+    "in_pad_assist",
+];
+
+/// A preset of the Controller page's layout.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ControllerPreset {
+    Standard,
+    /// Jump on the left bumper, Previous weapon on A.
+    Bumper,
+}
+
+fn preset_button(preset: ControllerPreset, a: &ControllerAction) -> u64 {
+    match preset {
+        ControllerPreset::Bumper if a.id == fps::JUMP => 4,
+        ControllerPreset::Bumper if a.id == fps::WEAPON_PREV => 0,
+        _ => a.button,
+    }
+}
+
+fn pad(button: u64) -> InputBinding {
+    InputBinding {
+        gamepad_button: Some(button),
+        ..InputBinding::default()
+    }
+}
+
+/// `assignControllerButton`: `button` to `action`, taken off any other
+/// action that had it; `None` unbinds. Start (9) stays the menu's.
+pub fn assign_controller_button(input: &mut InputSystem, action: &str, button: Option<u64>) {
+    if button.is_some_and(|b| b > 15 || b == 9) || !CONTROLLER_ACTIONS.iter().any(|a| a.id == action) {
+        return;
+    }
+    if let Some(button) = button {
+        for other in CONTROLLER_ACTIONS {
+            if other.id == action {
+                continue;
+            }
+            let existing = controller_buttons(input, other.id);
+            if existing.contains(&button) {
+                let kept: Vec<InputBinding> = existing.into_iter().filter(|&b| b != button).map(pad).collect();
+                input.rebind(&controller_key(other.id), &kept);
+            }
+        }
+    }
+    let bindings: Vec<InputBinding> = button.into_iter().map(pad).collect();
+    input.rebind(&controller_key(action), &bindings);
+}
+
+/// `applyControllerPreset`.
+pub fn apply_controller_preset(input: &mut InputSystem, preset: ControllerPreset) {
+    for a in CONTROLLER_ACTIONS {
+        input.rebind(&controller_key(a.id), &[pad(preset_button(preset, &a))]);
+    }
+}
+
+/// `controllerPreset`: the preset the bindings match, if any.
+#[must_use]
+pub fn controller_preset(input: &InputSystem) -> Option<ControllerPreset> {
+    [ControllerPreset::Standard, ControllerPreset::Bumper]
+        .into_iter()
+        .find(|&preset| {
+            CONTROLLER_ACTIONS
+                .iter()
+                .all(|a| controller_buttons(input, a.id) == [preset_button(preset, a)])
+        })
+}
+
+/// `resetController`.
+pub fn reset_controller(input: &mut InputSystem, cvars: &mut Cvars) {
+    for a in CONTROLLER_ACTIONS {
+        input.reset_binding(&controller_key(a.id));
+    }
+    for name in CONTROLLER_CVARS {
+        if cvars.exists(name) {
+            cvars.reset(name);
+        }
+    }
+}
+
 /// `registerControllerSettings`: each action's controller binding.
 pub fn register_controller_settings(input: &mut InputSystem) {
     for a in CONTROLLER_ACTIONS {
@@ -143,5 +232,21 @@ mod tests {
         assert_eq!(controller_label(&input, fps::JUMP), "A");
         assert_eq!(controller_label(&input, fps::WEAPON_3), "D-pad Right");
         assert_eq!(controller_label(&input, fps::MOVE_FORWARD), "Unbound");
+    }
+
+    #[test]
+    fn a_button_moves_to_the_action_it_is_given() {
+        let mut input = InputSystem::new(None);
+        register_controller_settings(&mut input);
+        assert_eq!(controller_preset(&input), Some(ControllerPreset::Standard));
+        assign_controller_button(&mut input, fps::FIRE, Some(0));
+        assert_eq!(controller_buttons(&input, fps::FIRE), [0]);
+        assert!(controller_buttons(&input, fps::JUMP).is_empty());
+        assert_eq!(controller_preset(&input), None);
+        assign_controller_button(&mut input, fps::FIRE, Some(9));
+        assert_eq!(controller_buttons(&input, fps::FIRE), [0]);
+        apply_controller_preset(&mut input, ControllerPreset::Bumper);
+        assert_eq!(controller_preset(&input), Some(ControllerPreset::Bumper));
+        assert_eq!(controller_buttons(&input, fps::JUMP), [4]);
     }
 }

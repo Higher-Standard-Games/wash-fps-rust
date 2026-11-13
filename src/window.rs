@@ -44,6 +44,7 @@ use winit::dpi::{LogicalSize, PhysicalPosition, PhysicalSize};
 use winit::event::{DeviceEvent, DeviceId, ElementState, MouseButton, MouseScrollDelta, WindowEvent};
 use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop};
 use winit::keyboard::{KeyCode, PhysicalKey};
+#[cfg(not(target_os = "macos"))]
 use winit::platform::run_on_demand::EventLoopExtRunOnDemand;
 use winit::window::{CursorGrabMode, Fullscreen, Window, WindowId};
 
@@ -202,6 +203,8 @@ struct App {
     loadout_picker: LoadoutPicker,
     /// The lobby page's settings are up over the match.
     settings_open: bool,
+    /// With the native lobby, its settings screen over the match instead.
+    native_settings: Option<washoi::client::settings::fps_settings_view::FpsSettingsView>,
     /// The match as the menu names it (gametype · map).
     menu_kicker: String,
     /// A demo's highlight reel, driving the demo and the camera.
@@ -338,7 +341,17 @@ impl App {
             return false;
         }
         // The page has the keyboard; what reaches the window is not the game's.
+        // Over the native settings, Escape closes what the page has open,
+        // then the settings, back to the menu.
         if self.settings_open {
+            if code == KeyCode::Escape
+                && event.state == ElementState::Pressed
+                && !event.repeat
+                && let Some(view) = &mut self.native_settings
+                && !view.back()
+            {
+                self.close_native_settings();
+            }
             return true;
         }
         // The kit dialog has the keys; Escape backs out when it can.
@@ -384,6 +397,10 @@ impl App {
             PauseMenuAction::Settings => {
                 if crate::lobby_webview::open_match_settings(&self.menu_kicker) {
                     self.settings_open = true;
+                } else if native_lobby() {
+                    self.native_settings =
+                        Some(washoi::client::settings::fps_settings_view::FpsSettingsView::new(true));
+                    self.settings_open = true;
                 } else {
                     self.pause_menu.open();
                 }
@@ -392,6 +409,17 @@ impl App {
                 println!("lobby: back to the lobby");
                 self.leave = true;
             }
+        }
+    }
+
+    /// Back from the native settings to the match menu.
+    fn close_native_settings(&mut self) {
+        if let Some(mut view) = self.native_settings.take() {
+            view.pause_controls();
+        }
+        self.settings_open = false;
+        if self.in_play() {
+            self.pause_menu.open();
         }
     }
 
@@ -1560,7 +1588,7 @@ impl App {
             }
             _ => (String::new(), String::new()),
         };
-        self.pause_menu.settings = crate::lobby_webview::match_settings_available();
+        self.pause_menu.settings = crate::lobby_webview::match_settings_available() || native_lobby();
         // `matchMenuModeKeys`: Loadout, in a mode with kits, hinted with the kit.
         self.pause_menu.loadout = match feed {
             Some(Feed::Play(p, _)) if p.match_state().loadout_mode().is_some() => Some(
@@ -1570,6 +1598,9 @@ impl App {
             _ => None,
         };
         let pause_menu = &mut self.pause_menu;
+        let native_settings = &mut self.native_settings;
+        let mut settings_back = false;
+        let settings_kicker = kicker.clone();
         let loadout = &mut self.loadout_picker;
         let mut loadout_outcome = None;
         let demo_hud = self.demo_hud.as_ref().filter(|_| cards);
@@ -1587,6 +1618,9 @@ impl App {
                 demo_action = hud.ui(ui.ctx(), demo, followed.map(|id| (id, name.unwrap_or(id))));
             }
             menu_action = pause_menu.ui(ui.ctx(), &kicker, &player);
+            if let Some(view) = native_settings {
+                settings_back = washoi::client::settings::fps_settings_view::over_match(ui, view, &settings_kicker);
+            }
             loadout_outcome = loadout.ui(ui.ctx());
             console.ui(ui.ctx());
         });
@@ -1615,8 +1649,11 @@ impl App {
             self.loadout_outcome(outcome);
         }
         self.offer_loadout();
+        if settings_back {
+            self.close_native_settings();
+        }
         // Back from the settings is back to the match menu (`FPSHud`).
-        if self.settings_open && crate::lobby_webview::poll_match_settings() {
+        if self.settings_open && self.native_settings.is_none() && crate::lobby_webview::poll_match_settings() {
             self.settings_open = false;
             if self.in_play() {
                 self.pause_menu.open();
@@ -1807,7 +1844,7 @@ impl ApplicationHandler for App {
         }
         if let Err(why) = self.open(event_loop) {
             self.error = Some(why);
-            event_loop.exit();
+            end_screen(event_loop);
         }
     }
 
@@ -1847,7 +1884,7 @@ impl ApplicationHandler for App {
             _ => {}
         }
         match event {
-            WindowEvent::CloseRequested => event_loop.exit(),
+            WindowEvent::CloseRequested => end_screen(event_loop),
             WindowEvent::Resized(size) => {
                 if let Some(s) = &mut self.surface {
                     s.config.width = size.width.max(1);
@@ -1880,7 +1917,7 @@ impl ApplicationHandler for App {
                         if self.captured {
                             self.set_captured(false);
                         } else {
-                            event_loop.exit();
+                            end_screen(event_loop);
                         }
                     }
                     ElementState::Pressed if !event.repeat && self.reel_key(code) => {}
@@ -1914,7 +1951,7 @@ impl ApplicationHandler for App {
                     });
                 if home {
                     println!("lobby: back to the lobby");
-                    event_loop.exit();
+                    end_screen(event_loop);
                 } else if !self.captured
                     && state == ElementState::Pressed
                     && !self.opened_up
@@ -1950,7 +1987,7 @@ impl ApplicationHandler for App {
             WindowEvent::RedrawRequested => {
                 self.redraw();
                 if self.error.is_some() {
-                    event_loop.exit();
+                    end_screen(event_loop);
                 }
             }
             _ => {}
@@ -1984,20 +2021,20 @@ impl ApplicationHandler for App {
 
     fn about_to_wait(&mut self, event_loop: &ActiveEventLoop) {
         if self.leave {
-            event_loop.exit();
+            end_screen(event_loop);
             return;
         }
         if let Some(limit) = self.seconds
             && self.started.elapsed() >= Duration::from_secs_f64(limit)
         {
-            event_loop.exit();
+            end_screen(event_loop);
             return;
         }
         // The bench ends when it has its frames, or the demo does.
         if let Some(b) = &self.bench
             && (b.done() || self.feed.as_ref().is_some_and(|f| f.ended().is_some()))
         {
-            event_loop.exit();
+            end_screen(event_loop);
             return;
         }
         if let Some(s) = &self.surface {
@@ -2029,10 +2066,55 @@ pub fn run_on_event_loop(app: &mut impl ApplicationHandler) -> Result<(), String
         }
         let event_loop = slot.as_mut().expect("made above");
         event_loop.set_control_flow(ControlFlow::Poll);
+        SCREEN_ENDED.with(|e| e.set(false));
+        let mut app = Exiting {
+            app,
+            resume: cfg!(target_os = "macos") && LOOP_STARTED.with(Cell::get),
+        };
+        LOOP_STARTED.with(|s| s.set(true));
+        #[cfg(target_os = "macos")]
+        {
+            // The loop never exits between screens here: an exit closes
+            // every window (winit #4135), and with it the fullscreen Space,
+            // so each screen would land the player on another desktop. It
+            // is pumped instead, until the screen ends or the app quits.
+            use winit::platform::pump_events::{EventLoopExtPumpEvents, PumpStatus};
+            loop {
+                if let PumpStatus::Exit(_) = event_loop.pump_app_events(None, &mut app) {
+                    break;
+                }
+                if SCREEN_ENDED.with(Cell::get) {
+                    break;
+                }
+            }
+            shagger::core::atomic_file::flush_pending(Duration::from_secs(2));
+            Ok(())
+        }
+        #[cfg(not(target_os = "macos"))]
         event_loop
-            .run_app_on_demand(&mut Exiting(app))
+            .run_app_on_demand(&mut app)
             .map_err(|e| format!("event loop: {e}"))
     })
+}
+
+thread_local! {
+    /// The running screen called [`end_screen`].
+    static SCREEN_ENDED: Cell<bool> = const { Cell::new(false) };
+    /// A screen has run on the event loop before: the next one is not sent
+    /// `resumed` by winit when the loop is pumped (macOS), so it is sent here.
+    static LOOP_STARTED: Cell<bool> = const { Cell::new(false) };
+}
+
+/// Ends the screen running on the event loop: [`run_on_event_loop`] returns.
+/// On macOS the loop itself keeps going (pumped), so the window and its
+/// fullscreen Space stay for the next screen; elsewhere it exits, and the
+/// kept window stays all the same.
+pub fn end_screen(event_loop: &ActiveEventLoop) {
+    SCREEN_ENDED.with(|e| e.set(true));
+    #[cfg(not(target_os = "macos"))]
+    event_loop.exit();
+    #[cfg(target_os = "macos")]
+    let _ = event_loop;
 }
 
 thread_local! {
@@ -2064,17 +2146,26 @@ fn starts_fullscreen() -> bool {
 /// process from inside the loop (Cmd+Q on macOS terminates the app there,
 /// so nothing after the loop runs), the settings still on their way to
 /// disk land first.
-struct Exiting<'a, A>(&'a mut A);
+struct Exiting<'a, A> {
+    app: &'a mut A,
+    /// Send `resumed` with the first events: the pumped loop (macOS) sends
+    /// it only once, to the first screen.
+    resume: bool,
+}
 
 impl<A: ApplicationHandler> ApplicationHandler for Exiting<'_, A> {
     fn new_events(&mut self, event_loop: &ActiveEventLoop, cause: winit::event::StartCause) {
-        self.0.new_events(event_loop, cause);
+        self.app.new_events(event_loop, cause);
+        if std::mem::take(&mut self.resume) {
+            self.app.resumed(event_loop);
+        }
     }
     fn resumed(&mut self, event_loop: &ActiveEventLoop) {
-        self.0.resumed(event_loop);
+        self.resume = false;
+        self.app.resumed(event_loop);
     }
     fn user_event(&mut self, event_loop: &ActiveEventLoop, event: ()) {
-        self.0.user_event(event_loop, event);
+        self.app.user_event(event_loop, event);
     }
     fn window_event(&mut self, event_loop: &ActiveEventLoop, window_id: WindowId, event: WindowEvent) {
         if let WindowEvent::ModifiersChanged(m) = &event {
@@ -2095,25 +2186,25 @@ impl<A: ApplicationHandler> ApplicationHandler for Exiting<'_, A> {
             }
             return;
         }
-        self.0.window_event(event_loop, window_id, event);
+        self.app.window_event(event_loop, window_id, event);
     }
     fn device_event(&mut self, event_loop: &ActiveEventLoop, device_id: DeviceId, event: DeviceEvent) {
-        self.0.device_event(event_loop, device_id, event);
+        self.app.device_event(event_loop, device_id, event);
     }
     fn about_to_wait(&mut self, event_loop: &ActiveEventLoop) {
         // The lobby page keeps running under every screen (GTK on Linux).
         shagger::webview::pump();
-        self.0.about_to_wait(event_loop);
+        self.app.about_to_wait(event_loop);
     }
     fn suspended(&mut self, event_loop: &ActiveEventLoop) {
-        self.0.suspended(event_loop);
+        self.app.suspended(event_loop);
     }
     fn exiting(&mut self, event_loop: &ActiveEventLoop) {
-        self.0.exiting(event_loop);
+        self.app.exiting(event_loop);
         shagger::core::atomic_file::flush_pending(Duration::from_secs(2));
     }
     fn memory_warning(&mut self, event_loop: &ActiveEventLoop) {
-        self.0.memory_warning(event_loop);
+        self.app.memory_warning(event_loop);
     }
 }
 
@@ -2257,13 +2348,8 @@ pub fn kept_window() -> Option<Arc<Window>> {
     KEPT_WINDOW.with(|w| w.borrow().clone())
 }
 
-/// One window can serve every screen. Not on macOS: there winit closes every
-/// window when an event loop exits (winit #4135), and each screen runs a loop
-/// of its own, so each opens a new window where the last one was.
-pub const WINDOW_SURVIVES_LOOPS: bool = !cfg!(target_os = "macos");
-
 pub fn open_window(event_loop: &ActiveEventLoop) -> Result<OpenWindow, String> {
-    let kept = if KEEP_WINDOW.with(Cell::get) && WINDOW_SURVIVES_LOOPS {
+    let kept = if KEEP_WINDOW.with(Cell::get) {
         kept_window()
     } else {
         None
@@ -2409,6 +2495,7 @@ pub fn run(
         pause_menu: PauseMenu::default(),
         loadout_picker: LoadoutPicker::default(),
         settings_open: false,
+        native_settings: None,
         menu_kicker: String::new(),
         reel,
         overlay: ReelOverlay::default(),
@@ -2469,4 +2556,10 @@ fn name_order(
     let mut ids: Vec<&str> = drawn.iter().map(|(id, _, _)| id.as_str()).collect();
     ids.sort_by(|a, b| locale_compare(&name(a), &name(b)).then(a.cmp(b)));
     ids.into_iter().map(str::to_owned).collect()
+}
+
+/// The player chose the native lobby (`ui_lobby native`), whose settings
+/// open over a match natively too.
+fn native_lobby() -> bool {
+    with_cvars(|c| c.get_string("ui_lobby") == "native")
 }

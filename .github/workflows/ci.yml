@@ -26,6 +26,23 @@ jobs:
       - run: cargo clippy --all-targets
       - run: cargo test
 
+  # The lobby's documents (TERMS.md, CREDITS.md) are copies; wash-fps is the
+  # master. Fails, naming the file, when a copy is outdated: run
+  # tools/sync_docs.sh to copy it over.
+  docs-sync:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/checkout@v6
+        with:
+          repository: Higher-Standard-Games/wash-fps
+          path: wash-fps-main
+          sparse-checkout: |
+            TERMS.md
+            CREDITS.md
+          sparse-checkout-cone-mode: false
+      - run: tools/sync_docs.sh --check wash-fps-main
+
   # The game against the engine's main branch, not the pinned revision, so an
   # engine change that breaks the game shows up before the pin moves.
   engine-main:

@@ -745,7 +745,7 @@ impl ApplicationHandler for PickerApp {
             }
             Err(why) => {
                 self.error = Some(why);
-                event_loop.exit();
+                crate::window::end_screen(event_loop);
             }
         }
     }
@@ -759,11 +759,11 @@ impl ApplicationHandler for PickerApp {
         match event {
             WindowEvent::CloseRequested => {
                 self.quit = true;
-                event_loop.exit();
+                crate::window::end_screen(event_loop);
             }
             _ if escape => {
                 self.quit = true;
-                event_loop.exit();
+                crate::window::end_screen(event_loop);
             }
             WindowEvent::Resized(size) => {
                 if let Some(m) = &mut self.open {
@@ -775,7 +775,7 @@ impl ApplicationHandler for PickerApp {
             WindowEvent::RedrawRequested => {
                 self.redraw();
                 if self.chosen.is_some() || self.error.is_some() {
-                    event_loop.exit();
+                    crate::window::end_screen(event_loop);
                 }
             }
             _ => {}

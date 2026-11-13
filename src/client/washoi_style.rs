@@ -25,6 +25,10 @@ pub fn display_family() -> egui::FontFamily {
     egui::FontFamily::Name("display".into())
 }
 
+/// Orbitron Black, the titles' face; also read for its outlines
+/// (`outline_text`).
+pub const DISPLAY_FONT: &[u8] = include_bytes!("../../assets/fonts/Orbitron-Black.ttf");
+
 /// Washoi's look for egui: Rajdhani for text and Orbitron for titles, cream
 /// on the night's ink, gold for what is chosen (`styles/LobbyPanel.css`).
 pub fn install_style(ctx: &egui::Context) {
@@ -35,12 +39,9 @@ pub fn install_style(ctx: &egui::Context) {
             "../../assets/fonts/Rajdhani-Bold.ttf"
         ))),
     );
-    fonts.font_data.insert(
-        "orbitron".into(),
-        Arc::new(egui::FontData::from_static(include_bytes!(
-            "../../assets/fonts/Orbitron-Black.ttf"
-        ))),
-    );
+    fonts
+        .font_data
+        .insert("orbitron".into(), Arc::new(egui::FontData::from_static(DISPLAY_FONT)));
     fonts.families.insert(
         egui::FontFamily::Proportional,
         vec!["rajdhani".into(), "orbitron".into()],
