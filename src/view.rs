@@ -20,6 +20,7 @@ use washoi::client::dropped_weapon_renderer::{DropThrow, DroppedWeaponInfo, Drop
 use washoi::client::fps_liquid_audio::play_liquid_crossing;
 use washoi::client::fps_player_audio::{player_voice_for_entity, set_local_player_voice};
 use washoi::client::gib_system::{GibRenderer, GibSystem};
+use washoi::client::kill_taunt::{KillFacts, choose_kill_taunt};
 use washoi::client::hud::widgets::loadout_picker;
 use washoi::client::hud::widgets::pickup_prompt::{horizontal_distance_sq, in_pickup_range};
 use washoi::client::player_appearance::{AppearanceView, PlayerAppearance};
@@ -2299,7 +2300,26 @@ impl MapRenderer {
         self.effect_time += dt;
         let now = self.effect_time;
         self.explosions.update(now);
+        // Killers taunt once the whole snapshot has run, so the killing
+        // shot's own fire event cannot end the taunt it caused.
+        let mut kill_taunts: Vec<(String, &'static str)> = Vec::new();
         for event in events {
+            if let SnapshotEvent::Death {
+                entity_id,
+                killer_id,
+                at,
+                ..
+            } = event
+                && let Some(taunt) = choose_kill_taunt(&KillFacts {
+                    entity_id,
+                    killer_id,
+                    x: at.x,
+                    y: at.y,
+                    z: at.z,
+                })
+            {
+                kill_taunts.push((killer_id.clone(), taunt));
+            }
             // `weapon_charge` from someone else: the glow on them comes and
             // goes with it (our own charge shows on the view model).
             if let SnapshotEvent::WeaponCharge {
@@ -2373,6 +2393,11 @@ impl MapRenderer {
                 remote: &self.remote_muzzles,
             },
         );
+        if let Some(renderer) = &mut self.remote_players {
+            for (killer, taunt) in kill_taunts {
+                renderer.play_kill_taunt(&killer, taunt, now);
+            }
+        }
         self.hitscan.update(now, &mut self.lights);
         // Fade the flashes, and give back the ones that are out.
         let lights = &mut self.lights;

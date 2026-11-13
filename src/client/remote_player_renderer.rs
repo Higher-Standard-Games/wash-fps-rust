@@ -21,7 +21,7 @@ use shagger::animation::player_model_assets::{
 };
 use shagger::animation::player_model_fit::{BladeStance, GunSupport};
 use shagger::animation::player_model_manager::{
-    BLADE_STANCE, PlayerModel, PlayerModelInstance, PlayerModelVisualStyle,
+    BLADE_STANCE, PlayerModel, PlayerModelInstance, PlayerModelVisualStyle, TAUNT_ANIMS,
 };
 use shagger::babylon::meshes::vertex_data::babylon_local_matrix;
 use shagger::core::cvar::{CvarOptions, CvarType, Cvars, with_cvars};
@@ -244,6 +244,11 @@ struct RemoteBody {
     weapon_ready_until: f64,
     /// Whether the held blade stands in the stance (`setBladeStance`).
     blade_upright: bool,
+    /// The weapon last held (`currentWeaponId`): a switch ends a taunt.
+    weapon: Option<String>,
+    /// A kill taunt waiting for the blade swing to end, until then on the
+    /// pose clock (`pendingTaunt`).
+    pending_taunt: Option<(&'static str, f64)>,
 }
 
 /// Where a player's held weapon hangs: the weapon hand in the world and
@@ -368,6 +373,8 @@ impl RemotePlayerRenderer {
                 instance,
                 weapon_ready_until: 0.0,
                 blade_upright: false,
+                weapon: None,
+                pending_taunt: None,
             }
         });
         (model, remote)
@@ -411,7 +418,6 @@ impl RemotePlayerRenderer {
     ) {
         let (run_legs, run_upper) = run_rates();
         let (model, remote) = self.ensure(id, choice);
-        let instance = &mut remote.instance;
         // Keep the next locomotion pose current while an attack owns the bones.
         let locomotion = derive_animation(interp);
         let blade = weapon == Some("blade");
@@ -426,6 +432,25 @@ impl RemotePlayerRenderer {
         } else {
             locomotion
         };
+        // `updateWeaponModel`: a switch ends a taunt.
+        if remote.weapon.as_deref() != weapon {
+            remote.weapon = weapon.map(str::to_owned);
+            stop_taunt(&model, remote);
+        }
+        // Aiming down sights, swimming, climbing, a wall jump or a slide
+        // ends a taunt; one waiting on a swing starts once the swing is over.
+        if interp.aiming == Some(true) || NON_AIMING_ANIMATIONS.contains(&locomotion) {
+            stop_taunt(&model, remote);
+        }
+        if let Some((taunt, until)) = remote.pending_taunt
+            && !model.is_one_shot_playing(&remote.instance)
+        {
+            remote.pending_taunt = None;
+            if pose_time < until {
+                model.play_once(&mut remote.instance, taunt, 1.0);
+            }
+        }
+        let instance = &mut remote.instance;
         let aiming = !relaxed && !NON_AIMING_ANIMATIONS.contains(&locomotion);
         model.set_aim_pitch(
             instance,
@@ -457,11 +482,31 @@ impl RemotePlayerRenderer {
         model.advance(instance, dt);
     }
 
-    /// `noteWeaponFire`: keeps the weapon raised briefly after each shot.
+    /// `noteWeaponFire`: keeps the weapon raised briefly after each shot. A
+    /// shot ends a taunt.
     pub fn note_weapon_fire(&mut self, id: &str, pose_time: f64) {
         if let Some(remote) = self.instances.get_mut(id) {
             remote.weapon_ready_until = pose_time + WEAPON_READY_SECONDS;
+            stop_taunt(&self.bodies[remote.body].model, remote);
         }
+    }
+
+    /// `playKillTaunt`: a taunt over the upper body after a kill; the legs
+    /// keep running. A blade swing still playing finishes first, if it ends
+    /// within a second (`pose_time` on the pose clock).
+    pub fn play_kill_taunt(&mut self, id: &str, taunt: &'static str, pose_time: f64) {
+        let Some(remote) = self.instances.get_mut(id) else {
+            return;
+        };
+        let model = &self.bodies[remote.body].model;
+        if model
+            .active_one_shot(&remote.instance)
+            .is_some_and(|playing| !TAUNT_ANIMS.contains(&playing))
+        {
+            remote.pending_taunt = Some((taunt, pose_time + 1.0));
+            return;
+        }
+        model.play_once(&mut remote.instance, taunt, 1.0);
     }
 
     /// `playAttackAnim`: a one-shot attack (the blade's swing) on a player.
@@ -559,6 +604,17 @@ impl RemotePlayerRenderer {
         let body = &self.bodies[remote.body];
         let world = body_matrix(interp, &body.model);
         body_draws(body, &remote.instance, world, style, joints, draws);
+    }
+}
+
+/// `stopTaunt`: forgets a waiting taunt and ends one playing.
+fn stop_taunt(model: &PlayerModel, remote: &mut RemoteBody) {
+    remote.pending_taunt = None;
+    if model
+        .active_one_shot(&remote.instance)
+        .is_some_and(|playing| TAUNT_ANIMS.contains(&playing))
+    {
+        model.stop_one_shot(&mut remote.instance, true);
     }
 }
 

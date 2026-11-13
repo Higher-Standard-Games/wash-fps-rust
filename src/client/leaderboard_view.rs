@@ -29,7 +29,7 @@ use crate::client::settings::settings_fields::{body, cut_panel, gold_text, line}
 use crate::client::washoi_style::display_family;
 
 /// `RATING_POLICY.version` and `.displayScale`.
-const POLICY_VERSION: &str = "shag-trueskill-v1";
+const POLICY_VERSION: &str = "shag-trueskill-v2";
 const DISPLAY_SCALE: f64 = 40.0;
 /// `requestLeaderboard`'s default wait.
 const TIMEOUT: Duration = Duration::from_secs(10);

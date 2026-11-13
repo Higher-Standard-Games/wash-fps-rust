@@ -12,7 +12,7 @@
 //! the dark; the map keeps its lighting. The view model is not drawn while
 //! the diorama camera is up (the browser's `activeCameras` swap drops it).
 
-use shagger::animation::player_model_manager::{DANCE_ANIMS, PlayerModelInstance, PlayerModelVisualStyle};
+use shagger::animation::player_model_manager::{PlayerModelInstance, PlayerModelVisualStyle, VICTORY_ANIMS};
 use shagger::network::client::snapshot_buffer::InterpolatedEntity;
 use shagger::rendering::camera::Camera;
 use shagger::rendering::glam::{DVec3, Mat4, Vec3};
@@ -69,7 +69,7 @@ pub struct ShowcaseStart<'a> {
     pub weapon: Option<String>,
     pub camera: &'a Camera,
     pub aspect: f64,
-    /// A number in `[0, 1)` that picks the dance.
+    /// A number in `[0, 1)` that picks the victory clip (`Math.random()`).
     pub pick: f64,
 }
 
@@ -113,15 +113,10 @@ impl PostGameShowcase {
         let world = body_matrix(&interp, &body.model);
         let mut instance = body.model.create_instance();
         body.model.play_animation(&mut instance, "idle");
-        // A dance from those shipped, from a shuffled order; none keeps the idle.
-        let first = ((pick * DANCE_ANIMS.len() as f64) as usize).min(DANCE_ANIMS.len() - 1);
-        for i in 0..DANCE_ANIMS.len() {
-            if body
-                .model
-                .play_animation(&mut instance, DANCE_ANIMS[(first + i) % DANCE_ANIMS.len()])
-            {
-                break;
-            }
+        // One of the loaded victory clips, each equally likely. A body
+        // without any keeps its idle pose.
+        if let Some(clip) = pick_victory_clip(|name| body.model.has_animation(name), pick) {
+            body.model.play_animation(&mut instance, clip);
         }
         // The diorama camera, in front of the model where the player stood.
         let (face_x, face_z) = (origin.x - at.x, origin.z - at.z);
@@ -196,9 +191,33 @@ impl PostGameShowcase {
     }
 }
 
+/// `pickVictoryClip`: one of the victory clips among those `loaded`, each
+/// equally likely by `random` in `[0, 1)`, or `None` when none is loaded.
+#[must_use]
+pub fn pick_victory_clip(loaded: impl Fn(&str) -> bool, random: f64) -> Option<&'static str> {
+    let clips: Vec<&'static str> = VICTORY_ANIMS.iter().copied().filter(|name| loaded(name)).collect();
+    if clips.is_empty() {
+        return None;
+    }
+    let at = ((random * clips.len() as f64).floor() as usize).min(clips.len() - 1);
+    Some(clips[at])
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn picks_among_the_loaded_victory_clips() {
+        // `PostGameShowcase.test.ts`: none loaded picks nothing; the draw
+        // spans the loaded clips evenly.
+        assert_eq!(pick_victory_clip(|_| false, 0.5), None);
+        let loaded = |name: &str| matches!(name, "dance_2" | "taunt_1" | "taunt_3");
+        assert_eq!(pick_victory_clip(loaded, 0.0), Some("dance_2"));
+        assert_eq!(pick_victory_clip(loaded, 0.34), Some("taunt_1"));
+        assert_eq!(pick_victory_clip(loaded, 0.99), Some("taunt_3"));
+        assert_eq!(pick_victory_clip(|_| true, 0.999), Some("taunt_3"));
+    }
 
     #[test]
     fn diorama_frames_the_model_left_of_centre() {

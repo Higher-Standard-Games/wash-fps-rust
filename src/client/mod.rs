@@ -40,6 +40,7 @@ pub mod hud_state;
 pub mod identity_fields;
 pub mod identity_frame;
 pub mod input_history;
+pub mod kill_taunt;
 pub mod leaderboard_view;
 pub mod levelshots;
 pub mod live_play;
