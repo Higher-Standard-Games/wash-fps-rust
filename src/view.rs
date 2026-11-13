@@ -212,6 +212,9 @@ pub struct ViewOptions {
     pub bench: Option<(u64, u64, Option<PathBuf>)>,
     /// Hold the scoreboard open (`--scoreboard`, Tab in the window).
     pub scoreboard: bool,
+    /// Open the loadout picker over the shot (`--loadout`), on this weapon
+    /// (`""` for the kit's primary).
+    pub loadout: Option<String>,
     /// Join the match in `watch` as a player (`washoi play`).
     pub join: bool,
     /// Something to say once in the match (`--say`, headless play).
@@ -4033,6 +4036,16 @@ pub fn start_prepared(o: &ViewOptions, prepared: Prepared) -> Result<i32, String
             });
         }
         _ => {}
+    }
+    if let Some(weapon) = &o.loadout {
+        let picker = std::cell::RefCell::new(loadout_picker::LoadoutPicker::default());
+        picker.borrow_mut().open("Free For All", None, Some("respawn"), false);
+        if !weapon.is_empty() {
+            picker.borrow_mut().focus(weapon);
+        }
+        composite_ui(&gpu, &mut pixels, o.width, o.height, |ctx| {
+            picker.borrow_mut().ui(ctx);
+        });
     }
     match image::save_buffer(path, &pixels, o.width, o.height, image::ExtendedColorType::Rgba8) {
         Ok(()) => {

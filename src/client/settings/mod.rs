@@ -7,6 +7,7 @@ pub mod controller_page;
 pub mod controls_page;
 pub mod fps_settings_view;
 pub mod gameplay_page;
+pub mod player_team_preview;
 pub mod settings_fields;
 pub mod settings_model;
 pub mod video_page;

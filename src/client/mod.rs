@@ -59,6 +59,7 @@ pub mod player_appearance;
 pub mod player_model_selection;
 pub mod player_model_visual_settings;
 pub mod prediction;
+pub mod preview_packages;
 pub mod profile_view;
 pub mod quad_damage_visual;
 pub mod ragdoll;

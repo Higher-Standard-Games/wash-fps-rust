@@ -10,8 +10,8 @@
 //! dropped into a match holding a default nobody chose is worse than a
 //! moment spent choosing.
 //!
-//! Not yet: the turning weapon on the stand (`WeaponPreview`, a scene of its
-//! own). The stand shows the weapon's slot colour and initials under its name.
+//! The stand turns the weapon (`WeaponPreview`, a scene of its own); while
+//! it has no model to show, the weapon's initials stand in its slot colour.
 
 use std::path::PathBuf;
 
@@ -20,6 +20,7 @@ use shagger::ui::egui_layer::egui;
 use shagger::ui::egui_layer::egui::{Color32, Pos2, Rect, Vec2, pos2, vec2};
 
 use super::pause_menu::{KeyKind, galley, galley_wrapped, raised_key};
+use super::weapon_preview::WeaponPreview;
 use super::weapon_slots::weapon_slot_color;
 use crate::client::controller_input::UiIntent;
 use crate::client::washoi_style::display_family;
@@ -142,6 +143,8 @@ pub struct LoadoutPicker {
     cancellable: bool,
     /// The spot a controller has lit (`UINavigation`'s focus).
     nav: Option<Spot>,
+    /// The stand's turning weapon, while the picker is open.
+    preview: Option<WeaponPreview>,
 }
 
 impl Default for LoadoutPicker {
@@ -155,6 +158,7 @@ impl Default for LoadoutPicker {
             changing: false,
             cancellable: false,
             nav: None,
+            preview: None,
         }
     }
 }
@@ -181,11 +185,20 @@ impl LoadoutPicker {
         self.focus = self.choice.primary;
         self.nav = None;
         self.open = true;
+        self.preview.get_or_insert_with(WeaponPreview::default);
+    }
+
+    /// Puts `weapon` on the stand, as hovering it does (for screenshots).
+    pub fn focus(&mut self, weapon: &str) {
+        if let Some(id) = PRIMARY_CHOICES.iter().chain(&SECONDARY_CHOICES).find(|w| **w == weapon) {
+            self.focus = id;
+        }
     }
 
     pub fn close(&mut self) {
         self.open = false;
         self.nav = None;
+        self.preview = None;
     }
 
     fn finish(&mut self, outcome: LoadoutOutcome) -> Option<LoadoutOutcome> {
@@ -386,7 +399,11 @@ impl LoadoutPicker {
                     pos2(left + columns_w + 20.0 * k, y),
                     pos2(right, y + body_h.max(260.0 * k)),
                 );
-                paint_stand(&painter, stand, self.focus, k);
+                let preview = self.preview.get_or_insert_with(WeaponPreview::default);
+                preview.show(self.focus);
+                paint_stand(&painter, stand, self.focus, k, !preview.has_model());
+                preview.ui(ui, stand);
+                paint_stand_name(&painter, stand, self.focus, k);
                 y += body_h;
 
                 // `.fps-loadout-confirm`.
@@ -598,9 +615,9 @@ fn paint_option(painter: &egui::Painter, rect: Rect, id: &str, selected: bool, h
     );
 }
 
-/// `.fps-loadout-preview`: the stand, with the weapon's colour and initials
-/// in place of its model, and its name at the lower left.
-fn paint_stand(painter: &egui::Painter, stand: Rect, weapon: &str, k: f32) {
+/// `.fps-loadout-preview`: the stand, and with `initials` the weapon's
+/// initials in its colour, in place of a model it does not have.
+fn paint_stand(painter: &egui::Painter, stand: Rect, weapon: &str, k: f32, initials: bool) {
     // `clip-path: polygon(2% 0, 100% 0, 98% 100%, 0 100%)`.
     let cut = stand.width() * 0.02;
     let shape = [
@@ -611,13 +628,11 @@ fn paint_stand(painter: &egui::Painter, stand: Rect, weapon: &str, k: f32) {
     ];
     let base = hsla(238.0, 40.0, 6.0, 0.75);
     gradient_polygon(painter, &shape, &[(0.0, base), (1.0, base)]);
-    // `radial-gradient(ellipse at 50% 62%, cyan 0.14, transparent 62%)`,
-    // in the weapon's own colour.
-    let [h, s, l] = weapon_slot_color(weapon).unwrap_or([180.0, 100.0, 50.0]);
+    // `radial-gradient(ellipse at 50% 62%, cyan 0.14, transparent 62%)`.
     let centre = pos2(stand.center().x, stand.top() + stand.height() * 0.62);
     let (rx, ry) = (stand.width() * 0.5 * 0.62, stand.height() * 0.62 * 0.62);
     let mut glow = egui::Mesh::default();
-    glow.colored_vertex(centre, hsla(h, s, l, 0.2));
+    glow.colored_vertex(centre, hsla(180.0, 100.0, 50.0, 0.14));
     let steps = 48;
     for i in 0..=steps {
         let a = std::f32::consts::TAU * i as f32 / steps as f32;
@@ -635,7 +650,11 @@ fn paint_stand(painter: &egui::Painter, stand: Rect, weapon: &str, k: f32) {
         shape.to_vec(),
         egui::Stroke::new(2.0 * k, hsla(180.0, 100.0, 50.0, 0.22)),
     ));
+    if !initials {
+        return;
+    }
     // The initials, large, in the weapon's colour (`WEAPON_ABBR`).
+    let [h, s, l] = weapon_slot_color(weapon).unwrap_or([180.0, 100.0, 50.0]);
     let initials: String = weapon_label(weapon)
         .split_whitespace()
         .filter_map(|w| w.chars().next())
@@ -660,7 +679,10 @@ fn paint_stand(painter: &egui::Painter, stand: Rect, weapon: &str, k: f32) {
     );
     painter.galley_with_override_text_color(at + vec2(5.0, 6.0) * k, big.clone(), hsla(250.0, 45.0, 2.0, 0.6));
     painter.galley(at, big, color);
-    // `.fps-loadout-preview-name`.
+}
+
+/// `.fps-loadout-preview-name`: the weapon's name at the stand's lower left.
+fn paint_stand_name(painter: &egui::Painter, stand: Rect, weapon: &str, k: f32) {
     let text = hsl(180.0, 100.0, 95.0);
     let name = galley(
         painter,

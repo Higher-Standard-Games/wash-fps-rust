@@ -2715,6 +2715,22 @@ whole areas rather than single items. 0.2.0 closes them in two steps.
 
 ## 24. Progress log
 
+### Model previews (November 13, 2026)
+
+The native client now draws two of the browser's three model previews:
+the loadout picker's turning weapon (`client/hud/widgets/weapon_preview.rs`,
+`WeaponPreview.ts`) and the Gameplay page's team figures, each side's body
+in its colour and outline, idle and swaying
+(`client/settings/player_team_preview.rs`, `PlayerTeamPreview.ts`). Both run
+on shagger's `rendering/model_stage.rs`: a small scene with its own
+`ModelRenderer`, HDR target and image processing, drawn into an
+`Rgba8Unorm` texture that egui shows, at twice the panel's pixels. The UI
+asks for a frame with `egui_layer::queue_gpu_job`, which `EguiLayer::paint`
+runs before egui draws. The models are read from the packages on first use
+(`client/preview_packages.rs`, through `ingest_pk3_dir_holding`). The stand's
+glow is cyan, as the browser's. The post-game winner's model
+(`PostGameShowcase.ts`) is next.
+
 ### 0.5.0: web lobby removed (November 13, 2026)
 
 The native lobby is now the only lobby ([NATIVE_LOBBY.md](NATIVE_LOBBY.md)
@@ -2843,7 +2859,8 @@ crate, as `SettingsFields.ts` is the game's.
   (`client/hud/widgets/loadout_picker.rs`, `LoadoutPicker.ts`); the Esc
   menu has the mode's Loadout key under Resume, and the kit chosen in a
   mode is remembered in `loadouts.json`. The stand shows the weapon's slot
-  colour and initials: `WeaponPreview`'s turning model is not ported. The
+  colour and initials: `WeaponPreview`'s turning model is not ported (it is
+  since November 13, 2026, see the progress log). The
   trigger on a launcher (`hipfireBlocked`: GL, RL) now raises the sights
   on screen as well as for the server. On Linux the lobby page no longer
   comes up blank on NVIDIA's driver: when `/proc/driver/nvidia/version`

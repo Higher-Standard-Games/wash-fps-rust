@@ -1,7 +1,8 @@
 //! wash-fps `client/settings/GameplayPage.ts`: who is drawn in which colour,
 //! the crosshair, and the view. The crosshair has a preview over a dark
-//! scene; each side's card shows its colour and outline around the model's
-//! name where the browser turns a 3D figure (not drawn here yet).
+//! scene; each side's card shows its player model in the side's colour
+//! and outline (`PlayerTeamPreview`), the model's name in that outline
+//! until it is up.
 
 use shagger::core::cvar::with_cvars;
 use shagger::shared::js::js_round;
@@ -11,6 +12,7 @@ use shagger::ui::egui_layer::egui;
 use egui::{Color32, Rect, Stroke, pos2, vec2};
 
 use super::fps_settings_view::{choice_seg, cvar_seg, cvar_slider, flag, on_off};
+use super::player_team_preview::PlayerTeamPreview;
 use super::settings_fields::{
     Head, Range, body, card, columns, field_grid, format_percent, line, plain, select_menu, swatches,
 };
@@ -45,11 +47,13 @@ pub fn hex_color(hex: &str) -> Color32 {
 pub struct GameplayPage {
     /// The hit colour flashes in the preview until then (`hitUntil`).
     hit_until: f64,
+    /// Each team card's figure (ally, enemy), made when first shown.
+    figures: [Option<PlayerTeamPreview>; 2],
 }
 
 impl GameplayPage {
     pub fn ui(&mut self, ui: &mut egui::Ui, now: f64) {
-        teams(ui);
+        teams(ui, &mut self.figures);
         ui.add_space(20.0);
         self.crosshair(ui, now);
         ui.add_space(20.0);
@@ -214,7 +218,7 @@ fn hex_swatches(
 
 /// `buildTeams`: Your team and Enemy team, each with its model and colour,
 /// then the outline and brightness.
-fn teams(ui: &mut egui::Ui) {
+fn teams(ui: &mut egui::Ui, figures: &mut [Option<PlayerTeamPreview>; 2]) {
     card(ui, "Who's who", "Your side, and everyone you can shoot", |ui| {
         columns(ui, &[1.0, 1.0], 20.0, |ui, i| {
             let (side, model_side, name) = if i == 0 {
@@ -222,7 +226,8 @@ fn teams(ui: &mut egui::Ui) {
             } else {
                 (Side::Enemy, PlayerModelSide::Enemy, "Enemy team")
             };
-            team_card(ui, side, model_side, name);
+            let figure = figures[i].get_or_insert_with(|| PlayerTeamPreview::new(model_side));
+            team_card(ui, side, model_side, name, figure);
         });
         ui.add_space(18.0);
         columns(ui, &[1.0, 1.0], 26.0, |ui, i| {
@@ -242,7 +247,7 @@ fn teams(ui: &mut egui::Ui) {
 
 /// `.fps-set-team-card`: the side's colour along its top, the figure, the
 /// model and the colour.
-fn team_card(ui: &mut egui::Ui, side: Side, model_side: PlayerModelSide, name: &str) {
+fn team_card(ui: &mut egui::Ui, side: Side, model_side: PlayerModelSide, name: &str, figure: &mut PlayerTeamPreview) {
     let width = ui.available_width();
     let top = ui.cursor().min;
     let color = with_cvars(|c| side_color(c, side)).map_or_else(
@@ -288,21 +293,24 @@ fn team_card(ui: &mut egui::Ui, side: Side, model_side: PlayerModelSide, name: &
     } else {
         player_model_label(setting)
     };
-    // In the browser a 3D figure stands here; natively its silhouette: the
-    // side's outline round the model's name.
+    figure.ui(ui, stage);
+    // `.fps-set-player-preview`, until the figure is up: the side's
+    // outline round the model's name.
     let outline = with_cvars(|c| current_choice(c, &OUTLINE_CHOICES).map_or("thin", |c| c.id));
-    let figure = line(&painter, &label.to_uppercase(), 22.0, display_family(), cream(), 0.08);
-    let fr = Rect::from_center_size(stage.center(), figure.size() + vec2(40.0, 26.0));
-    painter.rect_filled(fr, 3.0, hsla(250.0, 45.0, 5.0, 0.6));
+    let placeholder = line(&painter, &label.to_uppercase(), 22.0, display_family(), cream(), 0.08);
+    let fr = Rect::from_center_size(stage.center(), placeholder.size() + vec2(40.0, 26.0));
     let ow = match outline {
         "off" => 0.0,
         "bold" => 3.0,
         _ => 1.5,
     };
-    if ow > 0.0 {
-        painter.rect_stroke(fr, 3.0, Stroke::new(ow, color), egui::StrokeKind::Outside);
+    if !figure.is_live() {
+        painter.rect_filled(fr, 3.0, hsla(250.0, 45.0, 5.0, 0.6));
+        if ow > 0.0 {
+            painter.rect_stroke(fr, 3.0, Stroke::new(ow, color), egui::StrokeKind::Outside);
+        }
+        painter.galley(fr.center() - placeholder.size() / 2.0, placeholder, cream());
     }
-    painter.galley(fr.center() - figure.size() / 2.0, figure, cream());
     // The fields under it.
     let mut child = ui.new_child(
         egui::UiBuilder::new()
