@@ -2731,6 +2731,15 @@ whole areas rather than single items. 0.2.0 closes them in two steps.
 
 ## 24. Progress log
 
+### Staging catch-up: Add bot's skill (November 14, 2026)
+
+Ported from SHAG staging (4c4e98c, fps 3587df3): the room's Add bot key has
+an arrow joined to it, as one split key, that opens Easy, Medium, Hard and
+Insane above it; the pick goes out as `lobby:invite_bot`'s `difficulty`.
+Add bot alone still leaves the skill to the server. A press elsewhere or
+Esc closes the menu, and the arrow is disabled whenever Add bot is (shagger
+`match_lobby_view`).
+
 ### BC7 textures (November 14, 2026)
 
 Map and model textures compress to BC7 on the GPU as they upload (20.6,
