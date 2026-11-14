@@ -1455,6 +1455,9 @@ impl App {
                 // The post-game opens up: the mouse comes back for the way
                 // home, and the chat is ready (`FPSHud`).
                 let offered = hud.scoreboard.return_offered();
+                if offered {
+                    MATCH_COMPLETED.store(true, std::sync::atomic::Ordering::Relaxed);
+                }
                 if offered && !self.opened_up {
                     self.open_up_due = true;
                 }
@@ -2144,6 +2147,15 @@ thread_local! {
 /// On macOS the loop itself keeps going (pumped), so the window and its
 /// fullscreen Space stay for the next screen; elsewhere it exits, and the
 /// kept window stays all the same.
+/// The match reached its post-game, so the way home opens Play rather than
+/// the room (`ReturnToLobby.ts`). Set by the window, taken once per match.
+static MATCH_COMPLETED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// Whether the match just left had reached its post-game; clears it.
+pub fn take_match_completed() -> bool {
+    MATCH_COMPLETED.swap(false, std::sync::atomic::Ordering::Relaxed)
+}
+
 pub fn end_screen(event_loop: &ActiveEventLoop) {
     SCREEN_ENDED.with(|e| e.set(true));
     #[cfg(not(target_os = "macos"))]

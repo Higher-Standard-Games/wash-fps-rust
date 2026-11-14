@@ -764,7 +764,7 @@ fn lobby_mode(lobby: &str, o: &Options) -> i32 {
                 if let Some(why) = &error {
                     eprintln!("{why}");
                 }
-                panel.after_match(error);
+                panel.after_match(error, window::take_match_completed());
             }
             Err(e) => return fatal(&format!("lobby: {e}")),
         }

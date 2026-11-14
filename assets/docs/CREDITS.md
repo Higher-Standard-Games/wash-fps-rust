@@ -85,16 +85,20 @@ Many of our arenas come from Warsow and Warfork. Map authors are listed on the
 - **Washoi DM1** (`washoi_dm1`): from wfdm1
 - **Washoi DM2** (`washoi_dm2`): from wdm2
 - **Washoi DM3** (`washoi_dm3`): from wfdm3
-- **Washoi DM5** (`washoi_dm5`): from wdm5
+- **Washoi DM5** (`washoi_dm5`): from wfdm5
 - **Washoi DM7** (`washoi_dm7`): from wfdm7
-- **Washoi DM11** (`washoi_dm11`): from wdm11
+- **Washoi DM11** (`washoi_dm11`): from wfdm11
 - **Washoi DM12** (`washoi_dm12`): from wdm12
-- **Washoi DM14** (`washoi_dm14`): from wdm14
-- **Washoi Amphi1** (`washoi_amphi1`): from wfamphi1
+- **Washoi DM14** (`washoi_dm14`): from wfdm14
+- **Washoi DM16** (`washoi_dm16`): from wdm16
+- **Washoi DM17** (`washoi_dm17`): from wdm17
+- **Washoi DM18** (`washoi_dm18`): from wdm18
+- **Washoi Amphi1** (`washoi_amphi1`): from wamphi1
 - **Washoi Amphi2** (`washoi_amphi2`): from wda5
+- **Washoi Amphi3** (`washoi_amphi3`): from wda2
 - **Washoi Snd1** (`washoi_snd1`): from wfbomb1
-- **Washoi Snd4** (`washoi_snd4`): from wfbomb4
-- **Washoi Snd6** (`washoi_snd6`): from wfbomb6
+- **Washoi Snd4** (`washoi_snd4`): from wbomb4
+- **Washoi Snd6** (`washoi_snd6`): from wbomb6
 
 Textures: the Warfork and Warsow texture packs,
 [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/).
