@@ -110,6 +110,9 @@ struct Surface {
     hud: Option<FpsHud>,
     /// The console's drawing.
     egui: EguiLayer,
+    /// The title last given the window: asking the window for its own is a
+    /// round trip to the X server on Linux, so it is never asked.
+    title: Option<String>,
 }
 
 struct App {
@@ -267,6 +270,7 @@ impl App {
             renderer,
             hud,
             egui,
+            title: None,
         });
         Ok(())
     }
@@ -901,13 +905,7 @@ impl App {
                             aim: self.aiming,
                             fire: held.fire,
                         };
-                        let (cvars, step_height, smooth_factor) = with_cvars(|c| {
-                            (
-                                ViewCvars::read(c),
-                                movement_var(c, "sv_stepheight"),
-                                movement_var(c, "cl_smoothfactor"),
-                            )
-                        });
+                        let (cvars, step_height, smooth_factor) = view_cvars();
                         self.view_offset = Some(self.first_person.update(
                             f64::from(dt),
                             &body,
@@ -919,7 +917,6 @@ impl App {
                         self.on_ladder = m.on_ladder;
                         // `FPSHintPanel.moved`: the coach sees each step.
                         if let Some(hud) = &mut s.hud {
-                            let weapon = hud.state.current_weapon.clone();
                             hud.hints.moved(
                                 &MovementSample {
                                     grounded: body.grounded,
@@ -931,7 +928,7 @@ impl App {
                                     forward: held.forward,
                                     strafing: held.left || held.right,
                                 },
-                                &weapon,
+                                &hud.state.current_weapon,
                             );
                         }
                         // `Game`'s own trail, from where we are drawn.
@@ -1126,13 +1123,7 @@ impl App {
                     let aiming = p.aiming.unwrap_or(false);
                     self.pov.set_aiming(aiming);
                     self.followed_aiming = Some(aiming);
-                    let (cvars, step_height, smooth_factor) = with_cvars(|c| {
-                        (
-                            ViewCvars::read(c),
-                            movement_var(c, "sv_stepheight"),
-                            movement_var(c, "cl_smoothfactor"),
-                        )
-                    });
+                    let (cvars, step_height, smooth_factor) = view_cvars();
                     let pose = self
                         .pov
                         .update(&id, &p, effect_dt, seeked, &cvars, step_height, smooth_factor);
@@ -1478,8 +1469,9 @@ impl App {
             let title = feed
                 .ended()
                 .map_or_else(|| "Washoi".to_owned(), |why| format!("Washoi ({why})"));
-            if title != s.window.title() {
+            if s.title.as_deref() != Some(title.as_str()) {
                 s.window.set_title(&title);
+                s.title = Some(title);
             }
         }
         s.renderer.advance_switch(f64::from(dt));
@@ -2182,6 +2174,18 @@ fn starts_fullscreen() -> bool {
 /// process from inside the loop (Cmd+Q on macOS terminates the app there,
 /// so nothing after the loop runs), the settings still on their way to
 /// disk land first.
+/// The view effects' cvars, the step height and the view smoothing
+/// (`FPSController`'s and `SpectateEyeCamera`'s reads), in one look.
+fn view_cvars() -> (ViewCvars, f64, f64) {
+    with_cvars(|c| {
+        (
+            ViewCvars::read(c),
+            movement_var(c, "sv_stepheight"),
+            movement_var(c, "cl_smoothfactor"),
+        )
+    })
+}
+
 struct Exiting<'a, A> {
     app: &'a mut A,
     /// Send `resumed` with the first events: the pumped loop (macOS) sends

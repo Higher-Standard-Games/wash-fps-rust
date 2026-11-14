@@ -127,12 +127,9 @@ pub fn player_model_choice(side: PlayerModelSide) -> &'static str {
     }
 }
 
-/// `Math.floor(Math.random() * len)`, from the clock.
+/// `Math.floor(Math.random() * len)`.
 fn random_index(len: usize) -> usize {
-    let nanos = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map_or(0, |d| d.subsec_nanos());
-    (nanos as usize / 1000) % len.max(1)
+    shagger::shared::math_random::MathRandom::from_entropy().index(len)
 }
 
 /// `setPlayerModelChoice`.

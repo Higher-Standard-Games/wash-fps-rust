@@ -283,9 +283,8 @@ struct Shown {
 
 impl Default for HintPanel {
     fn default() -> Self {
-        let seed = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map_or(0, |d| d.subsec_nanos());
+        // A new run of tips each launch, as `Math.random` gives.
+        let seed = shagger::shared::math_random::MathRandom::from_entropy().next_u64() as u32;
         Self {
             coach: HintCoach::new(shagger::shared::spread_utils::mulberry32(seed)),
             clock: 0.0,

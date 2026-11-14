@@ -2715,6 +2715,28 @@ whole areas rather than single items. 0.2.0 closes them in two steps.
 
 ## 24. Progress log
 
+### Frame cost and code quality pass (November 14, 2026)
+
+A pass over the per-frame paths for allocations, repeated work and
+redundant uploads, plus some code quality. No behaviour changes; the
+tests and golden vectors stand as they were.
+
+- shagger: model draws no longer allocate their pipeline keys, the joint
+  palette uploads without a copy, movers upload only when their matrix
+  changes, empty effect batches skip their upload, wall marks, trails
+  and `update_vertices` reuse their buffers, the snapshot buffer is a
+  `VecDeque`, map particles retire in one pass.
+- New `shagger_shared::math_random::MathRandom` (xorshift64*): the one
+  stand-in for `Math.random` where nothing depends on the numbers
+  (shuffles, cosmetic spins, jitter). It replaces the generators written
+  out in each module, the clock-seeded picks and the `RandomState` hash
+  trick, with the same sequences where they were seeded.
+- wash-fps-rust: a frame's view shares the feed's maps (`Arc`) instead of
+  copying four of them; `MapRenderer::prepare` reads its cvars and the
+  camera matrices once; the per-frame player and projectile maps keep
+  their keys and look ids up in a set; the window title is not read back
+  from the window (an X11 round trip each frame).
+
 ### Staging catch-up: taunts, victory clips, buttons, map particles (November 13, 2026)
 
 Ported from SHAG and wash-fps staging (beta.12):
