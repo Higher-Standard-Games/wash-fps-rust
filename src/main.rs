@@ -117,7 +117,7 @@ fn usage() -> ! {
          \x20      washoi bench <file.shagdemo> [--data DIR] [--frames N] [--warmup N] [--follow N] [--out FILE.json]\n\
          \x20      washoi --version\n\
          \x20      washoi view <map> [--data DIR] [--spawn N] [--screenshot FILE.png] [--size WxH] [--time T] [--at X,Y,Z,YAW] [--pitch DEG] [--player X,Y,Z,YAW[,CLIP[,FRAME[,quad][,WEAPON][,BODY]]]]... [--projectile ID,X,Y,Z,YAW[,PITCH]]... [--explosion ID,X,Y,Z,AGE]... [--weapon ID [--aim] [--quad] [--fire AGE]] [--no-cull] [--no-lights] [--seconds N]\n\
-         \x20      washoi demo <file.shagdemo> [--data DIR] [--screenshot FILE.png] [--size WxH] [--time T] [--at X,Y,Z,YAW] [--pitch DEG] [--follow N] [--reel MINUTES] [--audio-out FILE.wav] [--scoreboard] [--seconds N]\n\
+         \x20      washoi demo <file.shagdemo> [--data DIR] [--screenshot FILE.png] [--size WxH] [--time T] [--at X,Y,Z,YAW] [--pitch DEG] [--follow N] [--reel MINUTES] [--audio-out FILE.wav] [--scoreboard] [--loadout WEAPON] [--showcase WEAPON] [--seconds N]\n\
          \x20      washoi watch <ws://game-server> [--name NAME] [--ticket TICKET] [--data DIR] [--screenshot FILE.png] [--time T] [--at X,Y,Z,YAW] [--follow N] [--seconds N]\n\
          \x20      washoi play <ws://game-server> [--name NAME] [--ticket TICKET] [--data DIR] [--screenshot FILE.png] [--time T] [--say TEXT] [--seconds N]\n\
          \x20      washoi connect <ws://game-server> [--name NAME] [--ticket TICKET] [--seconds N] [--play]\n\
@@ -166,6 +166,8 @@ struct Options {
     warmup: Option<u64>,
     out: Option<PathBuf>,
     scoreboard: bool,
+    loadout: Option<String>,
+    showcase: Option<String>,
     say: Option<String>,
     /// From the lobby into the window rather than headless (`--window`).
     window: bool,
@@ -225,6 +227,8 @@ fn parse_options(args: impl Iterator<Item = String>) -> Options {
             "--warmup" => o.warmup = Some(value().parse().unwrap_or_else(|_| usage())),
             "--out" => o.out = Some(PathBuf::from(value())),
             "--scoreboard" => o.scoreboard = true,
+            "--loadout" => o.loadout = Some(value()),
+            "--showcase" => o.showcase = Some(value()),
             "--say" => o.say = Some(value()),
             "--window" => o.window = true,
             "--cvars" => o.cvars = Some(PathBuf::from(value())),
@@ -486,6 +490,7 @@ fn main() {
         args.next().unwrap_or_else(|| usage())
     };
     let o = parse_options(args);
+    washoi::client::preview_packages::set_data_dir(data_dir(&o));
     // The cvars, saved as the browser saves `engine_cvars`. Release builds
     // are the shipped game, which keeps `developer` at 0.
     let storage = o.cvars.clone().or_else(|| config_dir().map(|d| d.join("cvars.json")));
@@ -723,6 +728,7 @@ fn lobby_mode(lobby: &str, o: &Options) -> i32 {
     };
     let _ = std::fs::create_dir_all(&dir);
     let key_file = o.key_file.clone().or_else(default_key_file);
+    washoi::client::preview_packages::set_data_dir(data_dir(o));
     // The lobby's connection lasts the session, through every match.
     println!("lobby: at {lobby}");
     let mut panel = washoi::client::lobby_panel::LobbyPanel::connect(lobby, key_file);
@@ -912,6 +918,8 @@ fn view_options(
         audio_out: o.audio_out.clone(),
         bench: None,
         scoreboard: o.scoreboard,
+        loadout: o.loadout.clone(),
+        showcase: o.showcase.clone(),
         join,
         say: o.say.clone(),
     }

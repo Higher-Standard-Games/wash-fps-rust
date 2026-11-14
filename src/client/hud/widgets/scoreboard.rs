@@ -11,8 +11,9 @@
 //! everyone; a one-a-side match gets a head-to-head line; team modes get a
 //! column per side, coloured by allegiance.
 //!
-//! Not drawn: the winner's 3D model (`PostGameShowcase`), the backdrop blur
-//! and the stamp animations.
+//! The winner's model beside the board is the scene's
+//! (`client/post_game_showcase.rs`). Not drawn: the backdrop blur and the
+//! stamp animations.
 
 use std::cell::Cell;
 use std::collections::BTreeMap;
@@ -255,7 +256,17 @@ impl FpsHudWidget for Scoreboard {
             self.return_rect.set(None);
             return;
         }
-        self.local_player_id = state.local_player_id.clone();
+        // A demo has no local player: the row marked as ours is the followed player's.
+        self.local_player_id = if !state.local_player_id.is_empty() || !state.playback {
+            state.local_player_id.clone()
+        } else {
+            state
+                .scoreboard
+                .iter()
+                .find(|e| e.entity_id == state.spectating)
+                .map(|e| e.player_id.clone())
+                .unwrap_or_default()
+        };
         self.round = m.round();
         self.carrier = m
             .bomb()

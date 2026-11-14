@@ -11,6 +11,7 @@ use std::collections::BTreeSet;
 
 use shagger::rendering::glam::{DVec3, EulerRot, Mat4, Quat};
 use shagger::shared::bsp::brush_model_state::BrushModelDefinition;
+use shagger::shared::math_random::MathRandom;
 
 /// Fragments per disabled model, and alive at once.
 pub const FRAGMENTS_PER_MODEL: usize = 12;
@@ -67,8 +68,8 @@ pub struct BombSiteDebris {
     /// round (or map), which only establishes state.
     previous: Option<BTreeSet<usize>>,
     round: Option<u32>,
-    /// `Math.random`'s stand-in (xorshift64*).
-    seed: u64,
+    /// `Math.random`'s stand-in.
+    random: MathRandom,
 }
 
 impl Default for BombSiteDebris {
@@ -77,17 +78,14 @@ impl Default for BombSiteDebris {
             fragments: Vec::new(),
             previous: None,
             round: None,
-            seed: 0x2f6b_95d1_c3a7_0e49,
+            random: MathRandom::new(0x2f6b_95d1_c3a7_0e49),
         }
     }
 }
 
 impl BombSiteDebris {
     fn random(&mut self) -> f64 {
-        self.seed ^= self.seed >> 12;
-        self.seed ^= self.seed << 25;
-        self.seed ^= self.seed >> 27;
-        (self.seed.wrapping_mul(0x2545_f491_4f6c_dd1d) >> 11) as f64 / (1u64 << 53) as f64
+        self.random.next_f64()
     }
 
     /// `update`: `round` and `disabled` from the match state, the map's

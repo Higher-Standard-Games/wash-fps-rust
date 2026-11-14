@@ -4,13 +4,17 @@
 //! given with `--player` stand on the map as the Vanguard model.
 
 use shagger::lighting::map_emissive_surfaces::{SurfaceEmission, extract_emissive_surfaces};
+use shagger::loader::bsp::fog_volumes::{FogVolumes, fog_volumes_from};
+use shagger::loader::bsp::map_particles::MapParticles;
 use shagger::physics::physics_system::world_triangles;
 use shagger::physics::sweep_backend_adapter::to_shared_contents;
 use shagger::rendering::water::water_surface_lighting::{water_map_lights, water_surface_lights};
 use shagger::shared::bsp::brush_model_state::{BrushModelState, extract_brush_models};
+use shagger::shared::bsp::lift_system::{LiftState, LiftSystem, extract_lifts};
 use shagger::shared::js::js_hypot;
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 use washoi::client::bomb_renderer::{BombRenderer, CARRY_FALLBACK_HEIGHT};
 use washoi::client::bomb_site_debris::BombSiteDebris;
 use washoi::client::bomb_site_markers::{BLAST_SCALE, BLAST_SHAKE_RANGE, BombSiteMarkers, MarkerPose};
@@ -22,8 +26,10 @@ use washoi::client::fps_player_audio::{player_voice_for_entity, set_local_player
 use washoi::client::gib_system::{GibRenderer, GibSystem};
 use washoi::client::hud::widgets::loadout_picker;
 use washoi::client::hud::widgets::pickup_prompt::{horizontal_distance_sq, in_pickup_range};
+use washoi::client::kill_taunt::{KillFacts, choose_kill_taunt};
 use washoi::client::player_appearance::{AppearanceView, PlayerAppearance};
 use washoi::client::player_model_selection::{PlayerModelSide, player_model_choice};
+use washoi::client::post_game_showcase::{PostGameShowcase, ShowcaseStart};
 use washoi::client::quad_damage_visual::{get_quad_damage_pulse, mask_has_quad};
 use washoi::client::ragdoll::death_clip::DeathFacts;
 use washoi::client::ragdoll_system::{RagdollSystem, RagdollTrails};
@@ -76,7 +82,7 @@ use shagger::rendering::water::water_actor_reflection::ReflectionActor;
 use shagger::rendering::wgpu;
 use shagger::rendering::world_culling::WorldCulling;
 use shagger::rendering::world_fog_controller::{FogUniforms, WorldFogController};
-use shagger::rendering::world_geometry::build_world_geometry;
+use shagger::rendering::world_geometry::build_world_geometry_with;
 use shagger::rendering::world_renderer::{Rgba8Image, WorldRenderer};
 use shagger::shared::collision::shared_collision_world::SharedCollisionWorld;
 use shagger::shared::entities::projectile_def::ProjectileDef;
@@ -212,6 +218,12 @@ pub struct ViewOptions {
     pub bench: Option<(u64, u64, Option<PathBuf>)>,
     /// Hold the scoreboard open (`--scoreboard`, Tab in the window).
     pub scoreboard: bool,
+    /// Show the post-game's winner in front of the camera (`--showcase`),
+    /// holding this weapon (`none` for none), in the enemy side's style.
+    pub showcase: Option<String>,
+    /// Open the loadout picker over the shot (`--loadout`), on this weapon
+    /// (`""` for the kit's primary).
+    pub loadout: Option<String>,
     /// Join the match in `watch` as a player (`washoi play`).
     pub join: bool,
     /// Something to say once in the match (`--say`, headless play).
@@ -612,6 +624,17 @@ impl Feed {
             Self::Demo(d) => d.match_state(),
             Self::Live(l) => l.match_state(),
             Self::Play(p, _) => p.match_state(),
+        }
+    }
+
+    /// The lifts as they stand, whose callers' cooldowns press the buttons
+    /// in (`handleButton` reads `buttonOffset`).
+    #[must_use]
+    pub fn lift_states(&self) -> Vec<LiftState> {
+        match self {
+            Self::Demo(d) => d.lift_states().to_vec(),
+            Self::Live(l) => l.lift_states().to_vec(),
+            Self::Play(p, _) => p.lift_states(),
         }
     }
 
@@ -1047,6 +1070,10 @@ pub struct MapRenderer {
     /// The same for the players posed at load, in `model_draws`.
     static_actors: Vec<(ReflectionActor, std::ops::Range<usize>)>,
     actor_draws: Vec<ModelDraw>,
+    /// The frame's dynamic lights and reflection actors, kept for their
+    /// storage.
+    frame_lights: Vec<DynamicLight>,
+    frame_actors: Vec<ReflectionActor>,
     /// Every projectile type's model, for projectiles that fly.
     live_projectile_models: Vec<(&'static ProjectileDef, ProjectileModel)>,
     /// The flying projectiles' trails, by entity, and finished ones kept
@@ -1100,6 +1127,10 @@ pub struct MapRenderer {
     /// Ghosts and speed-line bursts where players teleport.
     pub teleports: TeleportEffect,
     teleport_renderer: TeleportRenderer,
+    /// The map's `misc_particles` emitters (`MapParticles`).
+    pub map_particles: MapParticles,
+    /// The map's fog brushes (`FogVolumes`).
+    fog_volumes: FogVolumes,
     /// Each live player's last origin and yaw, for spotting a teleport.
     teleport_last: HashMap<String, (DVec3, f64)>,
     /// Bodies breaking into shards on a gib death.
@@ -1108,6 +1139,9 @@ pub struct MapRenderer {
     /// The map's `func_explosive` brush models and which are up
     /// (`BrushModelState`), and the disabled list last applied.
     brush_models: BrushModelState,
+    /// The map's lifts, restored from the feed each frame so the buttons
+    /// press in (`handleButton`).
+    pub lifts: LiftSystem,
     applied_disabled: Option<Vec<usize>>,
     /// The bomb sites' beacons and detonation (`BombSiteMarkers`).
     pub bomb_sites: BombSiteMarkers,
@@ -1140,7 +1174,7 @@ pub struct MapRenderer {
     slash_trails: SlashTrailRenderer,
     /// Guns in players' hands (`updateWeaponModel`), and who holds which.
     hand_weapons: HandWeapons,
-    live_weapons: HashMap<String, String>,
+    live_weapons: Arc<HashMap<String, String>>,
     /// Each live player's body (`modelChoiceFor`), from [`styled_players`].
     pub live_models: HashMap<String, &'static str>,
     /// Players whose body a ragdoll took, hidden until they leave the list.
@@ -1193,6 +1227,8 @@ pub struct MapRenderer {
     pub image_processing: ImageProcessingConfiguration,
     /// The first-person weapon, drawn after the scene with depth cleared.
     pub view_model: Option<WeaponViewModel>,
+    /// The post-game's winner on show; the view model is not drawn meanwhile.
+    pub showcase: Option<PostGameShowcase>,
     /// The other weapons a player in the match may switch to, by id.
     pub holster: HashMap<String, WeaponViewModel>,
     /// `WeaponSwitchAnim`: the slide between weapons in hand.
@@ -1456,15 +1492,21 @@ impl MapRenderer {
             })
             .unwrap_or_default();
         // `BombRenderer.update`: the carrier as drawn last frame.
-        let anchor = self.bomb_anchor.clone();
-        self.bomb.update(dt, match_state.bomb(), |carrier| {
-            anchor.filter(|(id, _, _)| id == carrier).map(|(_, at, yaw)| (at, yaw))
+        let bomb = match_state.bomb();
+        let anchor = &self.bomb_anchor;
+        self.bomb.update(dt, bomb, |carrier| {
+            anchor
+                .as_ref()
+                .filter(|(id, _, _)| id == carrier)
+                .map(|&(_, at, yaw)| (at, yaw))
         });
-        self.bomb_carrier = match_state
-            .bomb()
+        // The carrier's id, copied only when it changes hands.
+        let carrier = bomb
             .and_then(|b| b.get("carrier"))
-            .and_then(shagger::shared::json::Value::as_str)
-            .map(str::to_owned);
+            .and_then(shagger::shared::json::Value::as_str);
+        if self.bomb_carrier.as_deref() != carrier {
+            self.bomb_carrier = carrier.map(str::to_owned);
+        }
         if self.applied_disabled.as_ref() != Some(&disabled) {
             // `restore`: the round's reset, then the server's list.
             self.brush_models.restore(&disabled);
@@ -1550,16 +1592,24 @@ impl MapRenderer {
     pub fn set_live_players(
         &mut self,
         players: &[(String, InterpolatedEntity, PlayerModelVisualStyle)],
+        hidden: &[&str],
         dt: f64,
         effect_dt: f64,
     ) {
+        // Everyone but the hidden (the player whose eyes we look through):
+        // borrowed, not a copy of the list.
+        let players: Vec<&(String, InterpolatedEntity, PlayerModelVisualStyle)> = players
+            .iter()
+            .filter(|(id, _, _)| !hidden.contains(&id.as_str()))
+            .collect();
+        let players = players.as_slice();
         self.update_charge_glows(players);
         self.joints.truncate(self.static_joints);
         self.live_draws.clear();
         self.bomb_anchor = None;
         self.live_actors.clear();
         // `RemotePlayerRenderer` emits everyone's dust; `Game` steps it.
-        for (id, p, _) in players {
+        for (id, p, _) in players.iter().copied() {
             let sliding = p.sliding && p.grounded && p.water_level.unwrap_or(0) == 0 && !p.on_ladder.unwrap_or(false);
             self.slide_dust.emit(id, DVec3::new(p.x, p.y, p.z), p.vx, p.vz, sliding);
         }
@@ -1567,24 +1617,31 @@ impl MapRenderer {
         let Some(renderer) = &mut self.remote_players else {
             return;
         };
+        // Who is in this frame's list, looked up once rather than searched
+        // for each id kept below.
+        let present: HashSet<&str> = players.iter().map(|(p, _, _)| p.as_str()).collect();
         // A ragdoll's player stays hidden until they leave the list.
-        self.ragdolled.retain(|id| players.iter().any(|(p, _, _)| p == id));
+        self.ragdolled.retain(|id| present.contains(id.as_str()));
         let ragdolled = &self.ragdolled;
         self.departed = renderer
-            .retain(|id| players.iter().any(|(p, _, _)| p == id) && !ragdolled.contains(id))
+            .retain(|id| present.contains(id) && !ragdolled.contains(id))
             .into_iter()
             .collect();
         let departed = &self.departed;
         self.live_worlds
-            .retain(|id, _| departed.contains_key(id) || players.iter().any(|(p, _, _)| p == id));
+            .retain(|id, _| departed.contains_key(id) || present.contains(id.as_str()));
         self.live_styles
-            .retain(|id, _| departed.contains_key(id) || players.iter().any(|(p, _, _)| p == id));
-        self.remote_muzzles.clear();
-        for (id, interp, style) in players {
+            .retain(|id, _| departed.contains_key(id) || present.contains(id.as_str()));
+        // Each frame sets every drawn player's muzzle; kept, not cleared,
+        // so their keys are not made anew.
+        let ragdolled = &self.ragdolled;
+        self.remote_muzzles
+            .retain(|id, _| present.contains(id.as_str()) && !ragdolled.contains(id));
+        for (id, interp, style) in players.iter().copied() {
             if self.ragdolled.contains(id) {
                 continue;
             }
-            self.live_styles.insert(id.clone(), *style);
+            upsert(&mut self.live_styles, id, *style);
             // The body `styled_players` chose (`modelChoiceFor`).
             let choice = self
                 .live_models
@@ -1601,7 +1658,7 @@ impl MapRenderer {
                 choice,
             );
             if let Some(world) = renderer.world_of(id, interp) {
-                self.live_worlds.insert(id.clone(), world);
+                upsert(&mut self.live_worlds, id, world);
             }
             if self.bomb_carrier.as_deref() == Some(id.as_str()) {
                 // `getBoneAnchor(carrier, "Spine1")`, else shoulder height
@@ -1635,7 +1692,7 @@ impl MapRenderer {
                     muzzle.root = Some(root.as_dvec3());
                 }
             }
-            self.remote_muzzles.insert(id.clone(), muzzle);
+            upsert(&mut self.remote_muzzles, id, muzzle);
             // The player's box (Q3's -15 -15 -24 to 15 15 32, Babylon order).
             let at = DVec3::new(interp.x, interp.y, interp.z);
             self.live_actors.push((
@@ -1651,11 +1708,10 @@ impl MapRenderer {
         // 256 units between frames. A player gone from the list (dead) is
         // forgotten, so a respawn starts afresh.
         self.teleports.update(effect_dt);
-        self.teleport_last
-            .retain(|id, _| players.iter().any(|(p, _, _)| p == id));
-        for (id, interp, _) in players {
+        self.teleport_last.retain(|id, _| present.contains(id.as_str()));
+        for (id, interp, _) in players.iter().copied() {
             let at = DVec3::new(interp.x, interp.y, interp.z);
-            if let Some((last, last_yaw)) = self.teleport_last.insert(id.clone(), (at, interp.yaw))
+            if let Some((last, last_yaw)) = upsert(&mut self.teleport_last, id, (at, interp.yaw))
                 && at.distance_squared(last) > TELEPORT_FX_DIST_SQ
             {
                 self.teleports
@@ -1675,13 +1731,13 @@ impl MapRenderer {
         let gone: Vec<String> = self
             .liquid
             .body_ids()
-            .filter(|id| !players.iter().any(|(p, _, _)| p == id))
+            .filter(|id| !present.contains(id))
             .map(str::to_owned)
             .collect();
         for id in gone {
             self.liquid.forget(&id);
         }
-        for (id, interp, _) in players {
+        for (id, interp, _) in players.iter().copied() {
             self.notify_liquid(
                 id,
                 interp.water_level.unwrap_or(0),
@@ -1689,6 +1745,43 @@ impl MapRenderer {
                 interp.vy,
                 false,
             );
+        }
+    }
+
+    /// `startPostGameShowcase`: the winner, `entity_id`, on show in their
+    /// body (`choice`) and `style`, holding `weapon`, in front of `camera`.
+    pub fn start_showcase(
+        &mut self,
+        choice: &str,
+        style: PlayerModelVisualStyle,
+        weapon: Option<String>,
+        camera: &Camera,
+        aspect: f64,
+    ) {
+        self.showcase = None;
+        let Some(renderer) = &self.remote_players else {
+            return;
+        };
+        let body = renderer.body_by_choice(choice).clone();
+        // `Math.random()` for the dance's shuffle.
+        let pick = shagger::shared::math_random::MathRandom::from_entropy().next_f64();
+        let start = ShowcaseStart {
+            body,
+            style,
+            weapon,
+            camera,
+            aspect,
+            pick,
+        };
+        self.showcase = Some(PostGameShowcase::start(start, |from, to| self.trace_map(from, to)));
+    }
+
+    /// Moves the showcase on by `dt` and adds its draws to the frame's,
+    /// after [`Self::set_live_players`].
+    pub fn play_showcase(&mut self, dt: f64) {
+        if let Some(showcase) = &mut self.showcase {
+            showcase.advance(dt);
+            showcase.draws(&self.hand_weapons, &mut self.joints, &mut self.live_draws);
         }
     }
 
@@ -1727,12 +1820,9 @@ impl MapRenderer {
         for id in bodies {
             self.liquid.forget(&id);
         }
-        let trails: Vec<String> = self.live_trails.keys().cloned().collect();
-        for id in trails {
-            if let Some((def, mut trail)) = self.live_trails.remove(&id) {
-                trail.reset();
-                self.spare_trails.push((def.id, trail));
-            }
+        for (_, (def, mut trail)) in self.live_trails.drain() {
+            trail.reset();
+            self.spare_trails.push((def.id, trail));
         }
         self.gibs.clear();
         self.slide_dust.reset();
@@ -1756,7 +1846,7 @@ impl MapRenderer {
         self.projectile_offsets
             .retain(|_, (_, born)| clock - *born < MUZZLE_CONVERGE_SECONDS);
         for p in projectiles {
-            let new = self.projectile_seen.insert(p.id.clone(), clock).is_none();
+            let new = upsert(&mut self.projectile_seen, &p.id, clock).is_none();
             if new && let Some(view_model) = &self.view_model {
                 let position = DVec3::from(p.position);
                 if let Some(muzzle) = projectile_muzzle(view_model, camera, position, DVec3::from(p.velocity)) {
@@ -1764,34 +1854,31 @@ impl MapRenderer {
                 }
             }
         }
-        let gone: Vec<String> = self
-            .live_projectile_lights
-            .keys()
-            .filter(|id| !projectiles.iter().any(|p| &p.id == *id))
-            .cloned()
-            .collect();
-        for id in gone {
-            if let Some(handle) = self.live_projectile_lights.remove(&id) {
-                self.lights.release(handle);
+        // The projectiles gone since the last frame give back their lights
+        // and their trails.
+        let flying: HashSet<&str> = projectiles.iter().map(|p| p.id.as_str()).collect();
+        let lights = &mut self.lights;
+        self.live_projectile_lights.retain(|id, handle| {
+            let keep = flying.contains(id.as_str());
+            if !keep {
+                lights.release(*handle);
             }
-        }
-        let ended: Vec<String> = self
-            .live_trails
-            .keys()
-            .filter(|id| !projectiles.iter().any(|p| &p.id == *id))
-            .cloned()
-            .collect();
-        for id in ended {
-            if let Some((def, mut trail)) = self.live_trails.remove(&id) {
+            keep
+        });
+        let spare = &mut self.spare_trails;
+        self.live_trails.retain(|id, (def, trail)| {
+            let keep = flying.contains(id.as_str());
+            if !keep {
                 trail.reset();
-                self.spare_trails.push((def.id, trail));
+                spare.push((def.id, std::mem::take(trail)));
             }
-        }
+            keep
+        });
         // A shot into a pool splashes (`ServerProjectiles`).
         let gone: Vec<String> = self
             .liquid
             .projectile_ids()
-            .filter(|id| !projectiles.iter().any(|p| &p.id == id))
+            .filter(|id| !flying.contains(id))
             .map(str::to_owned)
             .collect();
         for id in gone {
@@ -1840,13 +1927,14 @@ impl MapRenderer {
             if def.trail_effect.is_some() {
                 let def: &'static ProjectileDef = def;
                 let spare = &mut self.spare_trails;
-                let (_, trail) = self.live_trails.entry(p.id.clone()).or_insert_with(|| {
+                if !self.live_trails.contains_key(&p.id) {
                     let reused = spare
                         .iter()
                         .position(|(id, _)| *id == def.id)
                         .map(|i| spare.swap_remove(i).1);
-                    (def, reused.unwrap_or_default())
-                });
+                    self.live_trails.insert(p.id.clone(), (def, reused.unwrap_or_default()));
+                }
+                let (_, trail) = self.live_trails.get_mut(&p.id).expect("inserted above");
                 trail.push(drawn, DVec3::from(p.velocity).normalize_or_zero(), def.trail_length);
             }
             if let Some(intensity) = def.light_intensity.filter(|i| *i > 0.0) {
@@ -2087,8 +2175,9 @@ impl MapRenderer {
 
     /// Who holds which weapon (`enemyWeapons`), before
     /// [`Self::set_live_players`].
-    pub fn set_live_weapons(&mut self, weapons: &HashMap<String, String>) {
-        self.live_weapons.clone_from(weapons);
+    pub fn set_live_weapons(&mut self, weapons: &Arc<HashMap<String, String>>) {
+        // The feed's own map, shared: no copy a frame.
+        self.live_weapons = Arc::clone(weapons);
     }
 
     /// Names the local player and their view yaw before [`Self::play_gibs`],
@@ -2096,7 +2185,7 @@ impl MapRenderer {
     /// wash-fps `GameEvents.ts`'s charge glows: a teal light 30 units
     /// above each other player charging their blade, at most six, pulsing
     /// between 4 and 12 (`Game.ts`).
-    fn update_charge_glows(&mut self, players: &[(String, InterpolatedEntity, PlayerModelVisualStyle)]) {
+    fn update_charge_glows(&mut self, players: &[&(String, InterpolatedEntity, PlayerModelVisualStyle)]) {
         self.charge_glows.clear();
         let pulse = 8.0 + 4.0 * (self.item_time * 8.0).sin();
         let color = Vec3::new(0.05, 1.0, 0.9);
@@ -2198,14 +2287,13 @@ impl MapRenderer {
                 .map(|(i, (_, _, p))| (*p, i)),
         )
         .map(|i| self.weapon_pickup_spots[i].1);
-        let dropped: Vec<_> = self.dropped_weapons.visuals().map(|(_, w)| w).collect();
-        let floor = nearest(
-            &mut dropped
-                .iter()
-                .enumerate()
-                .map(|(i, w)| (DVec3::from_array(w.position), i)),
-        )
-        .map(|i| dropped[i].weapon_id.as_str());
+        let floor = self
+            .dropped_weapons
+            .visuals()
+            .map(|(_, w)| (DVec3::from_array(w.position), w))
+            .filter(|(p, _)| in_pickup_range(at, *p))
+            .min_by(|(a, _), (b, _)| horizontal_distance_sq(at, *a).total_cmp(&horizontal_distance_sq(at, *b)))
+            .map(|(_, w)| w.weapon_id.as_str());
         (map, floor)
     }
 
@@ -2251,7 +2339,26 @@ impl MapRenderer {
         self.effect_time += dt;
         let now = self.effect_time;
         self.explosions.update(now);
+        // Killers taunt once the whole snapshot has run, so the killing
+        // shot's own fire event cannot end the taunt it caused.
+        let mut kill_taunts: Vec<(String, &'static str)> = Vec::new();
         for event in events {
+            if let SnapshotEvent::Death {
+                entity_id,
+                killer_id,
+                at,
+                ..
+            } = event
+                && let Some(taunt) = choose_kill_taunt(&KillFacts {
+                    entity_id,
+                    killer_id,
+                    x: at.x,
+                    y: at.y,
+                    z: at.z,
+                })
+            {
+                kill_taunts.push((killer_id.clone(), taunt));
+            }
             // `weapon_charge` from someone else: the glow on them comes and
             // goes with it (our own charge shows on the view model).
             if let SnapshotEvent::WeaponCharge {
@@ -2325,6 +2432,11 @@ impl MapRenderer {
                 remote: &self.remote_muzzles,
             },
         );
+        if let Some(renderer) = &mut self.remote_players {
+            for (killer, taunt) in kill_taunts {
+                renderer.play_kill_taunt(&killer, taunt, now);
+            }
+        }
         self.hitscan.update(now, &mut self.lights);
         // Fade the flashes, and give back the ones that are out.
         let lights = &mut self.lights;
@@ -2379,35 +2491,35 @@ impl MapRenderer {
         if let Some(view_model) = &mut self.view_model {
             view_model.view.aspect_ratio = f64::from(aspect);
         }
+        // The camera's matrices, once for the frame.
+        let view_proj = camera.view_projection(aspect);
+        let view = camera.view();
+        let rotation = camera_rotation(view.as_dmat4());
         self.culling.update(camera, aspect);
         if let Some(pvs) = &mut self.item_pvs {
             pvs.update(Some(camera.position));
         }
-        // `r_dynamiclight 0` (the Ultralow preset): no pool lights.
-        let dynamic = self.dynamic_lights && with_cvars(|c| render_toggle(c, "r_dynamiclight"));
-        let lights: Vec<DynamicLight> = if dynamic {
-            self.lights.lights().chain(self.charge_glows.iter().copied()).collect()
-        } else {
-            Vec::new()
-        };
-        self.models.set_dynamic_lights(&lights);
-        self.world.set_dynamic_lights(&lights);
-        let serial = shagger::core::cvar::with_cvars(|c| {
+        // Every cvar the frame reads, in one look.
+        let cvars = with_cvars(|c| {
             let serial = c.serial();
             if self.fog_serial != Some(serial) {
                 self.fog.refresh(c);
             }
-            serial
+            self.fog_serial = Some(serial);
+            FrameCvars::read(c)
         });
-        self.fog_serial = Some(serial);
+        // `r_dynamiclight 0` (the Ultralow preset): no pool lights.
+        let dynamic = self.dynamic_lights && cvars.dynamic_lights;
+        let mut lights = std::mem::take(&mut self.frame_lights);
+        lights.clear();
+        if dynamic {
+            lights.extend(self.lights.lights().chain(self.charge_glows.iter().copied()));
+        }
+        self.models.set_dynamic_lights(&lights);
+        self.world.set_dynamic_lights(&lights);
+        self.frame_lights = lights;
         // `ColorCorrectionPostProcess`, live from its cvars.
-        self.image_processing.color_matrix = shagger::core::cvar::with_cvars(|c| {
-            active_color_matrix(
-                c.get_number("r_colorcorrection"),
-                c.get_number("r_colorcorrection_strength"),
-                c.get_number("r_colorsimulation"),
-            )
-        });
+        self.image_processing.color_matrix = cvars.color_matrix;
         let uniforms = self.frame_fog();
         if self.applied_fog != Some(uniforms) {
             self.applied_fog = Some(uniforms);
@@ -2418,22 +2530,24 @@ impl MapRenderer {
                 sky.set_fog(uniforms);
             }
         }
+        // `FogVolumes.prepare`: the scene depth while a fog volume is in view.
+        let fog_in_view = self.fog_volumes.any_in_view(view_proj);
+        self.world.set_scene_depth_reader(fog_in_view);
         // `Q3SoftParticleDepth`: the scene depth, while `r_softhalos` is on
         // and a soft halo is in view.
-        let soft =
-            shagger::core::cvar::with_cvars(|c| c.get("r_softhalos").is_none() || c.get_number("r_softhalos") != 0.0)
-                && self
-                    .world
-                    .has_visible_soft_particles(if self.cull { self.culling.visible() } else { &[] });
+        let soft = cvars.soft_halos
+            && self
+                .world
+                .has_visible_soft_particles(if self.cull { self.culling.visible() } else { &[] });
         self.world.set_soft_particles(
             gpu,
-            camera.view(),
+            view,
             camera.near,
             camera.far,
             (size[0].round() as u32, size[1].round() as u32),
             soft,
         );
-        self.world.prepare(gpu, camera.view_projection(aspect), camera.position);
+        self.world.prepare(gpu, view_proj, camera.position);
         // The weapon pickups lead `model_draws`; the taken ones stay out.
         self.frame_draws.clear();
         let mut next = 0;
@@ -2476,17 +2590,13 @@ impl MapRenderer {
             self.ragdoll_trails
                 .draws(gpu, &mut self.models, ragdolls, &mut self.frame_draws);
         }
-        self.items.draws(
-            self.item_time,
-            camera_rotation(camera.view().as_dmat4()),
-            |at| in_pvs(pvs, at),
-            &mut self.frame_draws,
-        );
+        self.items
+            .draws(self.item_time, rotation, |at| in_pvs(pvs, at), &mut self.frame_draws);
         let active = &self.pickup_active;
         self.item_models.draws(
             self.item_time,
             camera.position.as_dvec3(),
-            camera_rotation(camera.view().as_dmat4()),
+            rotation,
             |id, at| pickup_shown(active, id) && in_pvs(pvs, at),
             &mut self.frame_draws,
         );
@@ -2515,25 +2625,21 @@ impl MapRenderer {
             trail.update(gpu, &mut self.models, Some(camera.position.as_dvec3()), color);
             trail.draws(&mut self.frame_draws);
         }
-        self.models.prepare(
-            gpu,
-            camera.view_projection(aspect),
-            camera.position,
-            &self.frame_draws,
-            &self.joints,
-        );
+        self.models
+            .prepare(gpu, view_proj, camera.position, &self.frame_draws, &self.joints);
         self.joints.truncate(joints_base);
-        self.explosions
-            .prepare(gpu, camera.view_projection(aspect), camera.view(), self.effect_time);
+        self.explosions.prepare(gpu, view_proj, view, self.effect_time);
         let frame = EffectFrame {
-            view_proj: camera.view_projection(aspect),
-            view: camera.view(),
+            view_proj,
+            view,
             projection: camera.projection(aspect),
             camera_position: camera.position,
             viewport: size,
             time: self.effect_time,
             fog: uniforms,
         };
+        self.fog_volumes
+            .prepare(gpu, &frame, fog_in_view && self.world.scene_depth_copied());
         self.hitscan.wall_marks.prepare(gpu, &frame);
         self.hitscan.streaks.prepare(gpu, &frame);
         // The muzzle flashes ride the live barrel (`setMuzzleAnchorResolver`),
@@ -2586,6 +2692,7 @@ impl MapRenderer {
         self.rings
             .prepare(gpu, &frame, self.held_rings.iter().chain(self.liquid.rings()));
         self.teleport_renderer.prepare(gpu, &frame, &self.teleports);
+        self.map_particles.prepare(gpu, &frame, self.item_time * 1000.0);
         self.damage_number_renderer.prepare(gpu, &frame, &self.damage_numbers);
         if let Some(cartoon) = &mut self.cartoon_hit_renderer {
             cartoon.prepare(gpu, &frame, &self.cartoon_hits);
@@ -2593,7 +2700,7 @@ impl MapRenderer {
         if let Some(water) = &mut self.water {
             water.update(self.item_time - self.water_time);
             self.water_time = self.item_time;
-            let settings = shagger::core::cvar::with_cvars(|c| WaterSettings {
+            let settings = with_cvars(|c| WaterSettings {
                 quality: c.get_number("r_water_quality"),
                 debug: c.get_number("r_water_debug"),
                 highlights: c.get_number("r_water_highlights"),
@@ -2603,13 +2710,9 @@ impl MapRenderer {
                 detail: c.get_number("r_water_detail"),
                 contact: c.get_number("r_water_contact"),
             });
-            let actors_on = shagger::core::cvar::with_cvars(|c| c.get_number("r_water_actors") != 0.0);
-            let actors: Vec<ReflectionActor> = self
-                .static_actors
-                .iter()
-                .chain(&self.live_actors)
-                .map(|(a, _)| *a)
-                .collect();
+            let mut actors = std::mem::take(&mut self.frame_actors);
+            actors.clear();
+            actors.extend(self.static_actors.iter().chain(&self.live_actors).map(|(a, _)| *a));
             let visible = if self.cull { self.culling.visible() } else { &[] };
             water.prepare(
                 gpu,
@@ -2619,8 +2722,9 @@ impl MapRenderer {
                 uniforms,
                 visible,
                 &actors,
-                actors_on,
+                cvars.water_actors,
             );
+            self.frame_actors = actors;
             self.actor_draws.clear();
             let reflection = water.actor_reflection();
             if let Some((view_proj, eye)) = reflection.view() {
@@ -2637,7 +2741,7 @@ impl MapRenderer {
             }
         }
         if let Some(view_model) = &mut self.view_model {
-            view_model.dynamic_lights = self.dynamic_lights && with_cvars(|c| render_toggle(c, "r_dynamiclight"));
+            view_model.dynamic_lights = dynamic;
             view_model.prepare(gpu, camera, aspect);
         }
     }
@@ -2645,6 +2749,9 @@ impl MapRenderer {
     /// Records the first-person weapon, in a pass after [`Self::draw`]'s
     /// with the depth cleared.
     pub fn draw_overlay(&self, pass: &mut wgpu::RenderPass<'_>) {
+        if self.showcase.is_some() {
+            return;
+        }
         if let Some(view_model) = &self.view_model {
             view_model.draw(pass);
         }
@@ -2684,7 +2791,9 @@ impl MapRenderer {
         if let Some(water) = &self.water {
             water.draw(pass, self.world.vertex_buffer(), self.world.index_buffer(), visible);
         }
-        self.world.draw_visible_blended(pass, visible);
+        // The map's blended surfaces (alpha indices 0-999); its additive
+        // ones (1000 and up) come after the effects and the map particles.
+        self.world.draw_visible_alpha_blended(pass, visible);
         // Wall marks lie on the walls, under the shots' effects.
         self.hitscan.wall_marks.draw(pass);
         // The effects' alpha indices (40 to 46) put them before the models'.
@@ -2699,11 +2808,54 @@ impl MapRenderer {
         self.splash.draw(pass);
         self.teleport_renderer.draw(pass);
         self.explosions.draw(pass);
+        // The fog volumes (alpha index 999.25), then `PARTICLE_ALPHA_INDEX`:
+        // between the map's blended and additive surfaces, so additive glass
+        // in front of a puff adds over it.
+        self.fog_volumes.draw(pass, self.world.scene_depth());
+        self.map_particles.draw(pass);
+        self.world.draw_visible_additive(pass, visible);
         self.models.draw_blended(pass);
         self.damage_number_renderer.draw(pass);
         // Rendering group 1: over everything, so last and without depth.
         if let Some(cartoon) = &self.cartoon_hit_renderer {
             cartoon.draw(pass);
+        }
+    }
+}
+
+/// `map.insert(id, value)` without a new key when `id` is already there
+/// (the per-frame maps keep the same players frame after frame): the value
+/// it replaced, if any.
+fn upsert<V>(map: &mut HashMap<String, V>, id: &str, value: V) -> Option<V> {
+    match map.get_mut(id) {
+        Some(slot) => Some(std::mem::replace(slot, value)),
+        None => map.insert(id.to_owned(), value),
+    }
+}
+
+/// The cvars [`MapRenderer::prepare`] reads every frame.
+struct FrameCvars {
+    /// `r_dynamiclight`.
+    dynamic_lights: bool,
+    /// `r_softhalos` (on when unset).
+    soft_halos: bool,
+    /// `r_water_actors`.
+    water_actors: bool,
+    /// `ColorCorrectionPostProcess`'s matrix from its cvars.
+    color_matrix: Option<[f64; 9]>,
+}
+
+impl FrameCvars {
+    fn read(c: &shagger::core::cvar::Cvars) -> Self {
+        Self {
+            dynamic_lights: render_toggle(c, "r_dynamiclight"),
+            soft_halos: c.get("r_softhalos").is_none() || c.get_number("r_softhalos") != 0.0,
+            water_actors: c.get_number("r_water_actors") != 0.0,
+            color_matrix: active_color_matrix(
+                c.get_number("r_colorcorrection"),
+                c.get_number("r_colorcorrection_strength"),
+                c.get_number("r_colorsimulation"),
+            ),
         }
     }
 }
@@ -2799,9 +2951,12 @@ fn claim_liquid_surfaces(
 /// scene draws into an HDR target; image processing writes `output_format`.
 pub fn build_renderer(gpu: &Gpu, map: &mut LoadedMap, output_format: wgpu::TextureFormat) -> MapRenderer {
     let format = HDR_FORMAT;
-    let mut geometry = build_world_geometry(&map.bsp, |name, options| {
-        map.shaders.resolve_material_passes(&map.pk3, name, options)
-    });
+    // A fog brush's faces are drawn by its fog volume, not as surfaces.
+    let mut geometry = build_world_geometry_with(
+        &map.bsp,
+        |name, options| map.shaders.resolve_material_passes(&map.pk3, name, options),
+        |name| map.shaders.get_shader(name).is_some_and(|s| s.fog_parms.is_some()),
+    );
     // `loadTextures`' glow overlay ShaderMaterial (light fixtures).
     geometry.find_glow_overlays(|name| map.shaders.get_shader(name));
     // Authored cubemaps (`surroundmap`/`cubemap`), as `loadTextures` loads
@@ -3272,6 +3427,19 @@ pub fn build_renderer(gpu: &Gpu, map: &mut LoadedMap, output_format: wgpu::Textu
     let damage_font = shagger::ui::font::Font::from_bytes(include_bytes!("../assets/fonts/Rajdhani-Bold.ttf").to_vec())
         .expect("the client ships Rajdhani");
     let cartoon_hit_renderer = CartoonHitRenderer::load(gpu, format, &mut map.pk3);
+    let fog_volumes = FogVolumes::new(
+        gpu,
+        format,
+        renderer.scene_depth_layout(),
+        fog_volumes_from(&map.bsp, &map.shaders),
+    );
+    if !fog_volumes.is_empty() {
+        println!("fog volumes: {}", fog_volumes.len());
+    }
+    let map_particles = MapParticles::load(gpu, format, &map.bsp.entities, &map.shaders, &mut map.pk3, 0.0);
+    if map_particles.emitter_count() > 0 {
+        println!("misc_particles: {} emitters", map_particles.emitter_count());
+    }
     let mut damage_numbers = DamageNumbers::new();
     let mut cartoon_hits = CartoonHitEffect::new(
         cartoon_hit_renderer
@@ -3313,6 +3481,8 @@ pub fn build_renderer(gpu: &Gpu, map: &mut LoadedMap, output_format: wgpu::Textu
         live_actors: Vec::new(),
         static_actors,
         actor_draws: Vec::new(),
+        frame_lights: Vec::new(),
+        frame_actors: Vec::new(),
         live_projectile_models,
         live_projectile_lights: HashMap::new(),
         projectile_seen: HashMap::new(),
@@ -3337,10 +3507,13 @@ pub fn build_renderer(gpu: &Gpu, map: &mut LoadedMap, output_format: wgpu::Textu
         held_rings: Vec::new(),
         teleports,
         teleport_renderer,
+        map_particles,
+        fog_volumes,
         teleport_last: HashMap::new(),
         gibs: GibSystem::default(),
         gib_renderer,
         brush_models,
+        lifts: LiftSystem::new(extract_lifts(&map.bsp.entities, &map.bsp.models, None)),
         applied_disabled: None,
         bomb_sites: BombSiteMarkers::default(),
         bomb_debris: BombSiteDebris::default(),
@@ -3357,7 +3530,8 @@ pub fn build_renderer(gpu: &Gpu, map: &mut LoadedMap, output_format: wgpu::Textu
         ragdoll_trails: RagdollTrails::default(),
         slash_trails: SlashTrailRenderer::default(),
         hand_weapons,
-        live_weapons: HashMap::new(),
+        showcase: None,
+        live_weapons: Arc::default(),
         live_models: HashMap::new(),
         ragdolled: HashSet::new(),
         departed: HashMap::new(),
@@ -3617,7 +3791,7 @@ pub fn start_prepared(o: &ViewOptions, prepared: Prepared) -> Result<i32, String
     map.rings.clone_from(&o.rings);
     map.ragdolls.clone_from(&o.ragdolls);
     map.weapon.clone_from(&o.weapon);
-    map.remote_players = feed.is_some();
+    map.remote_players = feed.is_some() || o.showcase.is_some();
     // The highlight reel: analyzed and cut before the first frame, its
     // ground probe against the map's brushes.
     let mut reel = match (&mut feed, o.reel) {
@@ -3672,8 +3846,15 @@ pub fn start_prepared(o: &ViewOptions, prepared: Prepared) -> Result<i32, String
     // Shader animation as it stands `--time` seconds after the map loads.
     renderer.world.animate(&gpu, o.time);
     // The rotators as they have turned by then; the lifts at rest.
-    renderer.world.move_movers(&gpu, o.time, |_| None);
+    renderer.world.move_movers(&gpu, o.time, |_| None, |_| None);
     renderer.item_time = o.time;
+    // The map's particles as they have flowed by then, at 60 frames a second.
+    for step in 0..=(o.time * 60.0).round() as usize {
+        renderer.map_particles.advance(
+            camera.position.as_dvec3(),
+            (step as f64 * 1000.0 / 60.0).min(o.time * 1000.0),
+        );
+    }
     let mut hud: Option<FpsHud> = None;
     let mut overlay = crate::reel_overlay::ReelOverlay::default();
     // Whom a demo's transport bar says the view follows.
@@ -3788,13 +3969,9 @@ pub fn start_prepared(o: &ViewOptions, prepared: Prepared) -> Result<i32, String
             let eyes = reel
                 .as_ref()
                 .and_then(|r| apply_reel_camera(&mut camera, r, &players, base_fov));
-            let drawn: Vec<_> = players
-                .iter()
-                .filter(|(id, _, _)| Some(id) != eyes.as_ref())
-                .cloned()
-                .collect();
             renderer.set_live_weapons(&view.weapons);
-            renderer.set_live_players(&drawn, 1.0 / 60.0, 1.0 / 60.0);
+            let hidden: Vec<&str> = eyes.as_deref().into_iter().collect();
+            renderer.set_live_players(&players, &hidden, 1.0 / 60.0, 1.0 / 60.0);
             renderer.set_live_projectiles(&projectiles, 1.0 / 60.0, &camera);
             renderer.play_effects(&view.effects, &view.weapons, 1.0 / 60.0, &camera);
             renderer.dropped_weapons.use_server_transforms = matches!(feed, Feed::Demo(_));
@@ -3956,6 +4133,20 @@ pub fn start_prepared(o: &ViewOptions, prepared: Prepared) -> Result<i32, String
     if let (Some(age), Some(weapon)) = (o.fire, renderer.view_model.as_ref().map(|v| v.view.weapon.clone())) {
         fire_view_shot(&mut renderer, &camera, &weapon, age, o.aim);
     }
+    if let Some(weapon) = &o.showcase {
+        use washoi::client::player_model_visual_settings::{PlayerTeamSlot, get_player_model_visual_style};
+        let style = get_player_model_visual_style(PlayerTeamSlot::Enemy, MODEL_SCALE);
+        let weapon = (weapon != "none").then(|| weapon.clone());
+        let aspect = f64::from(o.width) / f64::from(o.height.max(1));
+        renderer.start_showcase("police", style, weapon, &camera, aspect);
+        if let Some(showcase) = &mut renderer.showcase {
+            for _ in 0..90 {
+                showcase.advance(1.0 / 60.0);
+            }
+            showcase.frame(&mut camera);
+        }
+        renderer.play_showcase(0.0);
+    }
     // One long step: a still is fully under or fully dry.
     renderer.update_underwater(&mut camera, 1.0);
     renderer.prepare(&gpu, &camera, [o.width as f32, o.height as f32]);
@@ -4020,7 +4211,10 @@ pub fn start_prepared(o: &ViewOptions, prepared: Prepared) -> Result<i32, String
         }
         // A whole demo: its transport bar, as it stands on a pause.
         (None, Some(Feed::Demo(demo))) => {
-            let bar = crate::demo_overlay::DemoOverlay::new(demo);
+            let mut bar = crate::demo_overlay::DemoOverlay::new(demo);
+            // An ended demo shows its end card with the fade done.
+            bar.present_ends(demo, || crate::window::demo_final(hud.as_ref().map(|h| &h.state)));
+            bar.update(1.0, true);
             let name = followed.as_deref().map(|id| {
                 demo.roster()
                     .iter()
@@ -4029,10 +4223,21 @@ pub fn start_prepared(o: &ViewOptions, prepared: Prepared) -> Result<i32, String
             });
             let who = followed.as_deref().zip(name);
             composite_ui(&gpu, &mut pixels, o.width, o.height, |ctx| {
+                bar.ends_ui(ctx, demo);
                 bar.ui(ctx, demo, who);
             });
         }
         _ => {}
+    }
+    if let Some(weapon) = &o.loadout {
+        let picker = std::cell::RefCell::new(loadout_picker::LoadoutPicker::default());
+        picker.borrow_mut().open("Free For All", None, Some("respawn"), false);
+        if !weapon.is_empty() {
+            picker.borrow_mut().focus(weapon);
+        }
+        composite_ui(&gpu, &mut pixels, o.width, o.height, |ctx| {
+            picker.borrow_mut().ui(ctx);
+        });
     }
     match image::save_buffer(path, &pixels, o.width, o.height, image::ExtendedColorType::Rgba8) {
         Ok(()) => {

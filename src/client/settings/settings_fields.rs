@@ -151,6 +151,8 @@ pub fn mesh_polygon(points: &[Pos2], stops: &[(f32, Color32)]) -> Shape {
     for i in 1..points.len().saturating_sub(1) {
         mesh.add_triangle(0, i as u32, i as u32 + 1);
     }
+    // One physical pixel at the usual scale; the shape has no painter here.
+    shagger::ui::components::lobby_twin::feather_convex(&mut mesh, points, |p| at(p.y), 1.0);
     Shape::mesh(mesh)
 }
 

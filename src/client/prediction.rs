@@ -48,7 +48,7 @@ fn lift_phase(name: &str) -> LiftPhase {
 }
 
 /// A `lift_state` event's lifts as the simulation holds them.
-fn sim_lifts(lifts: &[snapshot_events::LiftState]) -> Vec<LiftState> {
+pub fn sim_lifts(lifts: &[snapshot_events::LiftState]) -> Vec<LiftState> {
     lifts
         .iter()
         .map(|l| LiftState {

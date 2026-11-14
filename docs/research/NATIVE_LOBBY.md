@@ -136,8 +136,10 @@ tests, and can ship.
    Keys are captured from egui's events under the browser's code names.
    The Controller page reads the pads itself while shown; the browser's
    Use controller keys are left out, since the native device follows the
-   last input. Each side's 3D figure on Gameplay is its name in the side's
-   outline for now. `washoi menu ... --page settings/video/effects` opens a
+   last input. Each side's figure on Gameplay is the side's model in its
+   colour and outline, idle and swaying (`player_team_preview.rs`, on a
+   shagger `ModelStage`); the model's name in the outline stands in until
+   it loads. `washoi menu ... --page settings/video/effects` opens a
    page for screenshots. Settings sync was already native (step 1). With
    `ui_lobby native` the in-match Settings key draws the same view over
    the match (`fps_settings_view::over_match`), with Video locked as in

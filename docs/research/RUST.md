@@ -1914,6 +1914,22 @@ first native milestones. KTX2 adds a C++ dependency (the Basis transcoder) for
 memory and load-time savings that only matter later. Mark the KTX2 path behind
 the same `r_ktx2` cvar, defaulting to 0 natively until it is measured.
 
+**Decided November 14, 2026: BC7 on the GPU at load.** washoi_dm5 uploaded
+665 MiB of RGBA8 textures. shagger's `rendering::texture_compression`
+compresses every map and model texture whose sides are whole 4×4 blocks to
+BC7 as it uploads, with `block_compression` (Intel's ISPC compressor as WGSL
+compute shaders: pure Rust, MIT, built on wgpu 30). BC is sampled by every
+desktop GPU wgpu runs on, Apple silicon and Intel Macs included; ASTC and
+ETC2 are not, so they are not used. Without the BC feature, on a software
+renderer (llvmpipe decodes BC7 on every sample: dm5 drew at 0.4 frames a
+second instead of 5.4), or with `r_texture_compression 0` (native only;
+default 1, and 2 forces it on a software renderer), textures upload as RGBA8
+as before. Forced on llvmpipe, dm5's peak memory fell from 2.86 GB to
+2.38 GB and a frame differed from the RGBA8 one by 52 dB PSNR. A CPU encoder (`intel_tex_2`) was tried first: it needs C++ and
+ran at 2.5 Mpixel/s, about 20 s more on dm5's load. BC7 is lossy, so the
+picture differs from the browser's by the compression error. KTX2 stays
+unshipped (20.9).
+
 ### 20.7 Models and sounds
 
 - **glTF:** the player, weapons and effects. shagger's
@@ -2715,6 +2731,170 @@ whole areas rather than single items. 0.2.0 closes them in two steps.
 
 ## 24. Progress log
 
+### 0.6.0 (November 14, 2026)
+
+**Version 0.6.0**, a minor step: two rounds of frame cost and memory fixes,
+BC7 textures (`r_texture_compression`), demo playback's opening and end
+cards with Q and E to switch players, and Add bot's skill menu. The entries
+below, from "Frame cost and memory, second pass" up, are what it adds over
+0.5.0.
+
+### Staging catch-up: Add bot's skill (November 14, 2026)
+
+Ported from SHAG staging (4c4e98c, fps 3587df3): the room's Add bot key has
+an arrow joined to it, as one split key, that opens Easy, Medium, Hard and
+Insane above it; the pick goes out as `lobby:invite_bot`'s `difficulty`.
+Add bot alone still leaves the skill to the server. A press elsewhere or
+Esc closes the menu, and the arrow is disabled whenever Add bot is (shagger
+`match_lobby_view`).
+
+### BC7 textures (November 14, 2026)
+
+Map and model textures compress to BC7 on the GPU as they upload (20.6,
+shagger `rendering::texture_compression`, `r_texture_compression`). On a
+GPU this cuts their memory to a quarter; software renderers keep RGBA8.
+
+### Staging catch-up: demo playback's ends and keys (November 14, 2026)
+
+Ported from SHAG and wash-fps staging (fps 95f6d31):
+
+- **Demo keys.** Q and E move to the previous or next player's eyes (they
+  were Tab and Shift+Tab); holding Tab shows the scoreboard over a demo, as
+  in a match, with the followed player's row marked as ours.
+- **A demo's two ends.** `reel_cards` has `EndCard`, `reel_end_card` and
+  `demo_end_card` (`ReelCards.ts`), tested with the TypeScript's cases. A
+  demo opens with the players' names over its first three seconds, and at
+  its last frame fades to black over a second under its end card (the
+  winner from the final scores, the top fragger in team matches, the frags
+  and the length) with Replay and Exit. A screenshot of an ended demo shows
+  the card with the fade done.
+- **`PK3Loader.listFiles`.** Only `*` and `?` are wildcards; a `.` no
+  longer matches any character.
+- Nothing native for the rest: the wire and demo formats are unchanged, the
+  frag counter already showed the followed player, the fog-brush check was
+  already once per texture, and the bot, lobby, `%L` and web-only
+  performance changes have no native side.
+
+### Frame cost and memory, second pass (November 14, 2026)
+
+Guided by a callgrind profile of a washoi_dm5 demo (eight bots). No
+behaviour changes; frames of the demo render pixel for pixel as before.
+
+- shagger: an audio device that fails to open is looked for again on a
+  probe thread, not in the frame; the world's material uniforms share
+  one slab of 256-byte slots (one upload per dirty 64-slot chunk); the
+  2D HUD writes its vertices and indices as one buffer; fonts cache ASCII
+  glyph ids and unscaled advances; the input system and cvar lookups no
+  longer allocate per frame.
+- Textures: the world decodes and uploads each image file once, however
+  many candidate lists end at it, and a `ModelRenderer` keeps one texture
+  per distinct encoded image (bots sharing a model, a pickup and its hand
+  weapon). washoi_dm5 uploads 665 MiB of textures instead of 924 MiB;
+  peak RSS on llvmpipe falls from 3.39 GB to 2.86 GB.
+- Left: renderers that mirror SHAG's separate Babylon engines (the
+  weapon view, `ModelStage` previews) still keep their own copies of the
+  weapon textures.
+- wash-fps-rust: `set_live_players` takes the hidden ids instead of a
+  filtered copy of every player.
+
+### Frame cost and code quality pass (November 14, 2026)
+
+A pass over the per-frame paths for allocations, repeated work and
+redundant uploads, plus some code quality. No behaviour changes; the
+tests and golden vectors stand as they were.
+
+- shagger: model draws no longer allocate their pipeline keys, the joint
+  palette uploads without a copy, movers upload only when their matrix
+  changes, empty effect batches skip their upload, wall marks, trails
+  and `update_vertices` reuse their buffers, the snapshot buffer is a
+  `VecDeque`, map particles retire in one pass.
+- New `shagger_shared::math_random::MathRandom` (xorshift64*): the one
+  stand-in for `Math.random` where nothing depends on the numbers
+  (shuffles, cosmetic spins, jitter). It replaces the generators written
+  out in each module, the clock-seeded picks and the `RandomState` hash
+  trick, with the same sequences where they were seeded.
+- wash-fps-rust: a frame's view shares the feed's maps (`Arc`) instead of
+  copying four of them; `MapRenderer::prepare` reads its cvars and the
+  camera matrices once; the per-frame player and projectile maps keep
+  their keys and look ids up in a set; the window title is not read back
+  from the window (an X11 round trip each frame).
+
+### Staging catch-up: taunts, victory clips, buttons, map particles (November 13, 2026)
+
+Ported from SHAG and wash-fps staging (beta.12):
+
+- **Rating policy v2.** `leaderboard_view::POLICY_VERSION` is
+  `shag-trueskill-v2`, so the boards accept the lobby's new policy.
+- **Taunts.** shagger's `PlayerModelManager` plays `taunt_1`..`taunt_3` as
+  upper-body one-shots beside the blade swing (`active_one_shot` names the
+  playing one), and `VICTORY_ANIMS` holds the six post-game clips, from
+  which `post_game_showcase::pick_victory_clip` draws among the loaded ones.
+  `client/kill_taunt.rs` (`KillTaunt.ts`) picks a killer's taunt from a hash
+  of the death event, so every viewer and demo replay agrees; its test holds
+  V8's choices for forty kills. `RemotePlayerRenderer` plays it once no
+  swing is playing, and a weapon switch, aiming, firing or running ends it.
+- **`func_button`.** shagger's `LiftSystem` (`LiftSystem.ts`) reads buttons:
+  one with health fires only when shot or caught in a blast (`strike`), as
+  in Warsow; one without fires on touch. Buttons are drawn, solid
+  (`SweepCollisionBackend` traces them where they are pressed to) and press
+  in by `button_offset`, which comes from the callers' cooldowns already in
+  `lift_state`, so nothing changed on the wire. The renderer keeps a
+  `LiftSystem` from the map and restores it from the feed each frame (in
+  play, from the predicted one). The `strike` calls are the TypeScript
+  server's; the native client only draws the result. Not ported: the
+  button's press sound (native movers have no sounds yet).
+- **`misc_particles`.** shagger's `loader/bsp/map_particles.rs`
+  (`MapParticles.ts`): the emitters' plans, Warsow's sprite fade and growth,
+  seeded sprites (V8's seed and first draws in its test), and one
+  `EffectQuadBatch` per shader, drawn with the blended effects. A still
+  `washoi view` runs the emitters up to `--time`.
+- **Follow-ups (SHAG b2d141d2, df69754c).** The world's additive passes
+  draw after its other blended ones, as `BspMeshBuilder`'s alpha indices
+  put them, and the map particles go between (`PARTICLE_ALPHA_INDEX`,
+  after the shots' effects). View weapon outlines are divided by each
+  mesh's own scale (`outline_units`), so the Arc Blade's draw at full
+  width, and its charge outline grows from 0.15 to 0.6.
+- **Fog volumes (SHAG d0c3d3c7).** shagger's `loader/bsp/fog_volumes.rs`
+  (`FogVolumes.ts`) fogs what lies inside each `fogparms` brush with
+  qfusion's density. Each brush's hull draws once without a depth test,
+  its far side kept by the face normal in the fragment (the browser culls
+  by winding), and reads the world renderer's scene depth copy, which soft
+  particles share; `set_scene_depth_reader` copies it without fading soft
+  surfaces. They draw after the map's blended surfaces and before the map
+  particles. `fogparms` reads qfusion's clear distance, the BSP's effect
+  lump names the fog's visible side, and `build_world_geometry_with`
+  leaves the fog brushes' faces out. Snd6 is the shipped map with fog.
+- **New maps.** DM16, DM17, DM18 and Amphi3 need nothing native: the
+  pools, names and material aliases come from the lobby and the packages,
+  and `CREDITS.md` follows wash-fps main (`tools/sync_docs.sh`).
+
+### Model previews (November 13, 2026)
+
+The native client now draws the browser's three model previews. Two are UI:
+the loadout picker's turning weapon (`client/hud/widgets/weapon_preview.rs`,
+`WeaponPreview.ts`) and the Gameplay page's team figures, each side's body
+in its colour and outline, idle and swaying
+(`client/settings/player_team_preview.rs`, `PlayerTeamPreview.ts`). Both run
+on shagger's `rendering/model_stage.rs`: a small scene with its own
+`ModelRenderer`, HDR target and image processing, drawn into an
+`Rgba8Unorm` texture that egui shows, at twice the panel's pixels. The UI
+asks for a frame with `egui_layer::queue_gpu_job`, which `EguiLayer::paint`
+runs before egui draws. The models are read from the packages on first use
+(`client/preview_packages.rs`, through `ingest_pk3_dir_holding`). The stand's
+glow is cyan, as the browser's.
+
+The third is the post-game winner (`client/post_game_showcase.rs`,
+`PostGameShowcase.ts`), in the match's scene: when the phase turns to
+PostGame, a copy of the winner's body in their colour (no outline), holding
+the weapon they last held, dancing when the packages have the dance clips,
+stands at a clear spot traced from the frozen camera, and a diorama camera
+in front of it frames it in the left third beside the result board. The
+view model is not drawn meanwhile, and the look the camera had comes back
+with the next phase. The model's own light from in front and above
+(`includedOnlyMeshes`) is shagger's new `ModelDraw::key_light`, a
+hemispheric light per draw. `washoi view <map> --showcase WEAPON
+--screenshot F` shows it in front of the view.
+
 ### 0.5.0: web lobby removed (November 13, 2026)
 
 The native lobby is now the only lobby ([NATIVE_LOBBY.md](NATIVE_LOBBY.md)
@@ -2843,7 +3023,8 @@ crate, as `SettingsFields.ts` is the game's.
   (`client/hud/widgets/loadout_picker.rs`, `LoadoutPicker.ts`); the Esc
   menu has the mode's Loadout key under Resume, and the kit chosen in a
   mode is remembered in `loadouts.json`. The stand shows the weapon's slot
-  colour and initials: `WeaponPreview`'s turning model is not ported. The
+  colour and initials: `WeaponPreview`'s turning model is not ported (it is
+  since November 13, 2026, see the progress log). The
   trigger on a launcher (`hipfireBlocked`: GL, RL) now raises the sights
   on screen as well as for the server. On Linux the lobby page no longer
   comes up blank on NVIDIA's driver: when `/proc/driver/nvidia/version`

@@ -7,8 +7,11 @@
 //!   , / .        one frame back or on, paused
 //!   ↑ / ↓        faster or slower
 //!   P / N        the previous or next frag
-//!   Tab          the next player's eyes (Shift+Tab the previous)
+//!   Q / E        the previous or next player's eyes
 //!   1 – 9        that player's eyes, in the player list's order
+//!
+//! Esc (leave), H (hide the overlays) and Tab (hold for the scoreboard) are
+//! handled by their owners.
 //!
 //! Keys are DOM `code` names (`shagger::input::key_codes::dom_code`).
 
@@ -83,11 +86,8 @@ pub fn demo_key_action(code: &str, modifiers: Modifiers, context: DemoKeyContext
         "ArrowDown" => return Some(DemoKeyAction::Speed { step: -1 }),
         "KeyN" => return Some(DemoKeyAction::Frag { step: 1 }),
         "KeyP" => return Some(DemoKeyAction::Frag { step: -1 }),
-        "Tab" => {
-            return Some(DemoKeyAction::Player {
-                step: if modifiers.shift { -1 } else { 1 },
-            });
-        }
+        "KeyQ" => return Some(DemoKeyAction::Player { step: -1 }),
+        "KeyE" => return Some(DemoKeyAction::Player { step: 1 }),
         _ => {}
     }
     let digit = code.strip_prefix("Digit")?.parse::<usize>().ok()?;
@@ -129,14 +129,10 @@ mod tests {
         assert_eq!(key("KeyP"), Some(DemoKeyAction::Frag { step: -1 }));
         assert_eq!(key("Digit3"), Some(DemoKeyAction::PlayerAt { index: 2 }));
         assert_eq!(key("Digit0"), None);
-        let shift = Modifiers {
-            shift: true,
-            ..Modifiers::default()
-        };
-        assert_eq!(
-            demo_key_action("Tab", shift, DemoKeyContext::default()),
-            Some(DemoKeyAction::Player { step: -1 })
-        );
+        assert_eq!(key("KeyE"), Some(DemoKeyAction::Player { step: 1 }));
+        assert_eq!(key("KeyQ"), Some(DemoKeyAction::Player { step: -1 }));
+        // Tab is held for the scoreboard, which the playback owns.
+        assert_eq!(key("Tab"), None);
         let ctrl = Modifiers {
             ctrl: true,
             ..Modifiers::default()

@@ -304,6 +304,13 @@ impl DemoPlayback {
 
     /// Advances the demo clock by `dt` seconds, delivers the frames recorded
     /// by then, and samples every player and projectile in the newest one.
+    /// The newest snapshot's lifts, whose callers' cooldowns press the
+    /// buttons in.
+    #[must_use]
+    pub fn lift_states(&self) -> &[shagger::shared::bsp::lift_system::LiftState] {
+        &self.feed.lift_states
+    }
+
     /// A lift's travel by its model index, as the newest snapshot says.
     #[must_use]
     pub fn lift_travel(&self, model_index: usize) -> Option<f64> {

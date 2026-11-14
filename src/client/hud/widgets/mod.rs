@@ -25,4 +25,5 @@ pub mod spectator_cue;
 pub mod speedometer;
 pub mod timer;
 pub mod vitals_block;
+pub mod weapon_preview;
 pub mod weapon_slots;

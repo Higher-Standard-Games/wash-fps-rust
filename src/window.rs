@@ -80,7 +80,9 @@ use washoi::client::hud::widgets::loadout_picker::{self, LoadoutOutcome, Loadout
 use washoi::client::hud::widgets::pause_menu::{PauseMenu, PauseMenuAction};
 use washoi::client::hud::widgets::pickup_prompt::{asks_to_swap, swap_text};
 use washoi::client::hud::widgets::spectator_cue::pad_bindings;
+use washoi::client::match_state_manager::MatchPhase;
 use washoi::client::move_stick::{MoveAxis, stick_direction, stick_keys};
+use washoi::client::remote_player_logic::CLIENT_KEY_PREFIX;
 use washoi::client::settings::controller_model::controller_buttons;
 use washoi::client::spectate_view::{DeathCameraCue, SpectateView};
 use washoi::client::teleport_effect::TeamColor;
@@ -108,6 +110,9 @@ struct Surface {
     hud: Option<FpsHud>,
     /// The console's drawing.
     egui: EguiLayer,
+    /// The title last given the window: asking the window for its own is a
+    /// round trip to the X server on Linux, so it is never asked.
+    title: Option<String>,
 }
 
 struct App {
@@ -160,6 +165,10 @@ struct App {
     demo_discontinuity: u64,
     /// The view after our own death, and what it follows (`DeathCamera`).
     death_camera: DeathCamera,
+    /// The match phase last seen, for the post-game showcase
+    /// (`watchMatchPhase`), and the look the showcase's camera took over.
+    showcase_phase: Option<MatchPhase>,
+    showcase_look: Option<(f32, f32)>,
     /// The first-person camera's motion on top of the mouse, in play.
     first_person: FirstPersonView,
     /// The viewed player's weapon was reloading in the last weapon state.
@@ -261,6 +270,7 @@ impl App {
             renderer,
             hud,
             egui,
+            title: None,
         });
         Ok(())
     }
@@ -780,9 +790,19 @@ impl App {
         s.renderer.world.animate(&s.gpu, f64::from(dt));
         // The rotators turn and the lifts stand where the lift state says.
         let feed = self.feed.as_ref();
-        s.renderer
-            .world
-            .move_movers(&s.gpu, f64::from(dt), |model| feed.and_then(|f| f.lift_travel(model)));
+        if let Some(f) = feed {
+            s.renderer.lifts.restore(&f.lift_states());
+        }
+        let lifts = &s.renderer.lifts;
+        s.renderer.world.move_movers(
+            &s.gpu,
+            f64::from(dt),
+            |model| feed.and_then(|f| f.lift_travel(model)),
+            |model| {
+                let o = lifts.button_offset(model);
+                (o.x != 0.0 || o.y != 0.0 || o.z != 0.0).then_some([o.x, o.y, o.z])
+            },
+        );
         s.renderer.item_time += f64::from(dt);
         if let Some(feed) = &mut self.feed {
             if let (Some(reel), Feed::Demo(demo)) = (&mut self.reel, &mut *feed) {
@@ -885,13 +905,7 @@ impl App {
                             aim: self.aiming,
                             fire: held.fire,
                         };
-                        let (cvars, step_height, smooth_factor) = with_cvars(|c| {
-                            (
-                                ViewCvars::read(c),
-                                movement_var(c, "sv_stepheight"),
-                                movement_var(c, "cl_smoothfactor"),
-                            )
-                        });
+                        let (cvars, step_height, smooth_factor) = view_cvars();
                         self.view_offset = Some(self.first_person.update(
                             f64::from(dt),
                             &body,
@@ -903,7 +917,6 @@ impl App {
                         self.on_ladder = m.on_ladder;
                         // `FPSHintPanel.moved`: the coach sees each step.
                         if let Some(hud) = &mut s.hud {
-                            let weapon = hud.state.current_weapon.clone();
                             hud.hints.moved(
                                 &MovementSample {
                                     grounded: body.grounded,
@@ -915,7 +928,7 @@ impl App {
                                     forward: held.forward,
                                     strafing: held.left || held.right,
                                 },
-                                &weapon,
+                                &hud.state.current_weapon,
                             );
                         }
                         // `Game`'s own trail, from where we are drawn.
@@ -991,6 +1004,46 @@ impl App {
             };
             s.renderer.set_local_style(local_style);
             s.renderer.live_models = models;
+            // `watchMatchPhase`: the winner on show through the post-game,
+            // gone with the next phase.
+            let phase = feed.match_state().phase();
+            if self.showcase_phase != Some(phase) {
+                self.showcase_phase = Some(phase);
+                if s.renderer.showcase.take().is_some()
+                    && let Some((yaw, pitch)) = self.showcase_look.take()
+                {
+                    (self.camera.yaw, self.camera.pitch) = (yaw, pitch);
+                }
+                let winner = (phase == MatchPhase::PostGame)
+                    .then(|| feed.match_state().resolve_winner_player_id())
+                    .flatten()
+                    .and_then(|id| {
+                        let key = format!("{CLIENT_KEY_PREFIX}{id}");
+                        feed.roster()
+                            .iter()
+                            .find(|(k, _)| *k == key)
+                            .map(|(_, p)| p.entity_id.clone())
+                    });
+                if let Some(entity) = winner {
+                    // Our own gun is the one on screen; anyone else's the
+                    // last seen in their hand.
+                    let weapon = if feed.local_entity() == Some(entity.as_str()) {
+                        s.renderer.view_model.as_ref().map(|v| v.view.weapon.clone())
+                    } else {
+                        None
+                    }
+                    .or_else(|| view.weapons.get(&entity).cloned());
+                    let style = self.appearance.style(
+                        &entity,
+                        &appearance_view,
+                        washoi::client::remote_player_renderer::MODEL_SCALE,
+                    );
+                    let aspect = f64::from(s.config.width) / f64::from(s.config.height.max(1));
+                    s.renderer
+                        .start_showcase(appearance_view.model_for(&entity), style, weapon, &self.camera, aspect);
+                    self.showcase_look = Some((self.camera.yaw, self.camera.pitch));
+                }
+            }
             let base_fov = self.camera.fov_y;
             let eyes = self.reel.as_ref().and_then(|r| {
                 self.follow = None;
@@ -1070,13 +1123,7 @@ impl App {
                     let aiming = p.aiming.unwrap_or(false);
                     self.pov.set_aiming(aiming);
                     self.followed_aiming = Some(aiming);
-                    let (cvars, step_height, smooth_factor) = with_cvars(|c| {
-                        (
-                            ViewCvars::read(c),
-                            movement_var(c, "sv_stepheight"),
-                            movement_var(c, "cl_smoothfactor"),
-                        )
-                    });
+                    let (cvars, step_height, smooth_factor) = view_cvars();
                     let pose = self
                         .pov
                         .update(&id, &p, effect_dt, seeked, &cvars, step_height, smooth_factor);
@@ -1117,13 +1164,10 @@ impl App {
                 }
             }
             // Their own model would fill the screen from inside their head.
-            let drawn: Vec<_> = players
-                .iter()
-                .filter(|(id, _, _)| Some(id) != eyes.as_ref() && Some(id) != self.pov_entity.as_ref())
-                .cloned()
-                .collect();
+            let hidden: Vec<&str> = eyes.as_deref().into_iter().chain(self.pov_entity.as_deref()).collect();
             s.renderer.set_live_weapons(&view.weapons);
-            s.renderer.set_live_players(&drawn, f64::from(dt), effect_dt);
+            s.renderer.set_live_players(&players, &hidden, f64::from(dt), effect_dt);
+            s.renderer.play_showcase(f64::from(dt));
             let local = match feed {
                 Feed::Play(..) => feed.local_entity(),
                 _ => None,
@@ -1174,6 +1218,10 @@ impl App {
                     self.camera.yaw = yaw as f32;
                     self.camera.pitch = pitch as f32;
                 }
+            }
+            // The diorama camera frames the post-game's winner.
+            if let Some(showcase) = &s.renderer.showcase {
+                showcase.frame(&mut self.camera);
             }
             // `presentFire` and the reload, for the eyes we look through:
             // the server's shots and weapon state (wash-fps `FPSPlayer`).
@@ -1412,13 +1460,17 @@ impl App {
                 }
                 self.opened_up = offered;
             }
+            if let (Feed::Demo(demo), Some(overlay), None) = (&*feed, &mut self.demo_hud, &self.reel) {
+                overlay.present_ends(demo, || demo_final(s.hud.as_ref().map(|h| &h.state)));
+            }
             self.drawn = players;
             // Hold the last frame; the title says so, until a seek goes back.
             let title = feed
                 .ended()
                 .map_or_else(|| "Washoi".to_owned(), |why| format!("Washoi ({why})"));
-            if title != s.window.title() {
+            if s.title.as_deref() != Some(title.as_str()) {
                 s.window.set_title(&title);
+                s.title = Some(title);
             }
         }
         s.renderer.advance_switch(f64::from(dt));
@@ -1456,7 +1508,10 @@ impl App {
         // The view's motion goes on for drawing and comes off after, so the
         // mouse and the aim never carry it.
         let mouse = (self.camera.pitch, self.camera.yaw);
-        let offset = self.view_offset.take().filter(|_| !self.death_camera.is_active());
+        let offset = self
+            .view_offset
+            .take()
+            .filter(|_| !self.death_camera.is_active() && s.renderer.showcase.is_none());
         if let Some(o) = offset {
             self.camera.pitch += o.pitch as f32;
             self.camera.yaw += o.yaw as f32;
@@ -1605,7 +1660,10 @@ impl App {
                         .find(|(_, p)| p.entity_id == id)
                         .map(|(_, p)| p.name.as_str())
                 });
-                demo_action = hud.ui(ui.ctx(), demo, followed.map(|id| (id, name.unwrap_or(id))));
+                let ends = hud.ends_ui(ui.ctx(), demo);
+                demo_action = hud
+                    .ui(ui.ctx(), demo, followed.map(|id| (id, name.unwrap_or(id))))
+                    .or(ends);
             }
             menu_action = pause_menu.ui(ui.ctx(), &kicker, &player);
             if let Some(view) = native_settings {
@@ -1647,6 +1705,11 @@ impl App {
                 DemoOverlayAction::Seek(progress) => demo.seek_to_progress(progress),
                 DemoOverlayAction::Speed(step) => {
                     demo.step_speed(step);
+                }
+                // A demo starts again from its first frame.
+                DemoOverlayAction::Replay => {
+                    demo.seek_to_frame(0);
+                    demo.play();
                 }
                 DemoOverlayAction::Exit => {
                     println!("demo: back to the lobby");
@@ -2118,6 +2181,18 @@ fn starts_fullscreen() -> bool {
 /// process from inside the loop (Cmd+Q on macOS terminates the app there,
 /// so nothing after the loop runs), the settings still on their way to
 /// disk land first.
+/// The view effects' cvars, the step height and the view smoothing
+/// (`FPSController`'s and `SpectateEyeCamera`'s reads), in one look.
+fn view_cvars() -> (ViewCvars, f64, f64) {
+    with_cvars(|c| {
+        (
+            ViewCvars::read(c),
+            movement_var(c, "sv_stepheight"),
+            movement_var(c, "cl_smoothfactor"),
+        )
+    })
+}
+
 struct Exiting<'a, A> {
     app: &'a mut A,
     /// Send `resumed` with the first events: the pumped loop (macOS) sends
@@ -2446,6 +2521,8 @@ pub fn run(
         free_camera: false,
         demo_discontinuity: 0,
         death_camera: DeathCamera::default(),
+        showcase_phase: None,
+        showcase_look: None,
         first_person: FirstPersonView::default(),
         view_reloading: false,
         beam_wanted: false,
@@ -2525,4 +2602,38 @@ fn name_order(
     let mut ids: Vec<&str> = drawn.iter().map(|(id, _, _)| id.as_str()).collect();
     ids.sort_by(|a, b| locale_compare(&name(a), &name(b)).then(a.cmp(b)));
     ids.into_iter().map(str::to_owned).collect()
+}
+
+/// `presentDemoEnds`' final scores: every player's from the scoreboard, and
+/// each side's where the mode has sides.
+pub(crate) fn demo_final(state: Option<&washoi::client::hud_state::HudState>) -> washoi::client::reel_cards::DemoFinal {
+    use washoi::client::reel_cards::{DemoFinal, Standing};
+    let Some(state) = state else {
+        return DemoFinal::default();
+    };
+    let spectator = |team: &str| team == "spectator";
+    DemoFinal {
+        players: state
+            .scoreboard
+            .iter()
+            .filter(|e| !e.team_id.as_deref().is_some_and(spectator))
+            .map(|e| Standing {
+                name: e.name.clone(),
+                score: e.score,
+            })
+            .collect(),
+        sides: state.team_based.then(|| {
+            state
+                .team_scores
+                .iter()
+                .filter(|(team, _)| !spectator(team))
+                .map(|(team, score)| Standing {
+                    name: state.team_names.get(team).cloned().unwrap_or_else(|| team.clone()),
+                    score: *score,
+                })
+                .collect()
+        }),
+        frags: 0,
+        duration_ms: 0.0,
+    }
 }

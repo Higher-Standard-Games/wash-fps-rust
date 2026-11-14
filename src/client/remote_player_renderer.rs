@@ -21,7 +21,7 @@ use shagger::animation::player_model_assets::{
 };
 use shagger::animation::player_model_fit::{BladeStance, GunSupport};
 use shagger::animation::player_model_manager::{
-    BLADE_STANCE, PlayerModel, PlayerModelInstance, PlayerModelVisualStyle,
+    BLADE_STANCE, PlayerModel, PlayerModelInstance, PlayerModelVisualStyle, TAUNT_ANIMS,
 };
 use shagger::babylon::meshes::vertex_data::babylon_local_matrix;
 use shagger::core::cvar::{CvarOptions, CvarType, Cvars, with_cvars};
@@ -244,6 +244,11 @@ struct RemoteBody {
     weapon_ready_until: f64,
     /// Whether the held blade stands in the stance (`setBladeStance`).
     blade_upright: bool,
+    /// The weapon last held (`currentWeaponId`): a switch ends a taunt.
+    weapon: Option<String>,
+    /// A kill taunt waiting for the blade swing to end, until then on the
+    /// pose clock (`pendingTaunt`).
+    pending_taunt: Option<(&'static str, f64)>,
 }
 
 /// Where a player's held weapon hangs: the weapon hand in the world and
@@ -340,6 +345,12 @@ impl RemotePlayerRenderer {
         self.bodies.iter().position(|b| b.key == choice).unwrap_or(0)
     }
 
+    /// The loaded body a choice draws with ([`Self::body_for`]).
+    #[must_use]
+    pub fn body_by_choice(&self, choice: &str) -> &PlayerBody {
+        &self.bodies[self.body_for(choice)]
+    }
+
     /// The body a player wears now.
     #[must_use]
     pub fn body_of(&self, id: &str) -> Option<&PlayerBody> {
@@ -362,6 +373,8 @@ impl RemotePlayerRenderer {
                 instance,
                 weapon_ready_until: 0.0,
                 blade_upright: false,
+                weapon: None,
+                pending_taunt: None,
             }
         });
         (model, remote)
@@ -405,7 +418,6 @@ impl RemotePlayerRenderer {
     ) {
         let (run_legs, run_upper) = run_rates();
         let (model, remote) = self.ensure(id, choice);
-        let instance = &mut remote.instance;
         // Keep the next locomotion pose current while an attack owns the bones.
         let locomotion = derive_animation(interp);
         let blade = weapon == Some("blade");
@@ -420,6 +432,25 @@ impl RemotePlayerRenderer {
         } else {
             locomotion
         };
+        // `updateWeaponModel`: a switch ends a taunt.
+        if remote.weapon.as_deref() != weapon {
+            remote.weapon = weapon.map(str::to_owned);
+            stop_taunt(&model, remote);
+        }
+        // Aiming down sights, swimming, climbing, a wall jump or a slide
+        // ends a taunt; one waiting on a swing starts once the swing is over.
+        if interp.aiming == Some(true) || NON_AIMING_ANIMATIONS.contains(&locomotion) {
+            stop_taunt(&model, remote);
+        }
+        if let Some((taunt, until)) = remote.pending_taunt
+            && !model.is_one_shot_playing(&remote.instance)
+        {
+            remote.pending_taunt = None;
+            if pose_time < until {
+                model.play_once(&mut remote.instance, taunt, 1.0);
+            }
+        }
+        let instance = &mut remote.instance;
         let aiming = !relaxed && !NON_AIMING_ANIMATIONS.contains(&locomotion);
         model.set_aim_pitch(
             instance,
@@ -451,11 +482,31 @@ impl RemotePlayerRenderer {
         model.advance(instance, dt);
     }
 
-    /// `noteWeaponFire`: keeps the weapon raised briefly after each shot.
+    /// `noteWeaponFire`: keeps the weapon raised briefly after each shot. A
+    /// shot ends a taunt.
     pub fn note_weapon_fire(&mut self, id: &str, pose_time: f64) {
         if let Some(remote) = self.instances.get_mut(id) {
             remote.weapon_ready_until = pose_time + WEAPON_READY_SECONDS;
+            stop_taunt(&self.bodies[remote.body].model, remote);
         }
+    }
+
+    /// `playKillTaunt`: a taunt over the upper body after a kill; the legs
+    /// keep running. A blade swing still playing finishes first, if it ends
+    /// within a second (`pose_time` on the pose clock).
+    pub fn play_kill_taunt(&mut self, id: &str, taunt: &'static str, pose_time: f64) {
+        let Some(remote) = self.instances.get_mut(id) else {
+            return;
+        };
+        let model = &self.bodies[remote.body].model;
+        if model
+            .active_one_shot(&remote.instance)
+            .is_some_and(|playing| !TAUNT_ANIMS.contains(&playing))
+        {
+            remote.pending_taunt = Some((taunt, pose_time + 1.0));
+            return;
+        }
+        model.play_once(&mut remote.instance, taunt, 1.0);
     }
 
     /// `playAttackAnim`: a one-shot attack (the blade's swing) on a player.
@@ -517,17 +568,12 @@ impl RemotePlayerRenderer {
     pub fn hand_world(&self, id: &str, interp: &InterpolatedEntity) -> Option<HeldFrame> {
         let remote = self.instances.get(id)?;
         let model = &self.bodies[remote.body].model;
-        let skeleton = &model.model.skeleton;
-        let hand = skeleton.find(RIGHT_HAND)?;
-        let globals = skeleton.global_matrices(&remote.instance.locals);
-        let bone = body_matrix(interp, model) * *globals.get(hand)?;
-        let basis = model.hand_basis;
-        Some(HeldFrame {
-            hand: basis.map_or(bone, |b| bone * b.matrix()),
-            model_scale: MODEL_SCALE * model.scale_factor(),
-            gun_support: basis.and(model.gun_support),
-            blade_stance: basis.and(model.blade_stance).filter(|_| remote.blade_upright),
-        })
+        held_frame(
+            model,
+            &remote.instance,
+            body_matrix(interp, model),
+            remote.blade_upright,
+        )
     }
 
     /// `getBoneAnchor`: where a bone of a player's body is in the world
@@ -557,26 +603,73 @@ impl RemotePlayerRenderer {
         };
         let body = &self.bodies[remote.body];
         let world = body_matrix(interp, &body.model);
-        // `applyVisualStyle`: the outline is in world units, the mesh scaled by its fit.
-        let outline_width = style.outline_width / body.model.scale_factor();
-        let mut palettes: HashMap<usize, u32> = HashMap::new();
-        for (index, primitive) in body.model.model.primitives.iter().enumerate() {
-            let Some(skin) = &primitive.skin else { continue };
-            let offset = *palettes.entry(skin.skin).or_insert_with(|| {
-                let at = joints.len() as u32;
-                joints.extend(body.model.joint_matrices(&remote.instance, skin.skin));
-                at
-            });
-            draws.push(ModelDraw {
-                tint: style.tint_color,
-                skin: Some(offset),
-                outline: style.outline_enabled.then_some(Outline {
-                    color: style.outline_color,
-                    width: outline_width,
-                }),
-                ..ModelDraw::new(body.handle, index, world)
-            });
-        }
+        body_draws(body, &remote.instance, world, style, joints, draws);
+    }
+}
+
+/// `stopTaunt`: forgets a waiting taunt and ends one playing.
+fn stop_taunt(model: &PlayerModel, remote: &mut RemoteBody) {
+    remote.pending_taunt = None;
+    if model
+        .active_one_shot(&remote.instance)
+        .is_some_and(|playing| TAUNT_ANIMS.contains(&playing))
+    {
+        model.stop_one_shot(&mut remote.instance, true);
+    }
+}
+
+/// Where the weapon hangs on a body posed by `instance` at `world`
+/// ([`RemotePlayerRenderer::hand_world`]); `blade_upright` when the blade
+/// stands in its stance.
+#[must_use]
+pub fn held_frame(
+    model: &PlayerModel,
+    instance: &PlayerModelInstance,
+    world: Mat4,
+    blade_upright: bool,
+) -> Option<HeldFrame> {
+    let skeleton = &model.model.skeleton;
+    let hand = skeleton.find(RIGHT_HAND)?;
+    let globals = skeleton.global_matrices(&instance.locals);
+    let bone = world * *globals.get(hand)?;
+    let basis = model.hand_basis;
+    Some(HeldFrame {
+        hand: basis.map_or(bone, |b| bone * b.matrix()),
+        model_scale: MODEL_SCALE * model.scale_factor(),
+        gun_support: basis.and(model.gun_support),
+        blade_stance: basis.and(model.blade_stance).filter(|_| blade_upright),
+    })
+}
+
+/// A body's draws posed by `instance` at `world`, in `style`, appending its
+/// joint palettes to `joints` ([`RemotePlayerRenderer::draws`]).
+pub fn body_draws(
+    body: &PlayerBody,
+    instance: &PlayerModelInstance,
+    world: Mat4,
+    style: &PlayerModelVisualStyle,
+    joints: &mut Vec<Mat4>,
+    draws: &mut Vec<ModelDraw>,
+) {
+    // `applyVisualStyle`: the outline is in world units, the mesh scaled by its fit.
+    let outline_width = style.outline_width / body.model.scale_factor();
+    let mut palettes: HashMap<usize, u32> = HashMap::new();
+    for (index, primitive) in body.model.model.primitives.iter().enumerate() {
+        let Some(skin) = &primitive.skin else { continue };
+        let offset = *palettes.entry(skin.skin).or_insert_with(|| {
+            let at = joints.len() as u32;
+            joints.extend(body.model.joint_matrices(instance, skin.skin));
+            at
+        });
+        draws.push(ModelDraw {
+            tint: style.tint_color,
+            skin: Some(offset),
+            outline: style.outline_enabled.then_some(Outline {
+                color: style.outline_color,
+                width: outline_width,
+            }),
+            ..ModelDraw::new(body.handle, index, world)
+        });
     }
 }
 

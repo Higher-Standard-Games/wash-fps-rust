@@ -18,6 +18,7 @@
 use std::collections::HashMap;
 
 use shagger::shared::collision::collision_world::CollisionWorld;
+use shagger::shared::math_random::MathRandom;
 use shagger::shared::server::simulation::types::Vec3;
 
 use crate::shared::items::item_throw::{DROPPED_WEAPON_BOUNCE, ITEM_STEP_SECONDS, ThrownItem, step_thrown_item};
@@ -55,28 +56,19 @@ pub struct DropThrow {
     pub velocity: [f64; 3],
 }
 
-/// A small generator for the cosmetic spins (`Math.random` in the browser).
+/// The cosmetic spins (`Math.random` in the browser), seeded by the drop's
+/// id so each turns its own way.
 #[derive(Debug, Clone, Copy)]
-struct Spins(u64);
+struct Spins(MathRandom);
 
 impl Spins {
     fn new(seed: &str) -> Self {
-        // FNV-1a, so each drop turns its own way.
-        let mut h: u64 = 0xcbf2_9ce4_8422_2325;
-        for b in seed.bytes() {
-            h ^= u64::from(b);
-            h = h.wrapping_mul(0x0100_0000_01b3);
-        }
-        Self(h | 1)
+        Self(MathRandom::from_text(seed))
     }
 
     /// In 0 to 1.
     fn next(&mut self) -> f64 {
-        // xorshift64*
-        self.0 ^= self.0 >> 12;
-        self.0 ^= self.0 << 25;
-        self.0 ^= self.0 >> 27;
-        (self.0.wrapping_mul(0x2545_f491_4f6c_dd1d) >> 11) as f64 / (1u64 << 53) as f64
+        self.0.next_f64()
     }
 
     fn sign(&mut self) -> f64 {

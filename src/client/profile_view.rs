@@ -1648,7 +1648,7 @@ mod tests {
         let requests = view.asking.as_ref().expect("asking").requests.clone();
         for (request, rank) in requests.iter().zip([5, 2]) {
             let page = json!({ "type": "leaderboard:page", "requestId": request, "scope": "overall",
-                "system": "trueskill", "policyVersion": "shag-trueskill-v1", "entries": [], "total": 9,
+                "system": "trueskill", "policyVersion": "shag-trueskill-v2", "entries": [], "total": 9,
                 "localPlayerEntry": entry(rank, 3) });
             view.on_message("leaderboard:page", &page, &account);
         }

@@ -10,6 +10,10 @@
 //! here it is one egui area in the same colours, and the gold exit plate
 //! (`.dvh-exit`) in the top left corner, which fades with it. Minimizing
 //! the bar is left out.
+//!
+//! The demo's two ends, as `DemoService.presentDemoEnds` shows them: the
+//! players' names over its first seconds of play, and at its last frame a
+//! fade to black under an end card (`demoEndCard`) with Replay and Exit.
 
 // The bar's widgets sense clicks but never take keyboard focus
 // (`Sense::CLICK`, not `Sense::click()`): a focused button would also take
@@ -17,6 +21,7 @@
 use egui::{Align2, Color32, FontId, Pos2, Rect, Sense, Stroke, vec2};
 use shagger::ui::egui_layer::egui;
 use washoi::client::demo_playback::{DemoDeath, DemoPlayback};
+use washoi::client::reel_cards::{DemoFinal, EndCard, ReelTitle, demo_end_card, reel_title};
 
 /// `IDLE_AFTER_MS`: how long the controls stay up after the last touch.
 const IDLE_AFTER: f64 = 2.5;
@@ -29,6 +34,10 @@ const CREAM: Color32 = Color32::from_rgb(0xf6, 0xec, 0xd4);
 const INK: Color32 = Color32::from_rgba_premultiplied(22, 19, 34, 242);
 const EDGE: Color32 = Color32::from_rgba_premultiplied(15, 34, 38, 41);
 const RED: Color32 = Color32::from_rgb(0xe5, 0x48, 0x3c);
+/// `DEMO_TITLE_MS`: how long the names stay up over the first seconds of play.
+const DEMO_TITLE_SECONDS: f64 = 3.0;
+/// `DEMO_END_FADE_MS`: how long a finished demo takes to fade to black.
+const DEMO_END_FADE_SECONDS: f64 = 1.0;
 
 /// What a click on the bar asks for.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -37,7 +46,10 @@ pub enum DemoOverlayAction {
     /// Seek to this point of the timeline (0 to 1).
     Seek(f64),
     Speed(i8),
-    /// The exit plate: leave playback, back to the lobby (Escape).
+    /// The end card's Replay: the demo again from its first frame.
+    Replay,
+    /// The exit plate or the end card's Exit: leave playback, back to the
+    /// lobby (Escape).
     Exit,
 }
 
@@ -71,6 +83,12 @@ pub struct DemoOverlay {
     deaths: Vec<DemoDeath>,
     /// Seconds since the last touch.
     idle: f64,
+    /// The players' names, from the header.
+    title: ReelTitle,
+    /// Seconds of wall clock since playback opened.
+    clock: f64,
+    /// When the demo reached its end, on `clock`, with its card; none while it plays.
+    ended: Option<(f64, EndCard)>,
 }
 
 impl DemoOverlay {
@@ -80,7 +98,133 @@ impl DemoOverlay {
         Self {
             deaths: demo.scan_deaths(),
             idle: 0.0,
+            title: reel_title(&demo.header.players),
+            clock: 0.0,
+            ended: None,
         }
+    }
+
+    /// `presentDemoEnds`' bookkeeping: at the demo's last frame its card is
+    /// made from `final_` (the scores as they stand, the frags counted
+    /// here), and it goes again as soon as playback moves on.
+    pub fn present_ends(&mut self, demo: &DemoPlayback, final_: impl FnOnce() -> DemoFinal) {
+        if !demo.ended() {
+            self.ended = None;
+            return;
+        }
+        if self.ended.is_none() {
+            let mut final_ = final_();
+            final_.frags = self.deaths.iter().filter(|d| d.killer_id.is_some()).count() as u32;
+            let (first, last) = demo.tick_span();
+            final_.duration_ms = (last - first) / demo.tick_rate() * 1000.0;
+            self.ended = Some((self.clock, demo_end_card(&final_)));
+        }
+    }
+
+    /// The names over the opening and the end card over its fade to black;
+    /// returns the end card's Replay or Exit.
+    pub fn ends_ui(&self, ctx: &egui::Context, demo: &DemoPlayback) -> Option<DemoOverlayAction> {
+        let screen = ctx.content_rect();
+        let center = screen.center();
+        let painter = ctx.layer_painter(egui::LayerId::new(
+            egui::Order::Background,
+            egui::Id::unique("demo-ends"),
+        ));
+        let Some((at, card)) = &self.ended else {
+            let (first, _) = demo.tick_span();
+            let elapsed = (demo.playhead_tick() - first) / demo.tick_rate();
+            if elapsed < DEMO_TITLE_SECONDS {
+                // Fades over its last half second, as the card's transition.
+                let fade = ((DEMO_TITLE_SECONDS - elapsed) / 0.5).clamp(0.0, 1.0) as f32;
+                let line = self
+                    .title
+                    .sides
+                    .iter()
+                    .map(|s| match &s.label {
+                        Some(label) => format!("{label}: {}", s.names.join(", ")),
+                        None => s.names.join(", "),
+                    })
+                    .collect::<Vec<_>>()
+                    .join("  vs  ");
+                let more = if self.title.more > 0 {
+                    format!("  and {} more", self.title.more)
+                } else {
+                    String::new()
+                };
+                // Wrapped to the screen: a free-for-all names up to eight.
+                let mut job = egui::text::LayoutJob::simple(
+                    format!("{line}{more}"),
+                    FontId::proportional(30.0),
+                    CREAM.gamma_multiply(fade),
+                    screen.width() - 96.0,
+                );
+                job.halign = egui::Align::Center;
+                let names = painter.layout_job(job);
+                let top = screen.top() + screen.height() * 0.22;
+                let height = names.size().y;
+                painter.galley(Pos2::new(center.x, top), names, CREAM);
+                painter.text(
+                    Pos2::new(center.x, top + height + 16.0),
+                    Align2::CENTER_CENTER,
+                    format!("{} on {}", demo.header.gametype.to_uppercase(), demo.header.map),
+                    FontId::proportional(18.0),
+                    CREAM.gamma_multiply(0.7 * fade),
+                );
+            }
+            return None;
+        };
+        let veil = ((self.clock - at) / DEMO_END_FADE_SECONDS).clamp(0.0, 1.0);
+        painter.rect_filled(screen, 0.0, Color32::from_black_alpha((veil * 255.0) as u8));
+        // The keys fade in after the veil.
+        let shown = (veil * 255.0) as u8;
+        let fade = |c: Color32| c.gamma_multiply(f32::from(shown) / 255.0);
+        let mut y = center.y - 24.0 * card.chips.len() as f32 - 20.0;
+        for (label, value) in &card.chips {
+            painter.text(
+                Pos2::new(center.x - 8.0, y),
+                Align2::RIGHT_CENTER,
+                label.to_uppercase(),
+                FontId::proportional(16.0),
+                fade(GOLD),
+            );
+            painter.text(
+                Pos2::new(center.x + 8.0, y),
+                Align2::LEFT_CENTER,
+                value,
+                FontId::proportional(26.0),
+                fade(CREAM),
+            );
+            y += 44.0;
+        }
+        painter.text(
+            Pos2::new(center.x, y),
+            Align2::CENTER_CENTER,
+            &card.counts,
+            FontId::proportional(17.0),
+            fade(CREAM.gamma_multiply(0.7)),
+        );
+        if veil < 1.0 {
+            return None;
+        }
+        let mut action = None;
+        egui::Area::new(egui::Id::unique("demo-end-keys"))
+            .fade_in(false)
+            .fixed_pos(Pos2::new(center.x - 130.0, y + 36.0))
+            .order(egui::Order::Foreground)
+            .show(ctx, |ui| {
+                ui.horizontal(|ui| {
+                    for (label, choice) in [("Replay", DemoOverlayAction::Replay), ("Exit", DemoOverlayAction::Exit)] {
+                        let key = egui::Button::new(egui::RichText::new(label).size(20.0).color(INK).strong())
+                            .fill(GOLD)
+                            .min_size(vec2(120.0, 40.0))
+                            .sense(Sense::CLICK);
+                        if ui.add(key).clicked() {
+                            action = Some(choice);
+                        }
+                    }
+                });
+            });
+        action
     }
 
     /// The ticks of the demo's frags (deaths with a killer), for the frag
@@ -101,6 +245,7 @@ impl DemoOverlay {
 
     /// Ages the bar; a paused demo keeps it up.
     pub fn update(&mut self, dt: f64, paused: bool) {
+        self.clock += dt;
         self.idle = if paused { 0.0 } else { self.idle + dt };
     }
 
