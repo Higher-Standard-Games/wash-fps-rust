@@ -2731,6 +2731,17 @@ whole areas rather than single items. 0.2.0 closes them in two steps.
 
 ## 24. Progress log
 
+### 0.6.1: a finished match comes back to Play (November 14, 2026)
+
+After a match's post-game the client came back into the match's room; the
+browser's way home (`ReturnToLobby.ts`) opens Play and leaves the room
+behind. Now a match that reached its post-game, however the window is left,
+comes back to Play and leaves the room (`LobbyPanel::after_match`,
+`window::take_match_completed`); a match left before its end still comes
+back to the room, as the browser's Leave match does.
+
+**Version 0.6.1**: a patch bump for this fix.
+
 ### 0.6.0 (November 14, 2026)
 
 **Version 0.6.0**, a minor step: two rounds of frame cost and memory fixes,

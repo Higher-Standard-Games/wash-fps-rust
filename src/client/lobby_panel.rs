@@ -493,10 +493,19 @@ impl LobbyPanel {
         self.choice.take()
     }
 
-    /// Back from a match: why it broke off, if it did.
-    pub fn after_match(&mut self, error: Option<String>) {
+    /// Back from a match: why it broke off, if it did. A match that reached
+    /// its post-game comes back to Play, out of its room, as the browser's
+    /// `returnToLobby` does; one left before then comes back to the room.
+    pub fn after_match(&mut self, error: Option<String>, completed: bool) {
         if let Some(why) = error {
             self.notice = why;
+        }
+        if completed {
+            if let Some(room) = &self.room {
+                self.client.leave_lobby(&room.lobby_id);
+            }
+            self.show_play_stage();
+            self.room_to_rejoin = None;
         }
     }
 
@@ -2696,6 +2705,21 @@ mod tests {
     fn offline_panel() -> LobbyPanel {
         // Nothing listens there: the connection fails, as offline.
         LobbyPanel::connect("ws://127.0.0.1:9", None)
+    }
+
+    #[test]
+    fn a_finished_match_comes_back_to_play_and_one_left_early_to_its_room() {
+        let mut panel = offline_panel();
+        let room = serde_json::json!({
+            "id": "r1", "gametype": "duel", "visibility": "private",
+            "config": {"maxPlayers": 2}, "players": [], "maps": []
+        });
+        panel.handle_lobby_created(&room);
+        panel.after_match(None, false);
+        assert!(panel.in_room());
+        panel.after_match(None, true);
+        assert!(!panel.in_room());
+        assert_eq!(panel.tab, Tab::Play);
     }
 
     #[test]
