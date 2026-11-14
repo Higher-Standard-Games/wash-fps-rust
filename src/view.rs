@@ -4,6 +4,7 @@
 //! given with `--player` stand on the map as the Vanguard model.
 
 use shagger::lighting::map_emissive_surfaces::{SurfaceEmission, extract_emissive_surfaces};
+use shagger::loader::bsp::fog_volumes::{FogVolumes, fog_volumes_from};
 use shagger::loader::bsp::map_particles::MapParticles;
 use shagger::physics::physics_system::world_triangles;
 use shagger::physics::sweep_backend_adapter::to_shared_contents;
@@ -80,7 +81,7 @@ use shagger::rendering::water::water_actor_reflection::ReflectionActor;
 use shagger::rendering::wgpu;
 use shagger::rendering::world_culling::WorldCulling;
 use shagger::rendering::world_fog_controller::{FogUniforms, WorldFogController};
-use shagger::rendering::world_geometry::build_world_geometry;
+use shagger::rendering::world_geometry::build_world_geometry_with;
 use shagger::rendering::world_renderer::{Rgba8Image, WorldRenderer};
 use shagger::shared::collision::shared_collision_world::SharedCollisionWorld;
 use shagger::shared::entities::projectile_def::ProjectileDef;
@@ -1123,6 +1124,8 @@ pub struct MapRenderer {
     teleport_renderer: TeleportRenderer,
     /// The map's `misc_particles` emitters (`MapParticles`).
     pub map_particles: MapParticles,
+    /// The map's fog brushes (`FogVolumes`).
+    fog_volumes: FogVolumes,
     /// Each live player's last origin and yaw, for spotting a teleport.
     teleport_last: HashMap<String, (DVec3, f64)>,
     /// Bodies breaking into shards on a gib death.
@@ -2509,6 +2512,9 @@ impl MapRenderer {
                 sky.set_fog(uniforms);
             }
         }
+        // `FogVolumes.prepare`: the scene depth while a fog volume is in view.
+        let fog_in_view = self.fog_volumes.any_in_view(camera.view_projection(aspect));
+        self.world.set_scene_depth_reader(fog_in_view);
         // `Q3SoftParticleDepth`: the scene depth, while `r_softhalos` is on
         // and a soft halo is in view.
         let soft =
@@ -2625,6 +2631,8 @@ impl MapRenderer {
             time: self.effect_time,
             fog: uniforms,
         };
+        self.fog_volumes
+            .prepare(gpu, &frame, fog_in_view && self.world.scene_depth_copied());
         self.hitscan.wall_marks.prepare(gpu, &frame);
         self.hitscan.streaks.prepare(gpu, &frame);
         // The muzzle flashes ride the live barrel (`setMuzzleAnchorResolver`),
@@ -2796,8 +2804,10 @@ impl MapRenderer {
         self.splash.draw(pass);
         self.teleport_renderer.draw(pass);
         self.explosions.draw(pass);
-        // `PARTICLE_ALPHA_INDEX`: between the map's blended and additive
-        // surfaces, so additive glass in front of a puff adds over it.
+        // The fog volumes (alpha index 999.25), then `PARTICLE_ALPHA_INDEX`:
+        // between the map's blended and additive surfaces, so additive glass
+        // in front of a puff adds over it.
+        self.fog_volumes.draw(pass, self.world.scene_depth());
         self.map_particles.draw(pass);
         self.world.draw_visible_additive(pass, visible);
         self.models.draw_blended(pass);
@@ -2900,9 +2910,12 @@ fn claim_liquid_surfaces(
 /// scene draws into an HDR target; image processing writes `output_format`.
 pub fn build_renderer(gpu: &Gpu, map: &mut LoadedMap, output_format: wgpu::TextureFormat) -> MapRenderer {
     let format = HDR_FORMAT;
-    let mut geometry = build_world_geometry(&map.bsp, |name, options| {
-        map.shaders.resolve_material_passes(&map.pk3, name, options)
-    });
+    // A fog brush's faces are drawn by its fog volume, not as surfaces.
+    let mut geometry = build_world_geometry_with(
+        &map.bsp,
+        |name, options| map.shaders.resolve_material_passes(&map.pk3, name, options),
+        |name| map.shaders.get_shader(name).is_some_and(|s| s.fog_parms.is_some()),
+    );
     // `loadTextures`' glow overlay ShaderMaterial (light fixtures).
     geometry.find_glow_overlays(|name| map.shaders.get_shader(name));
     // Authored cubemaps (`surroundmap`/`cubemap`), as `loadTextures` loads
@@ -3373,6 +3386,15 @@ pub fn build_renderer(gpu: &Gpu, map: &mut LoadedMap, output_format: wgpu::Textu
     let damage_font = shagger::ui::font::Font::from_bytes(include_bytes!("../assets/fonts/Rajdhani-Bold.ttf").to_vec())
         .expect("the client ships Rajdhani");
     let cartoon_hit_renderer = CartoonHitRenderer::load(gpu, format, &mut map.pk3);
+    let fog_volumes = FogVolumes::new(
+        gpu,
+        format,
+        renderer.scene_depth_layout(),
+        fog_volumes_from(&map.bsp, &map.shaders),
+    );
+    if !fog_volumes.is_empty() {
+        println!("fog volumes: {}", fog_volumes.len());
+    }
     let map_particles = MapParticles::load(gpu, format, &map.bsp.entities, &map.shaders, &mut map.pk3, 0.0);
     if map_particles.emitter_count() > 0 {
         println!("misc_particles: {} emitters", map_particles.emitter_count());
@@ -3443,6 +3465,7 @@ pub fn build_renderer(gpu: &Gpu, map: &mut LoadedMap, output_format: wgpu::Textu
         teleports,
         teleport_renderer,
         map_particles,
+        fog_volumes,
         teleport_last: HashMap::new(),
         gibs: GibSystem::default(),
         gib_renderer,

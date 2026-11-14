@@ -2750,6 +2750,16 @@ Ported from SHAG and wash-fps staging (beta.12):
   after the shots' effects). View weapon outlines are divided by each
   mesh's own scale (`outline_units`), so the Arc Blade's draw at full
   width, and its charge outline grows from 0.15 to 0.6.
+- **Fog volumes (SHAG d0c3d3c7).** shagger's `loader/bsp/fog_volumes.rs`
+  (`FogVolumes.ts`) fogs what lies inside each `fogparms` brush with
+  qfusion's density. Each brush's hull draws once without a depth test,
+  its far side kept by the face normal in the fragment (the browser culls
+  by winding), and reads the world renderer's scene depth copy, which soft
+  particles share; `set_scene_depth_reader` copies it without fading soft
+  surfaces. They draw after the map's blended surfaces and before the map
+  particles. `fogparms` reads qfusion's clear distance, the BSP's effect
+  lump names the fog's visible side, and `build_world_geometry_with`
+  leaves the fog brushes' faces out. Snd6 is the shipped map with fog.
 - **New maps.** DM16, DM17, DM18 and Amphi3 need nothing native: the
   pools, names and material aliases come from the lobby and the packages,
   and `CREDITS.md` follows wash-fps main (`tools/sync_docs.sh`).
