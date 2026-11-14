@@ -2731,6 +2731,14 @@ whole areas rather than single items. 0.2.0 closes them in two steps.
 
 ## 24. Progress log
 
+### 0.6.0 (November 14, 2026)
+
+**Version 0.6.0**, a minor step: two rounds of frame cost and memory fixes,
+BC7 textures (`r_texture_compression`), demo playback's opening and end
+cards with Q and E to switch players, and Add bot's skill menu. The entries
+below, from "Frame cost and memory, second pass" up, are what it adds over
+0.5.0.
+
 ### Staging catch-up: Add bot's skill (November 14, 2026)
 
 Ported from SHAG staging (4c4e98c, fps 3587df3): the room's Add bot key has
