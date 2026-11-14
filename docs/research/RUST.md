@@ -1914,6 +1914,22 @@ first native milestones. KTX2 adds a C++ dependency (the Basis transcoder) for
 memory and load-time savings that only matter later. Mark the KTX2 path behind
 the same `r_ktx2` cvar, defaulting to 0 natively until it is measured.
 
+**Decided November 14, 2026: BC7 on the GPU at load.** washoi_dm5 uploaded
+665 MiB of RGBA8 textures. shagger's `rendering::texture_compression`
+compresses every map and model texture whose sides are whole 4×4 blocks to
+BC7 as it uploads, with `block_compression` (Intel's ISPC compressor as WGSL
+compute shaders: pure Rust, MIT, built on wgpu 30). BC is sampled by every
+desktop GPU wgpu runs on, Apple silicon and Intel Macs included; ASTC and
+ETC2 are not, so they are not used. Without the BC feature, on a software
+renderer (llvmpipe decodes BC7 on every sample: dm5 drew at 0.4 frames a
+second instead of 5.4), or with `r_texture_compression 0` (native only;
+default 1, and 2 forces it on a software renderer), textures upload as RGBA8
+as before. Forced on llvmpipe, dm5's peak memory fell from 2.86 GB to
+2.38 GB and a frame differed from the RGBA8 one by 52 dB PSNR. A CPU encoder (`intel_tex_2`) was tried first: it needs C++ and
+ran at 2.5 Mpixel/s, about 20 s more on dm5's load. BC7 is lossy, so the
+picture differs from the browser's by the compression error. KTX2 stays
+unshipped (20.9).
+
 ### 20.7 Models and sounds
 
 - **glTF:** the player, weapons and effects. shagger's
@@ -2714,6 +2730,12 @@ whole areas rather than single items. 0.2.0 closes them in two steps.
 0.2.0 is released when both are done.
 
 ## 24. Progress log
+
+### BC7 textures (November 14, 2026)
+
+Map and model textures compress to BC7 on the GPU as they upload (20.6,
+shagger `rendering::texture_compression`, `r_texture_compression`). On a
+GPU this cuts their memory to a quarter; software renderers keep RGBA8.
 
 ### Staging catch-up: demo playback's ends and keys (November 14, 2026)
 

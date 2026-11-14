@@ -225,6 +225,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "block_compression"
+version = "0.11.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f5ca8c67a97492f3c8263ce18d307053f8aa657e8ecbf191484676bb25ae5f4a"
+dependencies = [
+ "bytemuck",
+ "wgpu",
+]
+
+[[package]]
 name = "bumpalo"
 version = "3.20.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3227,8 +3237,9 @@ dependencies = [
 [[package]]
 name = "shagger"
 version = "0.0.1"
-source = "git+https://github.com/Higher-Standard-Games/shagger?rev=0f8bdde0d92e5cd7c3d840564978051f56283314#0f8bdde0d92e5cd7c3d840564978051f56283314"
+source = "git+https://github.com/Higher-Standard-Games/shagger?rev=a17b515b571c9162a058d127ee9c618c3eade4e1#a17b515b571c9162a058d127ee9c618c3eade4e1"
 dependencies = [
+ "block_compression",
  "bytemuck",
  "cpal",
  "draco-core",
@@ -3266,7 +3277,7 @@ dependencies = [
 [[package]]
 name = "shagger_shared"
 version = "0.0.1"
-source = "git+https://github.com/Higher-Standard-Games/shagger?rev=0f8bdde0d92e5cd7c3d840564978051f56283314#0f8bdde0d92e5cd7c3d840564978051f56283314"
+source = "git+https://github.com/Higher-Standard-Games/shagger?rev=a17b515b571c9162a058d127ee9c618c3eade4e1#a17b515b571c9162a058d127ee9c618c3eade4e1"
 dependencies = [
  "flate2",
 ]
