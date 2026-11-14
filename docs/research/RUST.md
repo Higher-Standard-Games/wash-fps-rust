@@ -2715,6 +2715,27 @@ whole areas rather than single items. 0.2.0 closes them in two steps.
 
 ## 24. Progress log
 
+### Staging catch-up: demo playback's ends and keys (November 14, 2026)
+
+Ported from SHAG and wash-fps staging (fps 95f6d31):
+
+- **Demo keys.** Q and E move to the previous or next player's eyes (they
+  were Tab and Shift+Tab); holding Tab shows the scoreboard over a demo, as
+  in a match, with the followed player's row marked as ours.
+- **A demo's two ends.** `reel_cards` has `EndCard`, `reel_end_card` and
+  `demo_end_card` (`ReelCards.ts`), tested with the TypeScript's cases. A
+  demo opens with the players' names over its first three seconds, and at
+  its last frame fades to black over a second under its end card (the
+  winner from the final scores, the top fragger in team matches, the frags
+  and the length) with Replay and Exit. A screenshot of an ended demo shows
+  the card with the fade done.
+- **`PK3Loader.listFiles`.** Only `*` and `?` are wildcards; a `.` no
+  longer matches any character.
+- Nothing native for the rest: the wire and demo formats are unchanged, the
+  frag counter already showed the followed player, the fog-brush check was
+  already once per texture, and the bot, lobby, `%L` and web-only
+  performance changes have no native side.
+
 ### Frame cost and memory, second pass (November 14, 2026)
 
 Guided by a callgrind profile of a washoi_dm5 demo (eight bots). No

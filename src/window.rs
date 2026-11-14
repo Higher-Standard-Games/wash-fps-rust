@@ -1460,6 +1460,9 @@ impl App {
                 }
                 self.opened_up = offered;
             }
+            if let (Feed::Demo(demo), Some(overlay), None) = (&*feed, &mut self.demo_hud, &self.reel) {
+                overlay.present_ends(demo, || demo_final(s.hud.as_ref().map(|h| &h.state)));
+            }
             self.drawn = players;
             // Hold the last frame; the title says so, until a seek goes back.
             let title = feed
@@ -1657,7 +1660,10 @@ impl App {
                         .find(|(_, p)| p.entity_id == id)
                         .map(|(_, p)| p.name.as_str())
                 });
-                demo_action = hud.ui(ui.ctx(), demo, followed.map(|id| (id, name.unwrap_or(id))));
+                let ends = hud.ends_ui(ui.ctx(), demo);
+                demo_action = hud
+                    .ui(ui.ctx(), demo, followed.map(|id| (id, name.unwrap_or(id))))
+                    .or(ends);
             }
             menu_action = pause_menu.ui(ui.ctx(), &kicker, &player);
             if let Some(view) = native_settings {
@@ -1699,6 +1705,11 @@ impl App {
                 DemoOverlayAction::Seek(progress) => demo.seek_to_progress(progress),
                 DemoOverlayAction::Speed(step) => {
                     demo.step_speed(step);
+                }
+                // A demo starts again from its first frame.
+                DemoOverlayAction::Replay => {
+                    demo.seek_to_frame(0);
+                    demo.play();
                 }
                 DemoOverlayAction::Exit => {
                     println!("demo: back to the lobby");
@@ -2591,4 +2602,38 @@ fn name_order(
     let mut ids: Vec<&str> = drawn.iter().map(|(id, _, _)| id.as_str()).collect();
     ids.sort_by(|a, b| locale_compare(&name(a), &name(b)).then(a.cmp(b)));
     ids.into_iter().map(str::to_owned).collect()
+}
+
+/// `presentDemoEnds`' final scores: every player's from the scoreboard, and
+/// each side's where the mode has sides.
+pub(crate) fn demo_final(state: Option<&washoi::client::hud_state::HudState>) -> washoi::client::reel_cards::DemoFinal {
+    use washoi::client::reel_cards::{DemoFinal, Standing};
+    let Some(state) = state else {
+        return DemoFinal::default();
+    };
+    let spectator = |team: &str| team == "spectator";
+    DemoFinal {
+        players: state
+            .scoreboard
+            .iter()
+            .filter(|e| !e.team_id.as_deref().is_some_and(spectator))
+            .map(|e| Standing {
+                name: e.name.clone(),
+                score: e.score,
+            })
+            .collect(),
+        sides: state.team_based.then(|| {
+            state
+                .team_scores
+                .iter()
+                .filter(|(team, _)| !spectator(team))
+                .map(|(team, score)| Standing {
+                    name: state.team_names.get(team).cloned().unwrap_or_else(|| team.clone()),
+                    score: *score,
+                })
+                .collect()
+        }),
+        frags: 0,
+        duration_ms: 0.0,
+    }
 }

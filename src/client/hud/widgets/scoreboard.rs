@@ -256,7 +256,17 @@ impl FpsHudWidget for Scoreboard {
             self.return_rect.set(None);
             return;
         }
-        self.local_player_id = state.local_player_id.clone();
+        // A demo has no local player: the row marked as ours is the followed player's.
+        self.local_player_id = if !state.local_player_id.is_empty() || !state.playback {
+            state.local_player_id.clone()
+        } else {
+            state
+                .scoreboard
+                .iter()
+                .find(|e| e.entity_id == state.spectating)
+                .map(|e| e.player_id.clone())
+                .unwrap_or_default()
+        };
         self.round = m.round();
         self.carrier = m
             .bomb()

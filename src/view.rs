@@ -4211,7 +4211,10 @@ pub fn start_prepared(o: &ViewOptions, prepared: Prepared) -> Result<i32, String
         }
         // A whole demo: its transport bar, as it stands on a pause.
         (None, Some(Feed::Demo(demo))) => {
-            let bar = crate::demo_overlay::DemoOverlay::new(demo);
+            let mut bar = crate::demo_overlay::DemoOverlay::new(demo);
+            // An ended demo shows its end card with the fade done.
+            bar.present_ends(demo, || crate::window::demo_final(hud.as_ref().map(|h| &h.state)));
+            bar.update(1.0, true);
             let name = followed.as_deref().map(|id| {
                 demo.roster()
                     .iter()
@@ -4220,6 +4223,7 @@ pub fn start_prepared(o: &ViewOptions, prepared: Prepared) -> Result<i32, String
             });
             let who = followed.as_deref().zip(name);
             composite_ui(&gpu, &mut pixels, o.width, o.height, |ctx| {
+                bar.ends_ui(ctx, demo);
                 bar.ui(ctx, demo, who);
             });
         }
