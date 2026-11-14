@@ -2715,6 +2715,28 @@ whole areas rather than single items. 0.2.0 closes them in two steps.
 
 ## 24. Progress log
 
+### Frame cost and memory, second pass (November 14, 2026)
+
+Guided by a callgrind profile of a washoi_dm5 demo (eight bots). No
+behaviour changes; frames of the demo render pixel for pixel as before.
+
+- shagger: an audio device that fails to open is looked for again on a
+  probe thread, not in the frame; the world's material uniforms share
+  one slab of 256-byte slots (one upload per dirty 64-slot chunk); the
+  2D HUD writes its vertices and indices as one buffer; fonts cache ASCII
+  glyph ids and unscaled advances; the input system and cvar lookups no
+  longer allocate per frame.
+- Textures: the world decodes and uploads each image file once, however
+  many candidate lists end at it, and a `ModelRenderer` keeps one texture
+  per distinct encoded image (bots sharing a model, a pickup and its hand
+  weapon). washoi_dm5 uploads 665 MiB of textures instead of 924 MiB;
+  peak RSS on llvmpipe falls from 3.39 GB to 2.86 GB.
+- Left: renderers that mirror SHAG's separate Babylon engines (the
+  weapon view, `ModelStage` previews) still keep their own copies of the
+  weapon textures.
+- wash-fps-rust: `set_live_players` takes the hidden ids instead of a
+  filtered copy of every player.
+
 ### Frame cost and code quality pass (November 14, 2026)
 
 A pass over the per-frame paths for allocations, repeated work and

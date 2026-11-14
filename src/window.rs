@@ -1164,13 +1164,9 @@ impl App {
                 }
             }
             // Their own model would fill the screen from inside their head.
-            let drawn: Vec<_> = players
-                .iter()
-                .filter(|(id, _, _)| Some(id) != eyes.as_ref() && Some(id) != self.pov_entity.as_ref())
-                .cloned()
-                .collect();
+            let hidden: Vec<&str> = eyes.as_deref().into_iter().chain(self.pov_entity.as_deref()).collect();
             s.renderer.set_live_weapons(&view.weapons);
-            s.renderer.set_live_players(&drawn, f64::from(dt), effect_dt);
+            s.renderer.set_live_players(&players, &hidden, f64::from(dt), effect_dt);
             s.renderer.play_showcase(f64::from(dt));
             let local = match feed {
                 Feed::Play(..) => feed.local_entity(),

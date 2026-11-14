@@ -1592,16 +1592,24 @@ impl MapRenderer {
     pub fn set_live_players(
         &mut self,
         players: &[(String, InterpolatedEntity, PlayerModelVisualStyle)],
+        hidden: &[&str],
         dt: f64,
         effect_dt: f64,
     ) {
+        // Everyone but the hidden (the player whose eyes we look through):
+        // borrowed, not a copy of the list.
+        let players: Vec<&(String, InterpolatedEntity, PlayerModelVisualStyle)> = players
+            .iter()
+            .filter(|(id, _, _)| !hidden.contains(&id.as_str()))
+            .collect();
+        let players = players.as_slice();
         self.update_charge_glows(players);
         self.joints.truncate(self.static_joints);
         self.live_draws.clear();
         self.bomb_anchor = None;
         self.live_actors.clear();
         // `RemotePlayerRenderer` emits everyone's dust; `Game` steps it.
-        for (id, p, _) in players {
+        for (id, p, _) in players.iter().copied() {
             let sliding = p.sliding && p.grounded && p.water_level.unwrap_or(0) == 0 && !p.on_ladder.unwrap_or(false);
             self.slide_dust.emit(id, DVec3::new(p.x, p.y, p.z), p.vx, p.vz, sliding);
         }
@@ -1629,7 +1637,7 @@ impl MapRenderer {
         let ragdolled = &self.ragdolled;
         self.remote_muzzles
             .retain(|id, _| present.contains(id.as_str()) && !ragdolled.contains(id));
-        for (id, interp, style) in players {
+        for (id, interp, style) in players.iter().copied() {
             if self.ragdolled.contains(id) {
                 continue;
             }
@@ -1701,7 +1709,7 @@ impl MapRenderer {
         // forgotten, so a respawn starts afresh.
         self.teleports.update(effect_dt);
         self.teleport_last.retain(|id, _| present.contains(id.as_str()));
-        for (id, interp, _) in players {
+        for (id, interp, _) in players.iter().copied() {
             let at = DVec3::new(interp.x, interp.y, interp.z);
             if let Some((last, last_yaw)) = upsert(&mut self.teleport_last, id, (at, interp.yaw))
                 && at.distance_squared(last) > TELEPORT_FX_DIST_SQ
@@ -1729,7 +1737,7 @@ impl MapRenderer {
         for id in gone {
             self.liquid.forget(&id);
         }
-        for (id, interp, _) in players {
+        for (id, interp, _) in players.iter().copied() {
             self.notify_liquid(
                 id,
                 interp.water_level.unwrap_or(0),
@@ -2177,7 +2185,7 @@ impl MapRenderer {
     /// wash-fps `GameEvents.ts`'s charge glows: a teal light 30 units
     /// above each other player charging their blade, at most six, pulsing
     /// between 4 and 12 (`Game.ts`).
-    fn update_charge_glows(&mut self, players: &[(String, InterpolatedEntity, PlayerModelVisualStyle)]) {
+    fn update_charge_glows(&mut self, players: &[&(String, InterpolatedEntity, PlayerModelVisualStyle)]) {
         self.charge_glows.clear();
         let pulse = 8.0 + 4.0 * (self.item_time * 8.0).sin();
         let color = Vec3::new(0.05, 1.0, 0.9);
@@ -3961,13 +3969,9 @@ pub fn start_prepared(o: &ViewOptions, prepared: Prepared) -> Result<i32, String
             let eyes = reel
                 .as_ref()
                 .and_then(|r| apply_reel_camera(&mut camera, r, &players, base_fov));
-            let drawn: Vec<_> = players
-                .iter()
-                .filter(|(id, _, _)| Some(id) != eyes.as_ref())
-                .cloned()
-                .collect();
             renderer.set_live_weapons(&view.weapons);
-            renderer.set_live_players(&drawn, 1.0 / 60.0, 1.0 / 60.0);
+            let hidden: Vec<&str> = eyes.as_deref().into_iter().collect();
+            renderer.set_live_players(&players, &hidden, 1.0 / 60.0, 1.0 / 60.0);
             renderer.set_live_projectiles(&projectiles, 1.0 / 60.0, &camera);
             renderer.play_effects(&view.effects, &view.weapons, 1.0 / 60.0, &camera);
             renderer.dropped_weapons.use_server_transforms = matches!(feed, Feed::Demo(_));
