@@ -986,6 +986,7 @@ impl App {
             let appearance_view = AppearanceView {
                 teams: &view.teams,
                 looks: &view.looks,
+                names: &view.names,
                 perspective: self.pov_entity.as_deref(),
                 own: feed.local_entity(),
                 team_based: feed.match_state().team_based(),
@@ -1987,13 +1988,27 @@ impl ApplicationHandler for App {
                 button: MouseButton::Left,
                 ..
             } => {
+                // A campaign mission not won, played again (`setRetryAction`).
+                let retry = (state == ElementState::Pressed && !self.captured)
+                    .then(|| {
+                        let h = self.surface.as_ref()?.hud.as_ref()?;
+                        let (x, y) = self.cursor?;
+                        h.scoreboard
+                            .retry_hit(x as f32 / h.scale, y as f32 / h.scale)
+                            .map(str::to_owned)
+                    })
+                    .flatten();
+                if let Some(mission) = &retry {
+                    washoi::client::campaign::campaign_session::request_campaign_retry(mission);
+                }
                 // The post-game's way home (`setReturnAction`).
-                let home = state == ElementState::Pressed
-                    && !self.captured
-                    && self.surface.as_ref().and_then(|s| s.hud.as_ref()).is_some_and(|h| {
-                        self.cursor
-                            .is_some_and(|(x, y)| h.scoreboard.return_hit(x as f32 / h.scale, y as f32 / h.scale))
-                    });
+                let home = retry.is_some()
+                    || state == ElementState::Pressed
+                        && !self.captured
+                        && self.surface.as_ref().and_then(|s| s.hud.as_ref()).is_some_and(|h| {
+                            self.cursor
+                                .is_some_and(|(x, y)| h.scoreboard.return_hit(x as f32 / h.scale, y as f32 / h.scale))
+                        });
                 if home {
                     println!("lobby: back to the lobby");
                     end_screen(event_loop);

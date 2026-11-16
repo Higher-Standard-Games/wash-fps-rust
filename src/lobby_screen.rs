@@ -59,6 +59,8 @@ struct LobbyApp<'a> {
     style: TwinStyle,
     /// The menus' music, with the time of the last frame.
     music: Option<(GameAudio, Instant)>,
+    /// The page music playing (`playPageMusic`'s choice).
+    page_music: &'static str,
     open: Option<Open>,
     outcome: Option<LobbyOutcome>,
     error: Option<String>,
@@ -75,6 +77,13 @@ impl LobbyApp<'_> {
         if let Some((audio, last)) = &mut self.music {
             let now = Instant::now();
             audio.set_menu_muted(self.panel.music_muted);
+            // `playPageMusic`: the campaign page plays its own opener; leaving
+            // it, the menus' playlist carries on from where it was.
+            let page = self.panel.page_playlist();
+            if page != self.page_music {
+                self.page_music = page;
+                audio.switch_page_music(page);
+            }
             audio.update_menu_music(now.duration_since(*last).as_secs_f64());
             *last = now;
         }
@@ -235,6 +244,7 @@ pub fn run(panel: &mut LobbyPanel, style: TwinStyle, data: &Path) -> Result<Lobb
         console: GameConsole::new(washoi::config_dir()),
         style,
         music: Some((audio, Instant::now())),
+        page_music: washoi::client::game_events::MENU_PLAYLIST,
         open: None,
         outcome: None,
         error: None,
@@ -393,7 +403,11 @@ pub fn screenshot(
         {
             panel.show_room_state(state);
         }
-        if quick_play && !pressed && panel.quick_play_enabled() {
+        // On the Campaign page, the mission to play next instead.
+        let campaign = page.is_some_and(|p| p.starts_with("campaign"));
+        if quick_play && campaign && !pressed {
+            pressed = panel.start_next_campaign_mission();
+        } else if quick_play && !pressed && panel.quick_play_enabled() {
             pressed = true;
             panel.start_quick_play();
         }

@@ -3,6 +3,7 @@
 //! `cl_team_enemy_model`. Enemies may be `random`: a body the own side
 //! does not wear, drawn again each game.
 
+use std::collections::HashMap;
 use std::sync::Mutex;
 
 use shagger::animation::player_model_assets::{
@@ -106,10 +107,84 @@ pub fn reroll_random_enemy_model() {
     *RANDOM_PICK.lock().unwrap_or_else(std::sync::PoisonError::into_inner) = None;
 }
 
+/// A campaign's models (`forced`, `forcedByName`, `scaleByName`).
+#[derive(Debug, Default)]
+struct Forced {
+    ally: Option<&'static str>,
+    enemy: Option<&'static str>,
+    by_name: HashMap<String, &'static str>,
+    scale_by_name: HashMap<String, f64>,
+}
+
+static FORCED: Mutex<Option<Forced>> = Mutex::new(None);
+
+fn forced<T>(read: impl FnOnce(&Forced) -> Option<T>) -> Option<T> {
+    FORCED
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .as_ref()
+        .and_then(read)
+}
+
+fn known_model(model: &str) -> Option<&'static str> {
+    PLAYER_MODELS.iter().find(|m| **m == model).copied()
+}
+
+/// `forcePlayerModels`: draws this game's sides with these models (ally,
+/// enemy) whatever the settings say, as a campaign mission does, and the
+/// players named in `by_name` with a model of their own (a mixed crew);
+/// `None` goes back to the settings. Unknown ids are ignored.
+pub fn force_player_models<'a>(
+    models: Option<(&str, &str)>,
+    by_name: impl IntoIterator<Item = (&'a str, &'a str)>,
+    scales_by_name: impl IntoIterator<Item = (&'a str, f64)>,
+) {
+    let mut forced = FORCED.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+    let Some((ally, enemy)) = models else {
+        *forced = None;
+        return;
+    };
+    *forced = Some(Forced {
+        ally: known_model(ally),
+        enemy: known_model(enemy),
+        by_name: by_name
+            .into_iter()
+            .filter_map(|(name, model)| Some((name.to_owned(), known_model(model)?)))
+            .collect(),
+        scale_by_name: scales_by_name
+            .into_iter()
+            .filter(|(_, scale)| scale.is_finite() && *scale > 0.0)
+            .map(|(name, scale)| (name.to_owned(), scale))
+            .collect(),
+    });
+}
+
+/// `forcedScaleForName`: how many times a player's size a campaign draws
+/// this player (a boss); 1 for everyone else.
+#[must_use]
+pub fn forced_scale_for_name(name: Option<&str>) -> f64 {
+    name.and_then(|name| forced(|f| f.scale_by_name.get(name).copied()))
+        .unwrap_or(1.0)
+}
+
+/// `forcedModelForName`: the model a campaign gives this player by name,
+/// if it gives them one of their own.
+#[must_use]
+pub fn forced_model_for_name(name: Option<&str>) -> Option<&'static str> {
+    name.and_then(|name| forced(|f| f.by_name.get(name).copied()))
+}
+
 /// `playerModelChoice`: the body a side is drawn with; `random` is drawn
 /// once a game, never your own side's body.
 #[must_use]
 pub fn player_model_choice(side: PlayerModelSide) -> &'static str {
+    let over = forced(|f| match side {
+        PlayerModelSide::Ally => f.ally,
+        PlayerModelSide::Enemy => f.enemy,
+    });
+    if let Some(model) = over {
+        return model;
+    }
     let setting = player_model_setting(side);
     if setting != "random" {
         return setting;

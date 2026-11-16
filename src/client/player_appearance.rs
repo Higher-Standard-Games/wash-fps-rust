@@ -12,7 +12,9 @@ use std::collections::HashMap;
 
 use shagger::animation::player_model_manager::PlayerModelVisualStyle;
 
-use crate::client::player_model_selection::{PlayerModelSide, player_model_choice};
+use crate::client::player_model_selection::{
+    PlayerModelSide, forced_model_for_name, forced_scale_for_name, player_model_choice,
+};
 use crate::client::player_model_visual_settings::{
     FfaColors, PlayerTeamSlot, get_ffa_player_model_visual_style, get_player_model_visual_style, get_player_team_slot,
 };
@@ -25,6 +27,8 @@ pub struct AppearanceView<'a> {
     pub teams: &'a HashMap<String, String>,
     /// Each free-for-all player's look byte by entity.
     pub looks: &'a HashMap<String, u8>,
+    /// Each player's name by entity.
+    pub names: &'a HashMap<String, String>,
     /// The player whose eyes a demo borrows (`perspectiveEntityId`).
     pub perspective: Option<&'a str>,
     /// The local player in live play (`ownEntityId`); a demo has none.
@@ -70,17 +74,28 @@ impl AppearanceView<'_> {
         decode_look(look).map(|l| l.model)
     }
 
-    /// `modelChoiceFor`.
+    /// `modelChoiceFor`: the server's free-for-all body, else the one a
+    /// campaign gives this player by name, else their side's.
     #[must_use]
     pub fn model_for(&self, entity_id: &str) -> &'static str {
-        self.assigned_model(entity_id).unwrap_or_else(|| {
-            let ally = Some(entity_id) == self.own || self.slot(entity_id) == PlayerTeamSlot::Ally;
-            player_model_choice(if ally {
-                PlayerModelSide::Ally
-            } else {
-                PlayerModelSide::Enemy
+        let name = self.names.get(entity_id).map(String::as_str);
+        self.assigned_model(entity_id)
+            .or_else(|| forced_model_for_name(name))
+            .unwrap_or_else(|| {
+                let ally = Some(entity_id) == self.own || self.slot(entity_id) == PlayerTeamSlot::Ally;
+                player_model_choice(if ally {
+                    PlayerModelSide::Ally
+                } else {
+                    PlayerModelSide::Enemy
+                })
             })
-        })
+    }
+
+    /// `forcedScaleForName`: how many times a player's size this player is
+    /// drawn (a campaign boss); 1 for everyone else.
+    #[must_use]
+    pub fn scale_for(&self, entity_id: &str) -> f64 {
+        forced_scale_for_name(self.names.get(entity_id).map(String::as_str))
     }
 }
 
@@ -126,6 +141,7 @@ mod tests {
         AppearanceView {
             teams,
             looks,
+            names: Box::leak(Box::default()),
             perspective: None,
             own: Some("me"),
             team_based,

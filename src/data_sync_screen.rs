@@ -41,7 +41,14 @@ use crate::match_loading_screen::twin_style;
 use crate::window::{OpenWindow, next_frame, open_window, present, run_on_event_loop};
 
 /// The music's playlists, served beside the packages.
-const PLAYLISTS: [&str; 3] = ["game.playlist.json", "menu.playlist.json", "endgame.playlist.json"];
+const PLAYLISTS: [&str; 6] = [
+    "game.playlist.json",
+    "menu.playlist.json",
+    "endgame.playlist.json",
+    "campaign.playlist.json",
+    "campaign_cartel.playlist.json",
+    "campaign_boss.playlist.json",
+];
 const BACKGROUND: wgpu::Color = wgpu::Color {
     r: 0.035,
     g: 0.03,

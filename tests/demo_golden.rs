@@ -40,6 +40,7 @@ fn recorded_demos_read_like_shag() {
             ("startTime", num(h.start_time)),
             ("matchId", h.match_id.clone().map_or(Value::Null, Value::String)),
             ("private", h.private.map_or(Value::Null, Value::Bool)),
+            ("campaign", h.campaign.clone().map_or(Value::Null, Value::String)),
             (
                 "players",
                 Value::Array(

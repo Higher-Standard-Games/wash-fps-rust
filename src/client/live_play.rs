@@ -295,6 +295,9 @@ impl LivePlay {
     ) -> Result<Self, String> {
         // Each game you join draws its own random enemy body.
         crate::client::player_model_selection::reroll_random_enemy_model();
+        // `Game.ts`'s connect: a campaign match's models, crew and song.
+        let campaign = crate::client::campaign::campaign_session::campaign_match();
+        crate::client::campaign::campaign_session::apply_campaign_looks(campaign.as_ref());
         let session = NetworkSession::start(
             SessionConfig {
                 url: url.to_owned(),
@@ -334,7 +337,12 @@ impl LivePlay {
                     }));
                     return Ok(Self {
                         session,
-                        feed: SnapshotFeed::new(),
+                        feed: {
+                            let mut feed = SnapshotFeed::new();
+                            // The opening countdown holds everyone still.
+                            feed.match_state.set_campaign_countdown(campaign.is_some());
+                            feed
+                        },
                         predictor,
                         started: Instant::now(),
                         map: w.map.clone(),

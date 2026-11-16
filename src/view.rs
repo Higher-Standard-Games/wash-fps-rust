@@ -1176,7 +1176,7 @@ pub struct MapRenderer {
     hand_weapons: HandWeapons,
     live_weapons: Arc<HashMap<String, String>>,
     /// Each live player's body (`modelChoiceFor`), from [`styled_players`].
-    pub live_models: HashMap<String, &'static str>,
+    pub live_models: HashMap<String, (&'static str, f64)>,
     /// Players whose body a ragdoll took, hidden until they leave the list.
     ragdolled: HashSet<String>,
     /// Poses of players who left the list this frame, for a death that
@@ -1643,11 +1643,11 @@ impl MapRenderer {
             }
             upsert(&mut self.live_styles, id, *style);
             // The body `styled_players` chose (`modelChoiceFor`).
-            let choice = self
+            let (choice, scale) = self
                 .live_models
                 .get(id)
                 .copied()
-                .unwrap_or_else(|| player_model_choice(PlayerModelSide::Enemy));
+                .unwrap_or_else(|| (player_model_choice(PlayerModelSide::Enemy), 1.0));
             renderer.update_live(
                 id,
                 interp,
@@ -1656,6 +1656,7 @@ impl MapRenderer {
                 self.live_weapons.get(id).map(String::as_str),
                 self.effect_time,
                 choice,
+                scale,
             );
             if let Some(world) = renderer.world_of(id, interp) {
                 upsert(&mut self.live_worlds, id, world);
@@ -3628,7 +3629,10 @@ pub fn styled_players(
     appearance: &mut PlayerAppearance,
     view: &AppearanceView<'_>,
 ) -> StyledPlayers {
-    let models = players.iter().map(|(id, _)| (id.clone(), view.model_for(id))).collect();
+    let models = players
+        .iter()
+        .map(|(id, _)| (id.clone(), (view.model_for(id), view.scale_for(id))))
+        .collect();
     let players = players
         .into_iter()
         .map(|(id, p)| {
@@ -3642,7 +3646,7 @@ pub fn styled_players(
 /// [`styled_players`]: the players with their styles, and their bodies.
 pub type StyledPlayers = (
     Vec<(String, InterpolatedEntity, PlayerModelVisualStyle)>,
-    HashMap<String, &'static str>,
+    HashMap<String, (&'static str, f64)>,
 );
 
 /// The view, demo or match until its window closes; the exit code.
@@ -3959,6 +3963,7 @@ pub fn start_prepared(o: &ViewOptions, prepared: Prepared) -> Result<i32, String
                 &AppearanceView {
                     teams: &view.teams,
                     looks: &view.looks,
+                    names: &view.names,
                     perspective: followed.as_deref(),
                     own: feed.local_entity(),
                     team_based: feed.match_state().team_based(),

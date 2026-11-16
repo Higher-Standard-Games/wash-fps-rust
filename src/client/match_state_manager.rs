@@ -92,6 +92,12 @@ pub struct MatchStateManager {
     round_state: Option<String>,
     objective: Option<Value>,
     round_result: Option<Value>,
+    /// The newest round result seen, kept after the server clears it at the next freeze.
+    last_round_result: Option<Value>,
+    /// Seconds until the next round goes live, between rounds; `None` otherwise.
+    next_round_in: Option<f64>,
+    /// A campaign match holds everyone still through its opening countdown too.
+    campaign_countdown: bool,
     explosion: Option<Value>,
     is_ready: bool,
     /// A timeout holding the match, or its count back in; `None` while it runs.
@@ -182,6 +188,10 @@ impl MatchStateManager {
         self.round_state = string(event, "roundState");
         self.objective = present(event, "objective");
         self.round_result = present(event, "roundResult");
+        if let Some(r) = &self.round_result {
+            self.last_round_result = Some(r.clone());
+        }
+        self.next_round_in = number(event, "nextRoundIn");
         self.explosion = present(event, "explosion");
         (old != self.phase).then_some(old)
     }
@@ -237,6 +247,25 @@ impl MatchStateManager {
     #[must_use]
     pub fn round_result(&self) -> Option<&Value> {
         self.round_result.as_ref()
+    }
+    /// `lastRoundResult`: how the newest decided round ended, through the
+    /// next round's freeze too.
+    #[must_use]
+    pub fn last_round_result(&self) -> Option<&Value> {
+        self.last_round_result.as_ref()
+    }
+    /// `nextRoundIn`: between rounds, seconds until the next round goes live
+    /// (round end and freeze together); `None` otherwise, and from an older
+    /// server or recording.
+    #[must_use]
+    pub fn next_round_in(&self) -> Option<f64> {
+        self.next_round_in
+    }
+    /// `setCampaignCountdown`: whether this match is a campaign match, whose
+    /// server holds everyone still through the opening countdown as a round
+    /// mode does through its freeze. Set on every connect.
+    pub fn set_campaign_countdown(&mut self, campaign: bool) {
+        self.campaign_countdown = campaign;
     }
     #[must_use]
     pub fn explosion(&self) -> Option<&Value> {
@@ -352,8 +381,8 @@ impl MatchStateManager {
             .map_or(0.0, |p| p.ends_at.saturating_duration_since(now).as_secs_f64())
     }
 
-    /// `isMovementFrozen`: a timeout, the post-game, and a round mode's
-    /// countdown and round end.
+    /// `isMovementFrozen`: a timeout, the post-game, a round mode's
+    /// countdown and round end, and a campaign match's opening countdown.
     #[must_use]
     pub fn is_movement_frozen(&self) -> bool {
         if self.pause.is_some() {
@@ -361,7 +390,8 @@ impl MatchStateManager {
         }
         match self.phase {
             MatchPhase::PostGame => true,
-            MatchPhase::RoundEnd | MatchPhase::Countdown => self.round > 0,
+            MatchPhase::Countdown => self.round > 0 || self.campaign_countdown,
+            MatchPhase::RoundEnd => self.round > 0,
             _ => false,
         }
     }
@@ -409,7 +439,11 @@ impl MatchStateManager {
 
     /// `reset`: the rosters cannot outlive their match.
     pub fn reset(&mut self) {
-        *self = Self::default();
+        // Which kind of match this is outlives a reset: it is set on connect.
+        *self = Self {
+            campaign_countdown: self.campaign_countdown,
+            ..Self::default()
+        };
     }
 }
 

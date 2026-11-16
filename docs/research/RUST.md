@@ -2731,6 +2731,47 @@ whole areas rather than single items. 0.2.0 closes them in two steps.
 
 ## 24. Progress log
 
+### Staging catch-up: the single-player campaign (November 16, 2026)
+
+Ported from SHAG staging (a34d658, fps 0184fc1):
+
+- **The Campaign page** (`client/campaign`, from `CampaignView.ts` and
+  `Campaign.css`): a rail key with the progress ("2 / 8 cleared"), the
+  squad on their street across the top drifting with the scroll and a
+  handheld wander, and the operations down a track: cleared, current, open
+  or locked, each with its card (cover-cropped at the story's focus), name,
+  hook, game mode, Most frags and Play or Replay. Locked rows are dark,
+  grey, blurred strips stamped CLASSIFIED. The art is built in
+  (`assets/campaign`, webp) and decoded on threads per card; egui has no
+  CSS filters, so the blurred, darkened and grey copies are made once on
+  the CPU as each card decodes. Progress is cached beside the settings
+  (`campaign/progress.<account>.json`), as are the missions' looks for
+  demos (`campaign/looks.json`).
+- **The comic card** (`campaign_cutscene.rs`, from `CampaignCutscene.ts`):
+  fade to black, then each panel fills the screen in turn with the card
+  blurred behind it, the slow push and turn, speed lines on the move, the
+  title plate and the panel pips; a key or click moves on, Esc skips.
+  After the last panel the lobby readies up ("Cartel King incoming…"); a
+  failure says why and offers Back to campaign. Left out: the tilt in depth
+  and the blur at full speed between panels. `--page campaign/<mission>`
+  plays a card for screenshots, and `menu --page campaign --play` starts
+  the next mission end to end.
+- **In the match:** the mission's forced models, per-bot models and sizes
+  (the boss at 1.8, with its weapons through the hand bone), the crew in
+  lime, the opening countdown holding everyone still, the briefing plate
+  over it, the round intermission screen, a Retry key over Back to the
+  lobby when a mission is lost, and the mission's own playlist. The
+  Campaign page plays its own opener and the menus' playlist is parked
+  and carried on (shagger `Music::switch_playlist`).
+- **Demos:** version 8 headers name the mission; a campaign demo draws its
+  mission's looks. Its comic card before playback is not ported yet.
+- **Also:** quick play leaves Ready to the player, and an aim held through a
+  weapon switch no longer charges the blade.
+- **Not yet:** the S&D EMP bomb model (`bomb_emp.glb` is not in the
+  published packs yet), hit spatter and blood splats, ragdoll damping. The
+  campaign playlists and `washoi_campaign_soundtrack.pk3` are fetched as
+  optional extras and play once eu.washoi.net has them.
+
 ### 0.6.1: a finished match comes back to Play (November 14, 2026)
 
 After a match's post-game the client came back into the match's room; the

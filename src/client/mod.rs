@@ -7,6 +7,7 @@ pub mod attached_gun;
 pub mod bomb_renderer;
 pub mod bomb_site_debris;
 pub mod bomb_site_markers;
+pub mod campaign;
 pub mod cartoon_hit_effect;
 pub mod cinematic_demo_player;
 pub mod controller_input;

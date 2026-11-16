@@ -124,6 +124,10 @@ pub struct Scoreboard {
     return_offered: bool,
     /// Where the "Back to the lobby" key was drawn, for clicks.
     return_rect: Cell<Option<[f32; 4]>>,
+    /// A campaign mission not won is one click from playing again: its id.
+    retry_mission: Option<String>,
+    /// Where the "Retry" key was drawn.
+    retry_rect: Cell<Option<[f32; 4]>>,
     local_player_id: String,
     round: u32,
     carrier: Option<String>,
@@ -242,11 +246,15 @@ impl FpsHudWidget for Scoreboard {
             (Some(_), false) => {
                 self.post_game = None;
                 self.return_offered = false;
+                self.retry_mission = None;
             }
             (Some(p), true) => {
                 p.age += frame.dt;
-                if p.age >= OPEN_UP_SECONDS && m.single_flow() && !state.watcher {
+                if p.age >= OPEN_UP_SECONDS && m.single_flow() && !state.watcher && !self.return_offered {
                     self.return_offered = true;
+                    self.retry_mission = crate::client::campaign::campaign_session::campaign_match()
+                        .map(|c| c.mission_id)
+                        .filter(|_| !local_side_won(m, state));
                 }
             }
             (None, false) => {}
@@ -436,10 +444,43 @@ impl FpsHudWidget for Scoreboard {
             self.stage(hud, &pen, p, vw, vh);
         }
         self.return_rect.set(None);
+        self.retry_rect.set(None);
         if self.return_offered {
-            self.return_key(hud, fonts, vw, vh);
+            let rect = self.cta_key(hud, fonts, vw, vh, "BACK TO THE LOBBY", 0.0);
+            self.return_rect.set(Some(rect));
+            if self.retry_mission.is_some() {
+                // `.fps-scoreboard-retry`: Retry stands above the way back.
+                let rect = self.cta_key(hud, fonts, vw, vh, "RETRY", 100.0);
+                self.retry_rect.set(Some(rect));
+            }
         }
     }
+}
+
+/// `localSideWon`: the local player's side, or the local player, won the
+/// match; a draw is no win.
+fn local_side_won(
+    m: &crate::client::match_state_manager::MatchStateManager,
+    state: &crate::client::hud_state::HudState,
+) -> bool {
+    use crate::client::player_model_visual_settings::canonical_team;
+    let Some(winner) = m.winner() else { return false };
+    let kind = winner.get("kind").and_then(|k| k.as_str());
+    if kind == Some("draw") {
+        return false;
+    }
+    if kind == Some("team") {
+        let mine = state
+            .scoreboard
+            .iter()
+            .find(|e| e.player_id == state.local_player_id)
+            .and_then(|e| e.team_id.as_deref())
+            .and_then(canonical_team);
+        let theirs = winner.get("id").and_then(|i| i.as_str()).and_then(canonical_team);
+        return mine.is_some() && mine == theirs;
+    }
+    m.resolve_winner_player_id()
+        .is_some_and(|id| to_client_key(&id) == state.local_player_id)
 }
 
 /// Sizes and fonts at the board's scale.
@@ -470,6 +511,16 @@ impl Scoreboard {
     #[must_use]
     pub fn return_offered(&self) -> bool {
         self.return_offered
+    }
+
+    /// Whether a click at (`x`, `y`) CSS pixels pressed "Retry", and the
+    /// mission it plays again.
+    #[must_use]
+    pub fn retry_hit(&self, x: f32, y: f32) -> Option<&str> {
+        self.retry_rect
+            .get()
+            .filter(|[rx, ry, rw, rh]| x >= *rx && x <= rx + rw && y >= *ry && y <= ry + rh)
+            .and(self.retry_mission.as_deref())
     }
 
     /// Whether a click at (`x`, `y`) CSS pixels pressed "Back to the lobby".
@@ -991,16 +1042,15 @@ impl Scoreboard {
     }
 
     /// `.fps-scoreboard-return.raised-key--cta`: on the board's right edge,
-    /// 12vh up.
-    fn return_key(&self, hud: &mut Hud2d, fonts: &Fonts, vw: f32, vh: f32) {
-        let label = "BACK TO THE LOBBY";
+    /// 12vh up, and `raise` more; returns where it was drawn.
+    fn cta_key(&self, hud: &mut Hud2d, fonts: &Fonts, vw: f32, vh: f32, label: &str, raise: f32) -> [f32; 4] {
         let style = fonts.display(30.0 / UI_SCALE, hsla(250.0, 45.0, 8.0, 1.0)).spacing(3.0);
         let (a, d) = hud.line_metrics(&style);
         let w = 46.0 + hud.measure(label, &style) + 52.0;
         let h = 76.0_f32.max(a + d + 20.0);
         let depth = 9.6;
         let x = vw - 0.05 * vw - w - depth * 0.75;
-        let y = vh - 0.12 * vh - h - depth;
+        let y = vh - 0.12 * vh - raise - h - depth;
         let cut = [[0.05, 0.0], [1.0, 0.0], [0.95, 1.0], [0.0, 1.0]];
         // The key's side, under and behind the face.
         Slab {
@@ -1032,7 +1082,7 @@ impl Scoreboard {
         .draw(hud, x, y, w, h);
         hud.rect(x + 0.05 * w, y, 0.95 * w, 2.0, hsla(0.0, 0.0, 100.0, 0.55));
         hud.text(x + 46.0, y + (h + a - d) / 2.0, label, &style);
-        self.return_rect.set(Some([x, y, w + depth, h + depth]));
+        [x, y, w + depth, h + depth]
     }
 }
 
