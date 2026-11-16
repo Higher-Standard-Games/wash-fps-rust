@@ -82,6 +82,7 @@ use washoi::client::hud::widgets::pickup_prompt::{asks_to_swap, swap_text};
 use washoi::client::hud::widgets::spectator_cue::pad_bindings;
 use washoi::client::match_state_manager::MatchPhase;
 use washoi::client::move_stick::{MoveAxis, stick_direction, stick_keys};
+use washoi::client::quad_damage_visual::mask_has_quad;
 use washoi::client::remote_player_logic::CLIENT_KEY_PREFIX;
 use washoi::client::settings::controller_model::controller_buttons;
 use washoi::client::spectate_view::{DeathCameraCue, SpectateView};
@@ -1111,6 +1112,9 @@ impl App {
             // player's eyes, their screen's view effects, and their weapon
             // in hand, swaying with their stride.
             self.followed_aiming = None;
+            // `DemoService`: in a demo, the watched player's gun glows while
+            // they carry the quad, as the player's own does.
+            let mut followed_quad = false;
             let followed = self
                 .follow
                 .and_then(|i| players.get(i))
@@ -1122,6 +1126,7 @@ impl App {
                         self.pov.reset();
                         self.pov_entity = Some(id.clone());
                     }
+                    followed_quad = matches!(feed, Feed::Demo(_)) && mask_has_quad(p.powerup_mask.unwrap_or(0));
                     let aiming = p.aiming.unwrap_or(false);
                     self.pov.set_aiming(aiming);
                     self.followed_aiming = Some(aiming);
@@ -1361,11 +1366,12 @@ impl App {
                 );
             }
             // `FPSPlayer`: our quad puts its outline on the gun.
-            let quad = matches!(feed, Feed::Play(..))
-                && s.hud.as_mut().is_some_and(|h| {
-                    let now = h.state.now;
-                    h.state.powerups.is_active("quad", now)
-                });
+            let quad = followed_quad
+                || matches!(feed, Feed::Play(..))
+                    && s.hud.as_mut().is_some_and(|h| {
+                        let now = h.state.now;
+                        h.state.powerups.is_active("quad", now)
+                    });
             // `FPSPickup`'s and `DroppedWeaponRenderer`'s swap prompts: in
             // play, alive, with the mouse ours; asked for under each owner.
             if let Some(hud) = &mut s.hud {

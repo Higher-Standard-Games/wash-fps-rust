@@ -2775,6 +2775,10 @@ Ported from SHAG staging (a34d658, fps 0184fc1):
 - **Also:** quick play leaves Ready to the player, an aim held through a
   weapon switch no longer charges the blade, Survival's waiting bots are
   left out of the HUD, and spectating finds teammates by the room's teams.
+- **Demo quad glow** (staging 2441312, fps ed045c8): watching a demo
+  through a player's eyes, their gun wears the quad outline while they
+  carry it. The body glow already held between recorded ticks, since demo
+  frames go through the `SnapshotBuffer`, which keeps the newer mask.
 - **Not yet:** the S&D EMP bomb model (`bomb_emp.glb` is not in the
   published packs yet). The
   campaign playlists and `washoi_campaign_soundtrack.pk3` are fetched as
