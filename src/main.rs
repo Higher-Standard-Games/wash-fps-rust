@@ -13,7 +13,7 @@
 //! washoi sync [--region eu|us] [--data DIR]
 //! washoi --version
 //! washoi loading <map> --screenshot FILE.png [--levelshot FILE.jpg] [--seconds N] [--size WxH]
-//! washoi view <map> [--data DIR] [--spawn N] [--screenshot FILE.png] [--size WxH] [--time T] [--at X,Y,Z,YAW] [--pitch DEG] [--player X,Y,Z,YAW[,CLIP[,FRAME[,quad][,WEAPON][,BODY]]]]... [--projectile ID,X,Y,Z,YAW[,PITCH]]... [--explosion ID,X,Y,Z,AGE]... [--tracer X,Y,Z,X2,Y2,Z2,R,G,B,AGE]... [--muzzle X,Y,Z,R,G,B,STYLE,SCALE,DURATION,AGE]... [--impact X,Y,Z,NX,NY,NZ,IX,IY,IZ,R,G,B,HEAVY,AGE]... [--rail X,Y,Z,X2,Y2,Z2,R,G,B,KIND,NX,NY,NZ,AGE]... [--lightning MODE,X,Y,Z,X2,Y2,Z2,R,G,B,KIND,AGE]... [--hit X,Y,Z,DAMAGE,AGE[,head]]... [--teleport X,Y,Z,X2,Y2,Z2,YAW,AGE]... [--gib X,Y,Z,AGE]... [--ring X,Y,Z,KIND,RADIUS,ALPHA]... [--ragdoll X,Y,Z,YAW,DX,DY,DZ,AGE]... [--weapon ID [--aim] [--quad] [--fire AGE]] [--no-cull] [--no-lights] [--seconds N]
+//! washoi view <map> [--data DIR] [--spawn N] [--screenshot FILE.png] [--size WxH] [--time T] [--at X,Y,Z,YAW] [--pitch DEG] [--player X,Y,Z,YAW[,CLIP[,FRAME[,quad][,WEAPON][,BODY]]]]... [--projectile ID,X,Y,Z,YAW[,PITCH]]... [--explosion ID,X,Y,Z,AGE]... [--tracer X,Y,Z,X2,Y2,Z2,R,G,B,AGE]... [--muzzle X,Y,Z,R,G,B,STYLE,SCALE,DURATION,AGE]... [--impact X,Y,Z,NX,NY,NZ,IX,IY,IZ,R,G,B,HEAVY,AGE]... [--rail X,Y,Z,X2,Y2,Z2,R,G,B,KIND,NX,NY,NZ,AGE]... [--lightning MODE,X,Y,Z,X2,Y2,Z2,R,G,B,KIND,AGE]... [--hit X,Y,Z,DAMAGE,AGE[,head]]... [--teleport X,Y,Z,X2,Y2,Z2,YAW,AGE]... [--gib X,Y,Z,AGE]... [--spatter X,Y,Z,AGE[,robot]]... [--ring X,Y,Z,KIND,RADIUS,ALPHA]... [--ragdoll X,Y,Z,YAW,DX,DY,DZ,AGE]... [--weapon ID [--aim] [--quad] [--fire AGE]] [--no-cull] [--no-lights] [--seconds N]
 //! washoi demo <file.shagdemo> [--data DIR] [--screenshot FILE.png] [--size WxH] [--time T] [--at X,Y,Z,YAW] [--pitch DEG] [--follow N] [--reel MINUTES] [--audio-out FILE.wav] [--scoreboard] [--seconds N]
 //! washoi watch <ws://game-server> [--name NAME] [--ticket TICKET] [--data DIR] [--screenshot FILE.png] [--time T] [--at X,Y,Z,YAW] [--follow N] [--seconds N]
 //! washoi play <ws://game-server> [--name NAME] [--ticket TICKET] [--data DIR] [--screenshot FILE.png] [--time T] [--say TEXT] [--seconds N]
@@ -188,6 +188,7 @@ struct Options {
     hits: Vec<view::HitView>,
     teleports: Vec<view::TeleportView>,
     gibs: Vec<view::GibView>,
+    spatters: Vec<view::SpatterView>,
     rings: Vec<view::RingView>,
     ragdolls: Vec<view::RagdollView>,
     words: Vec<String>,
@@ -316,6 +317,16 @@ fn parse_options(args: impl Iterator<Item = String>) -> Options {
                 o.gibs.push(view::GibView {
                     origin: [n(0), n(1), n(2)],
                     age: n(3),
+                });
+            }
+            "--spatter" => {
+                let v = value();
+                let parts: Vec<&str> = v.split(',').map(str::trim).collect();
+                let n = |i: usize| -> f64 { parts.get(i).and_then(|p| p.parse().ok()).unwrap_or_else(|| usage()) };
+                o.spatters.push(view::SpatterView {
+                    origin: [n(0), n(1), n(2)],
+                    age: n(3),
+                    robot: parts.get(4).is_some_and(|r| *r == "robot"),
                 });
             }
             "--ring" => {
@@ -905,6 +916,7 @@ fn view_options(
         hits: o.hits.clone(),
         teleports: o.teleports.clone(),
         gibs: o.gibs.clone(),
+        spatters: o.spatters.clone(),
         rings: o.rings.clone(),
         ragdolls: o.ragdolls.clone(),
         weapon: o.weapon.clone(),

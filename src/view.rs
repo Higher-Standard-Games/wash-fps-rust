@@ -24,6 +24,7 @@ use washoi::client::dropped_weapon_renderer::{DropThrow, DroppedWeaponInfo, Drop
 use washoi::client::fps_liquid_audio::play_liquid_crossing;
 use washoi::client::fps_player_audio::{player_voice_for_entity, set_local_player_voice};
 use washoi::client::gib_system::{GibRenderer, GibSystem};
+use washoi::client::hit_spatter::{Hit, HitSpatter, HitSpatterRenderer, HitZone, bloodless};
 use washoi::client::hud::widgets::loadout_picker;
 use washoi::client::hud::widgets::pickup_prompt::{horizontal_distance_sq, in_pickup_range};
 use washoi::client::kill_taunt::{KillFacts, choose_kill_taunt};
@@ -193,6 +194,7 @@ pub struct ViewOptions {
     pub hits: Vec<HitView>,
     pub teleports: Vec<TeleportView>,
     pub gibs: Vec<GibView>,
+    pub spatters: Vec<SpatterView>,
     pub rings: Vec<RingView>,
     pub ragdolls: Vec<RagdollView>,
     /// The first-person weapon to hold (`--weapon`), and whether it is
@@ -754,6 +756,17 @@ pub struct RingView {
     pub alpha: f64,
 }
 
+/// A hit's spatter, held at an age (`--spatter`).
+#[derive(Debug, Clone, PartialEq)]
+pub struct SpatterView {
+    /// The hit player's Quake origin.
+    pub origin: [f64; 3],
+    /// Seconds since the hit.
+    pub age: f64,
+    /// Sparks off a robot rather than blood.
+    pub robot: bool,
+}
+
 /// A body broken into shards, held at an age (`--gib`).
 #[derive(Debug, Clone, PartialEq)]
 pub struct GibView {
@@ -928,6 +941,9 @@ pub struct LoadedMap {
     pub teleports: Vec<TeleportView>,
     /// Gibs to hold on the map.
     pub gibs: Vec<GibView>,
+    /// Hit spatter to hold on the map (`--spatter`); a non-zero `kind` is a
+    /// robot's sparks.
+    pub spatters: Vec<SpatterView>,
     /// Liquid rings to hold on the map.
     pub rings: Vec<RingView>,
     /// Ragdolls to hold on the map.
@@ -1002,6 +1018,7 @@ pub fn load_map(data: &Path, map: &str, report: &mut dyn FnMut(PrepareStep)) -> 
         hits: Vec::new(),
         teleports: Vec::new(),
         gibs: Vec::new(),
+        spatters: Vec::new(),
         rings: Vec::new(),
         ragdolls: Vec::new(),
         effects: Vec::new(),
@@ -1136,6 +1153,9 @@ pub struct MapRenderer {
     /// Bodies breaking into shards on a gib death.
     pub gibs: GibSystem,
     gib_renderer: GibRenderer,
+    /// `HitSpatter`: blood or sparks where a hit lands.
+    pub spatter: HitSpatter,
+    spatter_renderer: HitSpatterRenderer,
     /// The map's `func_explosive` brush models and which are up
     /// (`BrushModelState`), and the disabled list last applied.
     brush_models: BrushModelState,
@@ -1826,6 +1846,7 @@ impl MapRenderer {
             self.spare_trails.push((def.id, trail));
         }
         self.gibs.clear();
+        self.spatter.clear();
         self.slide_dust.reset();
         self.bomb_debris.clear();
         self.damage_numbers.clear();
@@ -2014,6 +2035,80 @@ impl MapRenderer {
                 self.cartoon_hits.spawn(at, *damage);
             }
         }
+    }
+
+    /// FrameEffects' `HitSpatter.update` and GameEvents' `spatterHit`: blood
+    /// (sparks off a robot) from where each hit landed, away from whoever
+    /// made it, on anyone but the body the view is in (`view_entity`).
+    /// `players` and `local` (our entity and feet) place the shooters.
+    pub fn play_spatter(
+        &mut self,
+        events: &[SnapshotEvent],
+        view_entity: Option<&str>,
+        players: &[(String, InterpolatedEntity, PlayerModelVisualStyle)],
+        local: Option<(&str, DVec3)>,
+        dt: f64,
+    ) {
+        self.spatter.update(dt);
+        let splats_on = with_cvars(|c| c.get_bool("cl_blood_splats"));
+        for event in events {
+            let SnapshotEvent::Damage {
+                entity_id,
+                attacker_id,
+                damage,
+                weapon_id,
+                at,
+                hit_location,
+                ..
+            } = event
+            else {
+                continue;
+            };
+            if Some(entity_id.as_str()) == view_entity || *damage == 0 || bloodless(weapon_id) {
+                continue;
+            }
+            let position_of = |id: &str| {
+                local.filter(|(l, _)| *l == id).map(|(_, at)| at).or_else(|| {
+                    players
+                        .iter()
+                        .find(|(p, _, _)| p == id)
+                        .map(|(_, e, _)| DVec3::new(e.x, e.y, e.z))
+                })
+            };
+            let shooter = (attacker_id != entity_id).then(|| position_of(attacker_id)).flatten();
+            let (model, scale) = self.live_models.get(entity_id).copied().unwrap_or(("", 1.0));
+            let hit = Hit {
+                origin: DVec3::new(at.x, at.y, at.z),
+                zone: HitZone::from_location(*hit_location),
+                damage: f64::from(*damage),
+                away: shooter.map(|s| (at.x - s.x, at.z - s.z)),
+                robot: model == "robot",
+                scale,
+            };
+            self.spawn_spatter(&hit, splats_on);
+        }
+    }
+
+    /// One hit's spatter, with the floor straight under it: one trace for
+    /// all its pieces.
+    pub fn spawn_spatter(&mut self, hit: &Hit, splats_on: bool) {
+        use shagger::physics::collision_backend::TraceOptions;
+        use shagger::physics::content_flags::masks;
+        let from = HitSpatter::hit_point(hit);
+        let floor = self.shot_world.as_mut().and_then(|w| {
+            let v = |p: DVec3| shagger::babylon::maths::math_vector::Vector3::new(p.x, p.y, p.z);
+            let trace = w.trace(
+                v(from),
+                v(from - DVec3::Y * washoi::client::hit_spatter::FLOOR_REACH),
+                TraceOptions {
+                    radius: Some(0.0),
+                    height: Some(0.0),
+                    content_mask: Some(masks::SHOT),
+                },
+            );
+            (!trace.start_solid && trace.fraction < 1.0).then_some(trace.end_pos.y)
+        });
+        self.spatter.spawn(hit, floor, splats_on);
     }
 
     /// The shards fly on, and GameEvents' `handleDeathEvent` breaks a body
@@ -2576,6 +2671,7 @@ impl MapRenderer {
             );
         }
         self.gib_renderer.draws(&self.gibs, &mut self.frame_draws);
+        self.spatter_renderer.draws(&self.spatter, &mut self.frame_draws);
         self.bomb.draws(&mut self.frame_draws);
         self.slide_dust.eye = Some(camera.position.as_dvec3());
         self.slide_dust_renderer.draws(&self.slide_dust, &mut self.frame_draws);
@@ -3156,6 +3252,7 @@ pub fn build_renderer(gpu: &Gpu, map: &mut LoadedMap, output_format: wgpu::Textu
         }
     }
     let gib_renderer = GibRenderer::new(gpu, &mut models);
+    let spatter_renderer = HitSpatterRenderer::new(gpu, &mut models);
     let bomb = BombRenderer::new(gpu, &mut models);
     let slide_dust_renderer = SlideDustRenderer::new(gpu, &mut models);
     // The `func_explosive` brush models (`BrushModelState`), and in a demo
@@ -3513,6 +3610,8 @@ pub fn build_renderer(gpu: &Gpu, map: &mut LoadedMap, output_format: wgpu::Textu
         teleport_last: HashMap::new(),
         gibs: GibSystem::default(),
         gib_renderer,
+        spatter: HitSpatter::default(),
+        spatter_renderer,
         brush_models,
         lifts: LiftSystem::new(extract_lifts(&map.bsp.entities, &map.bsp.models, None)),
         applied_disabled: None,
@@ -3585,6 +3684,24 @@ pub fn build_renderer(gpu: &Gpu, map: &mut LoadedMap, output_format: wgpu::Textu
     if let Some(age) = map.gibs.iter().map(|g| g.age).reduce(f64::min) {
         for _ in 0..(age * 60.0).round() as usize {
             renderer.play_gibs(&[], 1.0 / 60.0);
+        }
+    }
+    // Held hit spatter (`--spatter`): a hard body hit from the west, flown
+    // on to its age.
+    for held in &map.spatters {
+        let hit = Hit {
+            origin: babylon(held.origin),
+            zone: HitZone::Body,
+            damage: 60.0,
+            away: Some((1.0, 0.0)),
+            robot: held.robot,
+            scale: 1.0,
+        };
+        renderer.spawn_spatter(&hit, true);
+    }
+    if let Some(age) = map.spatters.iter().map(|g| g.age).reduce(f64::min) {
+        for _ in 0..(age * 60.0).round() as usize {
+            renderer.spatter.update(1.0 / 60.0);
         }
     }
     // Held ragdolls (`--ragdoll`): an idle body launched, then fallen on to
@@ -3792,6 +3909,7 @@ pub fn start_prepared(o: &ViewOptions, prepared: Prepared) -> Result<i32, String
     map.hits.clone_from(&o.hits);
     map.teleports.clone_from(&o.teleports);
     map.gibs.clone_from(&o.gibs);
+    map.spatters.clone_from(&o.spatters);
     map.rings.clone_from(&o.rings);
     map.ragdolls.clone_from(&o.ragdolls);
     map.weapon.clone_from(&o.weapon);

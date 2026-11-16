@@ -2765,10 +2765,18 @@ Ported from SHAG staging (a34d658, fps 0184fc1):
   and carried on (shagger `Music::switch_playlist`).
 - **Demos:** version 8 headers name the mission; a campaign demo draws its
   mission's looks. Its comic card before playback is not ported yet.
-- **Also:** quick play leaves Ready to the player, and an aim held through a
-  weapon switch no longer charges the blade.
+- **Hit spatter** (`client/hit_spatter.rs`, from `HitSpatter.ts`): blood
+  cubes, or orange and yellow shards for robots, thrown from the hit zone
+  away from the shot, scaled by the victim's size, landing in splats on the
+  floor below (`cl_blood_splats`). `view --spatter X,Y,Z,AGE[,robot]` holds
+  one for screenshots.
+- **Ragdolls** spin down: angular damping on the bones, a cap on their spin
+  and a softer bounce on landing (`ragdoll_system.rs`).
+- **Also:** quick play leaves Ready to the player, an aim held through a
+  weapon switch no longer charges the blade, Survival's waiting bots are
+  left out of the HUD, and spectating finds teammates by the room's teams.
 - **Not yet:** the S&D EMP bomb model (`bomb_emp.glb` is not in the
-  published packs yet), hit spatter and blood splats, ragdoll damping. The
+  published packs yet). The
   campaign playlists and `washoi_campaign_soundtrack.pk3` are fetched as
   optional extras and play once eu.washoi.net has them.
 

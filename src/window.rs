@@ -1074,6 +1074,7 @@ impl App {
             // `SpectateView`: dead in a round, a teammate's eyes after the
             // corpse, and what decided the round at its end.
             if let Feed::Play(p, _) = &*feed {
+                self.spectate.set_roster_teams(std::sync::Arc::clone(&view.teams));
                 let cue = self.spectate.update(
                     f64::from(dt),
                     !p.alive,
@@ -1196,6 +1197,23 @@ impl App {
             }
             s.renderer.play_pickups(&view.pickup_active, effect_dt);
             s.renderer.play_gibs(&view.effects, effect_dt);
+            {
+                let local = match &*feed {
+                    Feed::Play(p, _) => p.feet().map(|f| (p.entity_id.as_str(), DVec3::new(f.x, f.y, f.z))),
+                    _ => None,
+                };
+                s.renderer.play_spatter(
+                    &view.effects,
+                    view_entity(
+                        feed.local_entity().filter(|_| self.spectate.watching().is_none()),
+                        &players,
+                        self.follow,
+                    ),
+                    &players,
+                    local,
+                    effect_dt,
+                );
+            }
             // Our own death: the camera follows the corpse or the burst
             // until we are back (`applyDeathCamera`).
             if let Some((follow, at, yaw)) = s.renderer.take_local_death() {

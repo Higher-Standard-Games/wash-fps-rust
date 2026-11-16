@@ -36,6 +36,7 @@ pub mod fps_reload_audio;
 pub mod fps_voltaic_audio;
 pub mod game_events;
 pub mod gib_system;
+pub mod hit_spatter;
 pub mod hud;
 pub mod hud_state;
 pub mod identity_fields;

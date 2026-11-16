@@ -45,6 +45,8 @@ pub struct SpectateView {
     dead_for: f64,
     /// `_roundEndCameraActive`.
     round_end_camera: bool,
+    /// Each player's side from the snapshot's roster, by entity.
+    roster_teams: std::sync::Arc<std::collections::HashMap<String, String>>,
 }
 
 /// `roundResult.focus`.
@@ -59,6 +61,12 @@ impl SpectateView {
     #[must_use]
     pub fn watching(&self) -> Option<&str> {
         self.watching.as_deref()
+    }
+
+    /// Each player's side from the snapshot's roster, by entity, for the
+    /// next [`Self::update`].
+    pub fn set_roster_teams(&mut self, teams: std::sync::Arc<std::collections::HashMap<String, String>>) {
+        self.roster_teams = teams;
     }
 
     /// `reset`: a new connection starts as a fresh player.
@@ -124,13 +132,24 @@ impl SpectateView {
         {
             return DeathCameraCue::Keep;
         }
+        // `teammateRoster`: sides from the snapshot's roster by entity (a
+        // campaign's bots are on it), ours from the match when it has none.
         let teams = m.player_teams();
-        let Some(mine) = teams.get(client_key_display_id(local_id)) else {
+        let roster = |id: &str| {
+            self.roster_teams
+                .get(id)
+                .filter(|t| !t.is_empty() && *t != "ffa")
+                .cloned()
+        };
+        let Some(mine) = roster(local_id).or_else(|| teams.get(client_key_display_id(local_id)).cloned()) else {
             return DeathCameraCue::Keep;
         };
-        let chosen = alive
-            .filter(|id| *id != local_id)
-            .find(|id| teams.get(client_key_display_id(id)) == Some(mine));
+        let chosen = alive.filter(|id| *id != local_id).find(|id| {
+            roster(id)
+                .or_else(|| teams.get(client_key_display_id(id)).cloned())
+                .as_ref()
+                == Some(&mine)
+        });
         match chosen {
             Some(id) => {
                 self.watching = Some(id.to_owned());
