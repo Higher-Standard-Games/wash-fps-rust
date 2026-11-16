@@ -427,16 +427,8 @@ impl LeaderboardView {
         self.time_out();
         let painter = ui.painter().clone();
         let mode = *self.mode();
-        let accent = mode.accent().face;
         let tab = TABS.iter().find(|t| t.0 == self.tab).unwrap_or(&TABS[0]);
-        let head = page_head(
-            &painter,
-            rect.left(),
-            rect.top(),
-            &format!("Leaderboard · {}", mode.title),
-            tab.1,
-            accent,
-        );
+        let head = page_head(&painter, rect.left(), rect.top(), tab.1);
         let chips: Vec<ModeChip<'_>> = GAME_MODES
             .iter()
             .map(|m| ModeChip {

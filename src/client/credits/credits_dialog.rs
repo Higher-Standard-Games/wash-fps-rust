@@ -54,7 +54,7 @@ impl CreditsDialog {
         let mut answer = veil(ui, screen, "credits", card).then_some(CreditsAnswer::Close);
         let painter = ui.painter().clone();
         let inner = paint_card(&painter, card, w);
-        let top = header(&painter, inner, w, "WASHOI / CREDITS", "Credits & copyrights", 18.0);
+        let top = header(&painter, inner, w, "Credits & copyrights", 18.0);
         let keys_top = footer(&painter, inner);
         let body = Rect::from_min_max(pos2(inner.left(), top), pos2(inner.right(), keys_top - 22.0 - 10.0));
         let reset = std::mem::take(&mut self.opened);

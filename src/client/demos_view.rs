@@ -711,21 +711,8 @@ impl DemosView {
         }
         let painter = ui.painter().clone();
         let modes = page_modes();
-        let mode = modes[self.mode];
         let tab = TABS.iter().find(|t| t.0 == self.tab).unwrap_or(&TABS[0]);
-        let map_label = self.map.as_ref().map(|m| {
-            self.archive
-                .iter()
-                .find(|d| &d.map == m)
-                .map_or_else(|| m.clone(), |d| d.map_name().to_owned())
-        });
-        let kicker = ["Demos", if mode.id == "all" { "All modes" } else { mode.title }]
-            .into_iter()
-            .map(str::to_owned)
-            .chain(map_label)
-            .collect::<Vec<_>>()
-            .join(" · ");
-        let head = page_head(&painter, rect.left(), rect.top(), &kicker, tab.1, mode.accent.face);
+        let head = page_head(&painter, rect.left(), rect.top(), tab.1);
         let chips: Vec<ModeChip<'_>> = modes
             .iter()
             .map(|m| ModeChip {

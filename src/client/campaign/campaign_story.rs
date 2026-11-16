@@ -1,5 +1,5 @@
 //! wash-fps `client/campaign/CampaignStory.ts`: what the campaign shows for
-//! each mission, its name, line and comic card. The rules (map, gametype,
+//! each mission, its name, story and comic card, and the finale's card. The rules (map, gametype,
 //! bots, models) come from the lobby; this is keyed by the same mission ids.
 
 /// `CardPanel`: a framed panel of a comic card, in the card image's pixels.
@@ -38,8 +38,10 @@ pub struct CampaignBriefing {
 pub struct CampaignStory {
     pub id: &'static str,
     pub title: &'static str,
-    /// One line under the title on the mission card.
-    pub hook: &'static str,
+    /// The story so far, beside the card on the Campaign page.
+    pub intro: &'static str,
+    /// One line of story, on the briefing over the opening countdown.
+    pub line: &'static str,
     pub rival: &'static str,
     pub briefing: CampaignBriefing,
     /// The comic card; absent until a mission's art is drawn.
@@ -68,7 +70,8 @@ pub const STORIES: [CampaignStory; 8] = [
     CampaignStory {
         id: "cartel-contract",
         title: "Cartel Contract",
-        hook: "Survive three rounds against the Cartel King.",
+        intro: "So you want a Cartel contract? Cute. First, survive three rounds in Washoi Amphi2 against a Cartel King with zero trigger discipline, limited-edition sneakers, and an ego tied directly to live crypto margins.",
+        line: "Prove your slide-speed to the Cartel—and don't bleed on the boss's sneakers.",
         rival: "Cartel King",
         briefing: CampaignBriefing {
             goal: "Beat the Cartel King!",
@@ -87,7 +90,8 @@ pub const STORIES: [CampaignStory; 8] = [
     CampaignStory {
         id: "street-riot",
         title: "Street Riot",
-        hook: "Dropped straight into a Sector 1 street riot.",
+        intro: "Congratulations, the Cartel didn't scrap you. Your orientation bonus? Getting dropped straight into a Sector 1 free-for-all swarming with over-caffeinated Glitch Punks and trigger-happy cops. Stay airborne and hoard the armor bubbles.",
+        line: "Treat gravity like a suggestion and out-frag a Sector 1 riot.",
         rival: "Street Rioters",
         briefing: CampaignBriefing {
             goal: "Take part in the street riot!",
@@ -106,7 +110,8 @@ pub const STORIES: [CampaignStory; 8] = [
     CampaignStory {
         id: "concrete-sabotage",
         title: "Concrete Strike",
-        hook: "Plant the EMP before Monday's billing cycle.",
+        intro: "Time to earn your retainer. The Cartel wants OmniSec's traffic-fine servers vaporized before Monday's billing cycle. Plant the EMP charge at Concrete Strike—just watch out for Metropol Riot Cops running double overtime shifts and treating excessive force like morning cardio.",
+        line: "Plant the EMP, wipe the Cartel's parking tickets, and ruin Monday morning.",
         rival: "Metropol Riot Cops",
         briefing: CampaignBriefing {
             goal: "Plant the EMP before Monday's billing cycle!",
@@ -130,7 +135,8 @@ pub const STORIES: [CampaignStory; 8] = [
     CampaignStory {
         id: "glitch-duel",
         title: "Turf Duel",
-        hook: "The Glitch Punks' boss wants your head.",
+        intro: "Plot twist: blowing up OmniSec's servers also fried the Glitch Punks' pirate Wi-Fi. Now their neon-haired boss wants your head in a 1v1 turf duel on Washoi DM2. Cut her off at the Mega Health before she rockets her way across the map.",
+        line: "You fried their pirate Wi-Fi—now survive the Glitch Punk boss's rockets.",
         rival: "Glitch Punk Leader",
         briefing: CampaignBriefing {
             goal: "Take down the Glitch Punk Leader!",
@@ -149,12 +155,13 @@ pub const STORIES: [CampaignStory; 8] = [
     CampaignStory {
         id: "bot-trap",
         title: "Bot Trap",
-        hook: "Caught in the bot trap. Last five minutes.",
+        intro: "A \"100% reliable\" Cartel tip led you straight into a rigged rival vault. With the exit shutters welded shut and three floors of warranty-voided security bots dropping from the rafters, there's only one way out: survive the swarm until the locks blow.",
+        line: "Three floors of warranty-voided scrap-bots and zero exit codes.",
         rival: "Rival Cartel Bot Guards",
         briefing: CampaignBriefing {
             goal: "Survive the bot trap!",
             points: &[
-                "Last 5 minutes. One death ends the mission.",
+                "Last 5 minutes. You get one respawn: a second death ends the mission.",
                 "You start with the blade and a machine gun: grab more from the map.",
                 "More robots every minute, and tougher.",
                 "You heal slowly while you live.",
@@ -173,7 +180,8 @@ pub const STORIES: [CampaignStory; 8] = [
     CampaignStory {
         id: "siege-breaker",
         title: "Siege Breaker",
-        hook: "The final robot boss.",
+        intro: "Word of your vault breakout spread fast—and a rogue Spec-Ops handler just unclamped a giant Unit 07 Siege Bot to see how long you last. Crouch-slide beneath its rotary fire in Washoi Amphi1 and turn this expired war machine into scrap.",
+        line: "Crouch-slide the rotary miniguns and scrap a giant war titan.",
         rival: "Heavy Siege Bot",
         briefing: CampaignBriefing {
             goal: "Break the Heavy Siege Bot!",
@@ -192,8 +200,9 @@ pub const STORIES: [CampaignStory; 8] = [
     CampaignStory {
         id: "depot-heist",
         title: "Depot Heist",
-        hook: "A high-profile cash heist at the Depot.",
-        rival: "Pink-Visor Spec-Ops and Unit 07",
+        intro: "Your titan-scrapping highlight reel made you famous—and one final sabotage gig at OmniSec's freight depot pays enough for a skyline penthouse. Only problem? That same rogue Spec-Ops merc and a freshly updated Unit 07 took the defense contract to pay off their monthly firewall bills.",
+        line: "Breach the freight yard before Unit 07's antivirus auto-renews.",
+        rival: "Rogue Spec-Ops and Unit 07",
         briefing: CampaignBriefing {
             goal: "Pull off the Depot cash heist!",
             points: &[
@@ -203,24 +212,47 @@ pub const STORIES: [CampaignStory; 8] = [
                 "(Or kill everyone in the other team!)",
             ],
         },
-        card: None,
+        card: card(
+            7,
+            &[
+                panel(7.0, 7.0, 877.0, 476.0),
+                panel(7.0, 493.0, 877.0, 365.0),
+                panel(896.0, 7.0, 633.0, 850.0),
+            ],
+            (0.78, 0.55),
+        ),
     },
     CampaignStory {
         id: "road-ends",
         title: "Road's End",
-        hook: "Your road ends here.",
+        intro: "It's a setup. That depot payload wasn't cash—it was a live OmniSec tracking beacon. Now Washoi DM5 is sealed under championship lockdown, and Metropol's top Male and Female riot enforcers have synchronized their HUDs for a regulatory two-on-one execution. Break the blockade and take the crown.",
+        line: "Two badges, double overtime, and zero mercy—break the blockade.",
         rival: "Metropol Police Duo",
         briefing: CampaignBriefing {
             goal: "Your road ends here. Or theirs.",
             points: &[
                 "You alone against the Metropol Police duo.",
-                "First to 15 frags wins.",
-                "Or lead when the 10 minutes are up.",
+                "A full 10-minute match.",
+                "Lead when the time is up to win.",
             ],
         },
-        card: None,
+        card: card(
+            8,
+            &[panel(6.0, 6.0, 756.0, 853.0), panel(772.0, 6.0, 758.0, 853.0)],
+            (0.72, 0.45),
+        ),
     },
 ];
+
+/// `FINALE_CARD`: the card for a finished campaign, under the last
+/// operation once every one is cleared.
+pub const FINALE_CARD: CampaignCard = CampaignCard {
+    number: 9,
+    width: 2752.0,
+    height: 1536.0,
+    panels: &[panel(11.0, 5.0, 1354.0, 1527.0), panel(1385.0, 5.0, 1357.0, 1527.0)],
+    thumb_focus: (0.72, 0.45),
+};
 
 /// `campaignStory`: the story for a mission id, or `None` for one this
 /// client has no art for.
@@ -243,11 +275,11 @@ mod tests {
     fn missions_are_found_by_id_in_order() {
         assert_eq!(campaign_story("glitch-duel").map(|s| s.title), Some("Turf Duel"));
         assert_eq!(campaign_operation_number("bot-trap"), Some(5));
-        assert!(campaign_story("depot-heist").unwrap().card.is_none());
+        assert_eq!(campaign_story("depot-heist").unwrap().card.map(|c| c.number), Some(7));
         assert_eq!(campaign_story("nope"), None);
         // Every panel lies on its card.
-        for story in &STORIES {
-            if let Some(card) = story.card {
+        for card in STORIES.iter().filter_map(|s| s.card).chain([FINALE_CARD]) {
+            {
                 for p in card.panels {
                     assert!(p.x >= 0.0 && p.y >= 0.0 && p.x + p.w <= card.width && p.y + p.h <= card.height);
                 }

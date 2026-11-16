@@ -2731,6 +2731,35 @@ whole areas rather than single items. 0.2.0 closes them in two steps.
 
 ## 24. Progress log
 
+### Staging catch-up: the campaign's story and finale (November 17, 2026)
+
+Ported from SHAG staging 6fa6c61 (fps 8c9f6fe):
+
+- **The Campaign page** opens on the campaign's story in a cream caption box
+  under the title (one line of it on a screen 1000 px tall or less), with the
+  cleared count beside the title on a dark purple plate and a segment per
+  operation. Each operation's title sits on the same plate, with its part of
+  the story beside its card. Clicking an open operation's card reads it panel
+  by panel without starting anything. Operations 7 and 8 have their cards.
+- **The finale** (`card9.webp`, scaled to 2048 wide for the GPU) sits under
+  the last operation: a classified strip until all eight are cleared, then a
+  larger card turning slowly under a deep purple **Campaign complete!** plate.
+  The turn in depth (`rotateX`/`rotateY`) has no flat equivalent and is left
+  out. `menu --page campaign/complete` shows it for screenshots.
+- **In the match:** the briefing adds a line of story under the goal, Bot
+  Trap plays its own playlist (`campaign_survival.playlist.json`), and the
+  missions' looks for demos are added to what is kept rather than replaced.
+- **Fixes:** a demo shows the death card for the recorded player's death; the
+  watched player's gun wears the quad outline when spectating a live match
+  too; dropped weapons in a demo spin while they fly and lie flat at rest; the
+  match state resets in full. Splats and gibs already looked for the floor
+  with a point.
+- **The lobby** drops the small labels that repeated a page's title (Play,
+  Leaderboard, Demos, Settings, the welcome guide, credits).
+- **Not needed here:** the WebAssembly world trace and the bot and lobby
+  changes (servers), the scattered weapon drops (the game server's), the video
+  export's beat cuts.
+
 ### Staging catch-up: the single-player campaign (November 16, 2026)
 
 Ported from SHAG staging (a34d658, fps 0184fc1):

@@ -69,12 +69,16 @@ pub struct DeathScreen {
     death_time: f64,
     now: f64,
     next: Next,
+    /// Showing a demo's recorded player rather than our own match.
+    playback: bool,
 }
 
 impl DeathScreen {
+    /// The newest kill feed entry for our death (the recorded player's in a
+    /// demo), if it is this one.
     fn name_killer(&mut self, feed: &[KillFeedEntry]) {
         for entry in feed.iter().rev() {
-            if !entry.of_local {
+            if !(if self.playback { entry.of_viewed } else { entry.of_local }) {
                 continue;
             }
             if entry.timestamp < self.death_time - DEATH_MATCH_WINDOW {
@@ -90,12 +94,16 @@ impl FpsHudWidget for DeathScreen {
     fn update(&mut self, frame: &HudFrame<'_>) {
         let state = frame.state;
         self.now = state.now;
-        if !state.local_dead {
+        // A demo is the recorded player's screen: their death is the one to
+        // show, and the camera behind them is no hand-over to a teammate.
+        self.playback = state.playback;
+        let dead = if state.playback { state.dead } else { state.local_dead };
+        if !dead {
             self.visible = false;
             self.shown_for_this_death = false;
             return;
         }
-        if !state.spectating.is_empty() {
+        if !state.playback && !state.spectating.is_empty() {
             self.visible = false;
             return;
         }

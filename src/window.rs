@@ -1112,8 +1112,9 @@ impl App {
             // player's eyes, their screen's view effects, and their weapon
             // in hand, swaying with their stride.
             self.followed_aiming = None;
-            // `DemoService`: in a demo, the watched player's gun glows while
-            // they carry the quad, as the player's own does.
+            // `FollowedViewWeapon`: the watched player's gun glows while they
+            // carry the quad, as the player's own does, in a demo or
+            // spectating a live match.
             let mut followed_quad = false;
             let followed = self
                 .follow
@@ -1126,7 +1127,7 @@ impl App {
                         self.pov.reset();
                         self.pov_entity = Some(id.clone());
                     }
-                    followed_quad = matches!(feed, Feed::Demo(_)) && mask_has_quad(p.powerup_mask.unwrap_or(0));
+                    followed_quad = mask_has_quad(p.powerup_mask.unwrap_or(0));
                     let aiming = p.aiming.unwrap_or(false);
                     self.pov.set_aiming(aiming);
                     self.followed_aiming = Some(aiming);

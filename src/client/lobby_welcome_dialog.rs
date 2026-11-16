@@ -143,13 +143,9 @@ pub fn paint_card(painter: &Painter, card: Rect, screen_w: f32) -> Rect {
     Rect::from_min_max(card.min + vec2(6.0 + pad, pad), card.max - vec2(pad, pad))
 }
 
-/// `.lobby-guide__header`: the eyebrow and the title; returns the bottom
-/// after the title's margin.
+/// `.lobby-guide__header`: the title; returns the bottom after its margin.
 #[must_use]
-pub fn header(painter: &Painter, inner: Rect, screen_w: f32, eyebrow: &str, title: &str, below: f32) -> f32 {
-    let e = text(painter, eyebrow, 14.0, display_family(), ink(0.7), 14.0 * 0.17);
-    let eh = e.size().y;
-    painter.galley(inner.min, e, Color32::WHITE);
+pub fn header(painter: &Painter, inner: Rect, screen_w: f32, title: &str, below: f32) -> f32 {
     let size = clamp_css(26.0, screen_w * 0.035, 48.0);
     let mut job = egui::text::LayoutJob::default();
     job.wrap.max_width = inner.width();
@@ -165,7 +161,7 @@ pub fn header(painter: &Painter, inner: Rect, screen_w: f32, eyebrow: &str, titl
         },
     );
     let t = painter.layout_job(job);
-    let top = inner.top() + eh + 10.0;
+    let top = inner.top();
     let th = t.size().y;
     painter.galley(pos2(inner.left(), top), t, Color32::WHITE);
     top + th + below
@@ -493,14 +489,7 @@ impl LobbyWelcomeDialog {
         let inner = paint_card(&painter, card, w);
         let narrow = w <= 820.0;
         let header_below = if narrow { 16.0 } else { 20.0 };
-        let mut y = header(
-            &painter,
-            inner,
-            w,
-            "WASHOI / READY TO PLAY",
-            "Welcome to Washiki Washoi!",
-            header_below,
-        );
+        let mut y = header(&painter, inner, w, "Welcome to Washiki Washoi!", header_below);
         let mut answer = None;
         if let Some(t) = self.tabs(ui, inner, y, narrow) {
             self.select(t);

@@ -92,12 +92,11 @@ const LOOKS_FILE: &str = "looks.json";
 
 /// `cacheMissionLooks`: keep how each mission's match is drawn (its
 /// models, its bots' own models and sizes), by mission id, for its demos: a
-/// recording names only its mission.
+/// recording names only its mission. Added to what is kept, so a mission the
+/// lobby no longer runs still draws its old demos as they were.
 pub fn cache_mission_looks(missions: &[CampaignMissionInfo]) {
-    let looks: BTreeMap<String, LobbyCampaignInfo> = missions
-        .iter()
-        .map(|m| (m.id.clone(), lobby_campaign_info(m)))
-        .collect();
+    let mut looks: BTreeMap<String, LobbyCampaignInfo> = read_json(LOOKS_FILE).unwrap_or_default();
+    looks.extend(missions.iter().map(|m| (m.id.clone(), lobby_campaign_info(m))));
     write_json(LOOKS_FILE, &looks);
 }
 

@@ -1643,6 +1643,8 @@ impl LobbyPanel {
         let event = cut.ui(ctx, &mut self.campaign.art);
         let gone = cut.is_gone();
         match event {
+            // A card read on its own closes once read.
+            Some(CutsceneEvent::PanelsDone) if self.starting_mission.is_none() => cut.close(),
             Some(CutsceneEvent::PanelsDone) => self.ready_for_campaign(),
             Some(CutsceneEvent::Back) => {
                 if let Some(room) = &self.room {
@@ -1708,6 +1710,9 @@ impl LobbyPanel {
         }
         // `campaign/<mission id>`: its comic card, as a mission start plays
         // it, for screenshots.
+        if tab == "campaign" && sub == "complete" {
+            self.campaign.preview_finale();
+        }
         if tab == "campaign"
             && let Some(story) = campaign_story(sub)
         {
@@ -2121,8 +2126,13 @@ impl LobbyPanel {
                     l.screen.max.y - links_h - 8.0,
                 ),
             );
-            if let Some(CampaignAction::Start(mission)) = self.campaign.ui(ui, page, content) {
-                self.start_campaign_mission(mission, false);
+            match self.campaign.ui(ui, page, content) {
+                Some(CampaignAction::Start(mission)) => self.start_campaign_mission(mission, false),
+                // `readCard`: the card panel by panel, starting nothing.
+                Some(CampaignAction::Read(card, title)) if self.cutscene.is_none() => {
+                    self.cutscene = Some(CampaignCutscene::new(Some(card), title));
+                }
+                _ => {}
             }
         }
         if let Some(a) = self.links(ui, l, style) {
@@ -2217,14 +2227,12 @@ impl LobbyPanel {
         action
     }
 
-    /// Kicker and title (`lobby__heading`); returns its bottom.
-    fn heading(painter: &Painter, l: &Layout, at: Pos2, kicker: &str, title: &str, accent: Color32) -> f32 {
-        let kicker = line(painter, &kicker.to_uppercase(), 12.0, body(), accent, 0.32);
-        let kicker_h = kicker.size().y;
-        painter.galley(at, kicker, accent);
+    /// The title (`lobby__heading`) at the top of its header; returns its
+    /// bottom.
+    fn heading(painter: &Painter, l: &Layout, at: Pos2, title: &str) -> f32 {
         let size = clamp_css(40.0, l.w * 0.044, 74.0);
         let title = line(painter, title, size, display_family(), cream(), 0.0);
-        let ty = at.y + kicker_h + 8.0;
+        let ty = at.y;
         painter.galley_with_override_text_color(pos2(at.x + 5.0, ty + 6.0), title.clone(), hsl(250.0, 50.0, 3.0));
         let th = title.size().y;
         painter.galley(pos2(at.x, ty), title, cream());
@@ -2238,7 +2246,7 @@ impl LobbyPanel {
             self.room_page(ui, l, content, &accent);
             return;
         }
-        let bottom = Self::heading(&painter, l, content.min, "Play", "Pick your fight", accent.face);
+        let bottom = Self::heading(&painter, l, content.min, "Pick your fight");
 
         // `lobby__play-tiles`: a column per mode, two a row when narrow.
         let tile_h = clamp_css(130.0, l.h * 0.18, 176.0);

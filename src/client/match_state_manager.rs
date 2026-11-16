@@ -438,12 +438,10 @@ impl MatchStateManager {
     }
 
     /// `reset`: the rosters cannot outlive their match.
+    /// Back to a match not yet heard from, every field: the campaign
+    /// countdown too, which a match sets when it connects.
     pub fn reset(&mut self) {
-        // Which kind of match this is outlives a reset: it is set on connect.
-        *self = Self {
-            campaign_countdown: self.campaign_countdown,
-            ..Self::default()
-        };
+        *self = Self::default();
     }
 }
 

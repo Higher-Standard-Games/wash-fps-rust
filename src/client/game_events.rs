@@ -414,13 +414,14 @@ pub fn match_playlist() -> &'static str {
 }
 
 /// Every playlist the game may play, as `data/<name>.playlist.json`.
-pub const ALL_PLAYLISTS: [&str; 6] = [
+pub const ALL_PLAYLISTS: [&str; 7] = [
     GAME_PLAYLIST,
     ENDGAME_PLAYLIST,
     MENU_PLAYLIST,
     crate::client::campaign::campaign_music::CAMPAIGN_MENU_PLAYLIST,
     crate::client::campaign::campaign_music::MISSION_PLAYLISTS[0],
     crate::client::campaign::campaign_music::MISSION_PLAYLISTS[1],
+    crate::client::campaign::campaign_music::MISSION_PLAYLISTS[2],
 ];
 
 impl GameAudio {

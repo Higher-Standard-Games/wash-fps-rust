@@ -21,15 +21,12 @@ pub struct ModeChip<'a> {
     pub mark: Color32,
 }
 
-/// `lobby__head-row`'s heading: the kicker in the accent, the title under
-/// it with its drop shadow. Returns the space it took.
-pub fn page_head(painter: &Painter, left: f32, top: f32, kicker: &str, title: &str, accent: Color32) -> Rect {
-    let kicker = line(painter, &kicker.to_uppercase(), 12.0, body(), accent, 0.32);
-    let kh = kicker.size().y;
-    painter.galley(pos2(left, top), kicker, accent);
+/// `lobby__head-row`'s heading: the title at the top of the header, with
+/// its drop shadow. Returns the space it took.
+pub fn page_head(painter: &Painter, left: f32, top: f32, title: &str) -> Rect {
     let size = clamp_css(36.0, painter.ctx().content_rect().width() * 0.034, 60.0);
     let title = line(painter, title, size, display_family(), cream(), 0.0);
-    let ty = top + kh + 8.0;
+    let ty = top;
     let size = title.size();
     painter.galley_with_override_text_color(pos2(left + 5.0, ty + 6.0), title.clone(), hsl(250.0, 50.0, 3.0));
     painter.galley(pos2(left, ty), title, cream());
