@@ -69,6 +69,7 @@ pub mod quad_damage_visual;
 pub mod ragdoll;
 pub mod ragdoll_system;
 pub mod reel_cards;
+pub mod reel_effects;
 pub mod remote_player_logic;
 pub mod remote_player_renderer;
 pub mod room_chat_view;

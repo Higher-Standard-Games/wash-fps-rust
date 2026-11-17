@@ -1,7 +1,6 @@
 //! Port of wash-fps `client/ReelCards.ts`: the opening and closing cards of a
-//! highlight reel or a whole demo, who played and how it went, plus
-//! `shotCard` from `CinematicDemoPlayer.ts`. Pure data from the demo; the
-//! window draws them.
+//! highlight reel or a whole demo, who played and how it went. Pure data
+//! from the demo; the window draws them.
 
 use shagger::shared::demo::demo_analyzer::{DemoAnalysis, HighlightType};
 use shagger::shared::demo::demo_reader::DemoPlayerInfo;
@@ -95,7 +94,11 @@ pub struct ReelSummary {
 
 /// `reelSummary`: the match's top fragger and the reel's best moment.
 #[must_use]
-pub fn reel_summary(reel: &CinematicReel, analysis: &DemoAnalysis) -> ReelSummary {
+pub fn reel_summary(
+    reel: &CinematicReel,
+    analysis: &DemoAnalysis,
+    title_of: impl Fn(&CinematicSegment) -> String,
+) -> ReelSummary {
     // Each highlight once, in the order its first shot comes.
     let mut highlights: Vec<&CinematicSegment> = Vec::new();
     for s in &reel.segments {
@@ -121,12 +124,7 @@ pub fn reel_summary(reel: &CinematicReel, analysis: &DemoAnalysis) -> ReelSummar
             Some(b) if b.highlight.score >= s.highlight.score => Some(b),
             _ => Some(s),
         })
-        .map(|s| {
-            (
-                shot_card(s, reel.total_scenes).title,
-                s.highlight.primary_player_name.clone(),
-            )
-        });
+        .map(|s| (title_of(s), s.highlight.primary_player_name.clone()));
     ReelSummary {
         top_fragger: top.map(|(id, n)| (analysis.player_names.get(id).cloned().unwrap_or_else(|| id.clone()), *n)),
         best,
@@ -242,76 +240,6 @@ pub fn demo_end_card(final_: &DemoFinal) -> EndCard {
     EndCard {
         chips,
         counts: format!("{} · {length}", plural(f64::from(final_.frags), "frag", "frags")),
-    }
-}
-
-/// A shot's card, as the controls show it when the shot starts.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ShotCard {
-    pub kicker: String,
-    pub title: String,
-    pub player: String,
-    pub detail: String,
-    pub tags: Vec<String>,
-}
-
-fn highlight_label(kind: HighlightType) -> &'static str {
-    match kind {
-        HighlightType::Frag => "Frag",
-        HighlightType::MultiKill => "Multi kill",
-        HighlightType::AirborneFrag => "Airborne frag",
-        HighlightType::StreakKill => "Streak kill",
-        HighlightType::FirstBlood => "First blood",
-        HighlightType::Movement => "Trick jump",
-    }
-}
-
-fn tag_label(tag: &str) -> String {
-    match tag {
-        "airborne" => "Air",
-        "rocket_jump" => "RJ",
-        "low_hp" => "Low HP",
-        "close_range" => "Close",
-        "long_range" => "Long",
-        "multi_kill" => "Multi",
-        "revenge" => "Revenge",
-        "first_blood" => "First",
-        "on_fire" => "On fire",
-        "raging" => "Raging",
-        "unstoppable" => "Unstoppable",
-        "high_speed" => "Speed",
-        "trick_jump" => "Combo",
-        "height_gain" => "Climb",
-        "wall_jump" => "Wall jump",
-        "slide" => "Slide",
-        "bunny_hop" => "Hops",
-        other => return other.replace('_', " "),
-    }
-    .to_owned()
-}
-
-/// `shotCard`.
-#[must_use]
-pub fn shot_card(segment: &CinematicSegment, total_scenes: usize) -> ShotCard {
-    let h = &segment.highlight;
-    let kills = match h.kill_count {
-        Some(n) if n > 1 => format!(" x{n}"),
-        _ => String::new(),
-    };
-    ShotCard {
-        kicker: format!(
-            "{} {}/{}",
-            if segment.is_replay { "Replay" } else { "Highlight" },
-            segment.scene + 1,
-            total_scenes
-        ),
-        title: format!("{}{kills}", highlight_label(h.kind)),
-        player: match &h.victim_player_name {
-            Some(victim) => format!("{} » {victim}", h.primary_player_name),
-            None => h.primary_player_name.clone(),
-        },
-        detail: h.weapon_id.as_deref().unwrap_or("").replace('_', " "),
-        tags: h.tags.iter().map(|t| tag_label(t.as_str())).collect(),
     }
 }
 

@@ -2756,9 +2756,25 @@ Ported from SHAG staging 6fa6c61 (fps 8c9f6fe):
   with a point.
 - **The lobby** drops the small labels that repeated a page's title (Play,
   Leaderboard, Demos, Settings, the welcome guide, credits).
+- **Highlight reels** (shagger's `demo_analyzer.rs`, `sequence_builder.rs`
+  and `cinematic_camera_paths.rs`, proved by regenerated golden vectors that
+  now bias toward players on a run): a player's frags chained within 5 s
+  (pairs) or 10 s (three or more) are a frag sequence, filmed as it happened
+  (a chase between frags, the killer's eyes for each with a counter, long
+  waits skipped on speed lines, the orbit). Frags get `air_rocket` and `blade`
+  tags, the death event's `killWeapon` wins over `weaponId`, and routes carry
+  yaw. The reel's three best frag scenes end on a comic freeze frame, about
+  one scene cut in three comes in on speed lines, slow motion follows the
+  planned speed curve with eased ramps, and a victim's-eyes shot ends on the
+  frag and cuts into the orbit, which keeps watching where the victim died.
+  The game side (`cinematic_demo_player.rs`, `reel_effects.rs`) draws the
+  speed lines, freeze frame panel and caption burst, frag counters and the
+  lower-left scene tag with egui shapes (no sheared text); the shot card is
+  gone. Headless screenshots now run a demo's effects on the demo clock, as
+  the window does, so a freeze frame holds still there too.
 - **Not needed here:** the WebAssembly world trace and the bot and lobby
   changes (servers), the scattered weapon drops (the game server's), the video
-  export's beat cuts.
+  export's beat cuts (`alignSceneCutsToBeats`, `MusicBeats`).
 
 ### Staging catch-up: the single-player campaign (November 16, 2026)
 

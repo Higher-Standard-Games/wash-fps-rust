@@ -2596,7 +2596,7 @@ pub fn run(
         settings_open: false,
         native_settings: None,
         reel,
-        overlay: ReelOverlay::default(),
+        overlay: ReelOverlay,
         demo_hud: None,
         drawn: Vec::new(),
         bench,

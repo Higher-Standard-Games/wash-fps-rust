@@ -3978,7 +3978,7 @@ pub fn start_prepared(o: &ViewOptions, prepared: Prepared) -> Result<i32, String
         );
     }
     let mut hud: Option<FpsHud> = None;
-    let mut overlay = crate::reel_overlay::ReelOverlay::default();
+    let mut overlay = crate::reel_overlay::ReelOverlay;
     // Whom a demo's transport bar says the view follows.
     let mut followed: Option<String> = None;
     if let Some(feed) = &mut feed {
@@ -4046,7 +4046,17 @@ pub fn start_prepared(o: &ViewOptions, prepared: Prepared) -> Result<i32, String
                 );
                 overlay.update(reel, 1.0 / 60.0);
             }
+            let before = match &*feed {
+                Feed::Demo(d) => Some(d.playhead_tick()),
+                _ => None,
+            };
             let view = feed.advance(1.0 / 60.0);
+            // In a demo the effects run on the demo clock, as the window's
+            // do: still through a pause or a reel's freeze frame.
+            let effect_dt = match (&*feed, before) {
+                (Feed::Demo(d), Some(before)) => ((d.playhead_tick() - before) / d.tick_rate()).clamp(0.0, 0.25),
+                _ => 1.0 / 60.0,
+            };
             if let Feed::Play(p, _) = feed {
                 if let Some(yaw) = p.take_spawn_facing() {
                     camera.yaw = yaw as f32;
@@ -4094,14 +4104,14 @@ pub fn start_prepared(o: &ViewOptions, prepared: Prepared) -> Result<i32, String
                 .and_then(|r| apply_reel_camera(&mut camera, r, &players, base_fov));
             renderer.set_live_weapons(&view.weapons);
             let hidden: Vec<&str> = eyes.as_deref().into_iter().collect();
-            renderer.set_live_players(&players, &hidden, 1.0 / 60.0, 1.0 / 60.0);
-            renderer.set_live_projectiles(&projectiles, 1.0 / 60.0, &camera);
-            renderer.play_effects(&view.effects, &view.weapons, 1.0 / 60.0, &camera);
+            renderer.set_live_players(&players, &hidden, 1.0 / 60.0, effect_dt);
+            renderer.set_live_projectiles(&projectiles, effect_dt, &camera);
+            renderer.play_effects(&view.effects, &view.weapons, effect_dt, &camera);
             renderer.dropped_weapons.use_server_transforms = matches!(feed, Feed::Demo(_));
-            renderer.play_dropped_weapons(&view.effects, &view.dropped_weapons, 1.0 / 60.0);
-            renderer.play_bomb_sites(feed.match_state(), 1.0 / 60.0);
-            renderer.play_pickups(&view.pickup_active, 1.0 / 60.0);
-            renderer.play_gibs(&view.effects, 1.0 / 60.0);
+            renderer.play_dropped_weapons(&view.effects, &view.dropped_weapons, effect_dt);
+            renderer.play_bomb_sites(feed.match_state(), effect_dt);
+            renderer.play_pickups(&view.pickup_active, effect_dt);
+            renderer.play_gibs(&view.effects, effect_dt);
             renderer.play_hit_feedback(
                 &view.effects,
                 view_entity(feed.local_entity(), &players, o.follow),
@@ -4381,17 +4391,23 @@ fn print_reel(reel: &CinematicDemoPlayer) {
         r.total_duration_ms / 1000.0
     );
     for s in &r.segments {
-        let card = washoi::client::reel_cards::shot_card(s, r.total_scenes);
+        let tag = washoi::client::cinematic_demo_player::scene_tag(&s.highlight);
+        let freeze = s
+            .freeze
+            .as_ref()
+            .map_or(String::new(), |f| format!(", freeze {}", f.caption));
         println!(
-            "  {:>2}. ticks {}-{} {:<16} {:<6} {} by {} ({:.1} s)",
+            "  {:>2}. ticks {}-{} {:<16} {:<6} {} by {} ({:.1} s, {} in, {} out{freeze})",
             s.segment_index + 1,
             s.start_tick,
             s.end_tick,
             s.camera_preset.as_str(),
             s.role.as_str(),
-            card.title,
-            card.player,
-            s.duration_ms / 1000.0
+            tag.what,
+            tag.who,
+            s.duration_ms / 1000.0,
+            s.transition_in.as_str(),
+            s.transition_out.as_str(),
         );
     }
 }

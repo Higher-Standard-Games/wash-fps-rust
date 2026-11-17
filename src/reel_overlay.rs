@@ -1,51 +1,37 @@
 //! A highlight reel's picture over the scene, after wash-fps
 //! `client/DemoViewerHUD.ts` in its reel mode: the veil of each transition,
-//! the title card over the opening black, each shot's card as it starts,
-//! the closing card, and the reel's timeline with its shots marked.
+//! the comic effects over the picture (`ReelEffects`: speed lines, freeze
+//! frames, frag counters and each scene's tag), the title card over the
+//! opening black, the closing card, and the reel's timeline with its shots
+//! marked.
 
-use egui::{Align2, Color32, FontId, Pos2, Rect, RichText, Stroke, vec2};
+use egui::{Align2, Color32, FontId, Pos2, Rect, Stroke, vec2};
 use shagger::ui::egui_layer::egui;
 use washoi::client::cinematic_demo_player::{CinematicDemoPlayer, ReelState};
 use washoi::client::demo_playback::DemoPlayback;
-use washoi::client::reel_cards::{ShotCard, shot_card};
+use washoi::client::reel_effects::draw_reel_effects;
 
-/// How long a shot's card stays up, then fades over the last half second.
-const CARD_SECONDS: f64 = 3.2;
 const GOLD: Color32 = Color32::from_rgb(0xf5, 0xc5, 0x18);
 const CREAM: Color32 = Color32::from_rgb(0xf6, 0xec, 0xd4);
 
 /// What the overlay remembers between frames.
 #[derive(Default)]
-pub struct ReelOverlay {
-    card: Option<(ShotCard, f64)>,
-    clock: f64,
-}
+pub struct ReelOverlay;
 
 impl ReelOverlay {
-    /// Takes the shots that started, ages the card.
-    pub fn update(&mut self, reel: &mut CinematicDemoPlayer, dt: f64) {
-        self.clock += dt;
-        // The first card waits for the title to lift.
-        if reel.is_showing_title()
-            && let Some((_, at)) = &mut self.card
-        {
-            *at = self.clock;
-        }
-        for index in reel.take_segment_changes() {
-            let Some(r) = reel.reel() else { continue };
-            if let Some(segment) = r.segments.get(index) {
-                // A scene's card shows once, on its first shot.
-                let first = index == 0 || r.segments[index - 1].scene != segment.scene;
-                if first {
-                    self.card = Some((shot_card(segment, r.total_scenes), self.clock));
-                }
-            }
-        }
+    /// Takes the shots that started; the effects come from the player each frame.
+    pub fn update(&mut self, reel: &mut CinematicDemoPlayer, _dt: f64) {
+        reel.take_segment_changes();
     }
 
     pub fn ui(&self, ctx: &egui::Context, reel: &CinematicDemoPlayer, demo: &DemoPlayback) {
         let screen = ctx.content_rect();
         let painter = ctx.layer_painter(egui::LayerId::new(egui::Order::Background, egui::Id::unique("reel")));
+        // The comic effects under the veil, as the HUD stacks them.
+        let effects = reel.effects(demo);
+        if effects.any() {
+            draw_reel_effects(&painter, &effects, screen);
+        }
         let veil = reel.veil(demo);
         if veil.opacity > 0.0 {
             let a = (veil.opacity.clamp(0.0, 1.0) * 255.0) as u8;
@@ -125,41 +111,6 @@ impl ReelOverlay {
                 18.0,
                 CREAM.gamma_multiply(0.7),
             );
-        }
-        if let Some((card, at)) = &self.card
-            && reel.state() != ReelState::Ended
-            && !reel.is_showing_title()
-        {
-            let age = self.clock - at;
-            if age < CARD_SECONDS {
-                let fade = ((CARD_SECONDS - age) / 0.5).min(1.0) as f32;
-                egui::Area::new(egui::Id::unique("reel-card"))
-                    .anchor(Align2::LEFT_BOTTOM, vec2(32.0, -56.0))
-                    .interactable(false)
-                    .show(ctx, |ui| {
-                        ui.set_opacity(fade);
-                        egui::Frame::new()
-                            .fill(Color32::from_black_alpha(170))
-                            .inner_margin(14.0)
-                            .corner_radius(6.0)
-                            .show(ui, |ui| {
-                                ui.label(RichText::new(&card.kicker).color(GOLD).size(15.0));
-                                ui.label(RichText::new(&card.title).color(CREAM).size(30.0).strong());
-                                ui.label(RichText::new(&card.player).color(CREAM).size(20.0));
-                                let mut rest = card.tags.join(" · ");
-                                if !card.detail.is_empty() {
-                                    rest = if rest.is_empty() {
-                                        card.detail.clone()
-                                    } else {
-                                        format!("{} · {rest}", card.detail)
-                                    };
-                                }
-                                if !rest.is_empty() {
-                                    ui.label(RichText::new(rest).color(CREAM.gamma_multiply(0.75)).size(16.0));
-                                }
-                            });
-                    });
-            }
         }
         // The timeline: the reel's progress with each shot's start marked.
         let info = reel.reel_info(demo);
