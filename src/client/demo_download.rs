@@ -13,6 +13,9 @@ use shagger::shared::demo::demo_reader::DemoReader;
 pub const DEMO_DOWNLOAD_IDLE: Duration = Duration::from_secs(60);
 /// `DEMO_DOWNLOAD_TOTAL_MS`.
 pub const DEMO_DOWNLOAD_TOTAL: Duration = Duration::from_secs(15 * 60);
+/// The largest recording fetched: a match's demo is a few megabytes
+/// gzipped, so a body past this is not one and must not fill the memory.
+const MAX_DEMO_BYTES: u64 = 256 * 1024 * 1024;
 
 /// `DemoService.demoBaseUrl`: `WASHOI_DEMO_BASE_URL` (the browser's
 /// `VITE_DEMO_BASE_URL`), else `/data/demos` on the lobby's host, as the
@@ -118,10 +121,11 @@ impl DemoDownload {
         }
         Self {
             filename: filename.to_owned(),
-            fetch: Some(HttpFetch::start(
+            fetch: Some(HttpFetch::start_at_most(
                 &format!("{base}/{name}"),
                 DEMO_DOWNLOAD_IDLE,
                 DEMO_DOWNLOAD_TOTAL,
+                Some(MAX_DEMO_BYTES),
             )),
             state: DemoDownloadState::Loading {
                 received: 0,

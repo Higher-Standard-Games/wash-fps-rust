@@ -114,7 +114,7 @@ fn usage() -> ! {
          \x20      washoi sync [--region eu|us] [--data DIR]\n\
          \x20      washoi regions [--screenshot FILE.png [--seconds N] [--size WxH]]\n\
          \x20      washoi loading <map> --screenshot FILE.png [--levelshot FILE.jpg] [--seconds N] [--size WxH]\n\
-         \x20      washoi bench <file.shagdemo> [--data DIR] [--frames N] [--warmup N] [--follow N] [--out FILE.json]\n\
+         \x20      washoi bench <file.shagdemo> [--data DIR] [--frames N] [--warmup N] [--follow N] [--size WxH] [--out FILE.json]\n\
          \x20      washoi --version\n\
          \x20      washoi view <map> [--data DIR] [--spawn N] [--screenshot FILE.png] [--size WxH] [--time T] [--at X,Y,Z,YAW] [--pitch DEG] [--player X,Y,Z,YAW[,CLIP[,FRAME[,quad][,WEAPON][,BODY]]]]... [--projectile ID,X,Y,Z,YAW[,PITCH]]... [--explosion ID,X,Y,Z,AGE]... [--weapon ID [--aim] [--quad] [--fire AGE]] [--no-cull] [--no-lights] [--seconds N]\n\
          \x20      washoi demo <file.shagdemo> [--data DIR] [--screenshot FILE.png] [--size WxH] [--time T] [--at X,Y,Z,YAW] [--pitch DEG] [--follow N] [--reel MINUTES] [--audio-out FILE.wav] [--scoreboard] [--loadout WEAPON] [--showcase WEAPON] [--seconds N]\n\
@@ -986,7 +986,7 @@ fn lobby(url: &str, o: &Options) -> i32 {
                     .map_or_else(|| w.player_id.clone(), |i| i.name.clone());
                 println!("logged in as {name}, {} online", w.online_players.len());
                 if let (Some(new_key), Some(file)) = (&w.key, &o.key_file) {
-                    match shagger::core::atomic_file::write_atomic(file, new_key.as_bytes()) {
+                    match shagger::core::atomic_file::write_atomic_private(file, new_key.as_bytes()) {
                         Ok(()) => println!("new account: key saved to {}", file.display()),
                         Err(e) => println!("new account: could not save its key: {e}"),
                     }

@@ -50,10 +50,11 @@ static STATE: Mutex<State> = Mutex::new(State::Idle);
 pub fn start() {
     let Ok(mut state) = STATE.lock() else { return };
     if matches!(*state, State::Idle) {
-        *state = State::Fetching(HttpFetch::start(
+        *state = State::Fetching(HttpFetch::start_at_most(
             LATEST_URL,
             Duration::from_secs(10),
             Duration::from_secs(20),
+            Some(MAX_INDEX as u64),
         ));
     }
 }

@@ -1557,12 +1557,29 @@ fn downloads_dir() -> Option<PathBuf> {
         .or_else(crate::config_dir)
 }
 
+/// `washoi-key-<name>.txt`, with anything but letters, digits, `_` and `-`
+/// in the name made `_`: the lobby's names are only those, but the file
+/// name must not depend on that.
+fn key_file_name(name: &str) -> String {
+    let safe: String = name
+        .chars()
+        .map(|c| {
+            if c.is_alphanumeric() || c == '_' || c == '-' {
+                c
+            } else {
+                '_'
+            }
+        })
+        .collect();
+    format!("washoi-key-{safe}.txt")
+}
+
 /// `saveKeyFile`: `washoi-key-<name>.txt` in the Downloads folder.
 fn save_key_file(name: &str, key: &str) -> std::io::Result<PathBuf> {
     let dir = downloads_dir().ok_or_else(|| std::io::Error::other("no folder to save in"))?;
     std::fs::create_dir_all(&dir)?;
-    let path = dir.join(format!("washoi-key-{name}.txt"));
-    std::fs::write(&path, key_file_lines(name, &format_key(key)))?;
+    let path = dir.join(key_file_name(name));
+    shagger::core::atomic_file::write_atomic_private(&path, key_file_lines(name, &format_key(key)).as_bytes())?;
     Ok(path)
 }
 
@@ -1570,6 +1587,13 @@ fn save_key_file(name: &str, key: &str) -> std::io::Result<PathBuf> {
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn a_key_file_name_stays_in_its_folder() {
+        assert_eq!(key_file_name("Pilot_7"), "washoi-key-Pilot_7.txt");
+        assert_eq!(key_file_name("../../x"), "washoi-key-______x.txt");
+        assert_eq!(key_file_name("a/b\\c"), "washoi-key-a_b_c.txt");
+    }
 
     fn summary(data: Value) -> Value {
         json!({ "type": "stats:summary", "requestId": "stats_1", "data": data })
