@@ -2772,6 +2772,12 @@ Ported from SHAG staging 6fa6c61 (fps 8c9f6fe):
   lower-left scene tag with egui shapes (no sheared text); the shot card is
   gone. Headless screenshots now run a demo's effects on the demo clock, as
   the window does, so a freeze frame holds still there too.
+- **Later staging fixes** (fps c78e177, shag#3): a frag chain runs at most
+  30 s, a trade (the killer dying on their frag's tick) ends it, close frags
+  in an eyes shot share one slow motion, and changing whom you watch is not
+  a weapon switch for the blade's charge (`WeaponView::followed_changed`).
+  The demo S&D bomb, a cutscene skipped while fading in and a parked music
+  track's end already behaved here.
 - **Not needed here:** the WebAssembly world trace and the bot and lobby
   changes (servers), the scattered weapon drops (the game server's), the video
   export's beat cuts (`alignSceneCutsToBeats`, `MusicBeats`).
