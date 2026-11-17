@@ -47,6 +47,16 @@ pub const REST_SECONDS: f64 = 0.4;
 pub const MAX_RAGDOLLS: usize = 4;
 /// `LAUNCH_SPEED` along the server's knockback direction.
 pub const LAUNCH_SPEED: f64 = 670.0;
+/// `RAGDOLL_ANGULAR_DAMPING`: how quickly every bone's spin dies away, so
+/// a body on the ground settles instead of whirling.
+pub const RAGDOLL_ANGULAR_DAMPING: f32 = 4.0;
+/// `HAVOK_MAX_ANGULAR_VELOCITY`: a limb may whip round, a body may not spin
+/// like a top (rad/s).
+pub const MAX_ANGULAR_VELOCITY: f32 = 20.0;
+/// `LANDING_BOUNCE`: a thrown body that lands bounces once, this share of
+/// the speed it hit the surface with.
+pub const LANDING_BOUNCE: f32 = 0.3;
+
 /// `RAGDOLL_GRAVITY_FACTOR`: slightly floatier arcs.
 pub const RAGDOLL_GRAVITY_FACTOR: f32 = 0.8;
 /// `TRAIL_LIFETIME`: seconds before the speed trail is gone.
@@ -471,6 +481,7 @@ impl RagdollSystem {
             if let Some(body) = self.physics.world.bodies.get_mut(handle) {
                 body.set_linvel(velocity, true);
                 body.set_gravity_scale(RAGDOLL_GRAVITY_FACTOR, true);
+                body.set_angular_damping(RAGDOLL_ANGULAR_DAMPING);
             }
         }
         active.ragdoll = Some(ragdoll);
@@ -508,9 +519,14 @@ impl RagdollSystem {
             .bodies
             .get(thrown.body)
             .map_or(Vec3::ZERO, |b| from_rapier(b.linvel()));
+        // The ragdoll does not carry on into the surface the body landed
+        // on: it bounces off once, a little (`LANDING_BOUNCE`).
         if let Some(normal) = thrown.surface.filter(|n| n.length_squared() > 1e-6) {
             let normal = normal.normalize();
-            velocity -= normal * velocity.dot(normal);
+            let into = velocity.dot(normal);
+            if into < 0.0 {
+                velocity -= normal * into * (1.0 + LANDING_BOUNCE);
+            }
         }
         self.physics.world.remove_body(thrown.body);
         let mut active = self.ragdolls.remove(index);
@@ -567,6 +583,14 @@ impl RagdollSystem {
         let dt = dt.max(0.0);
         if !self.ragdolls.is_empty() {
             self.physics.step(dt);
+            // Havok's velocity limit: no bone spins faster than this.
+            for (_, body) in self.physics.world.bodies.iter_mut() {
+                let spin = body.angvel();
+                let speed = spin.length();
+                if speed > MAX_ANGULAR_VELOCITY {
+                    body.set_angvel(spin * (MAX_ANGULAR_VELOCITY / speed), false);
+                }
+            }
         }
         // The spheres' contacts, once past the grace time.
         for active in &mut self.ragdolls {

@@ -24,6 +24,7 @@ use washoi::client::dropped_weapon_renderer::{DropThrow, DroppedWeaponInfo, Drop
 use washoi::client::fps_liquid_audio::play_liquid_crossing;
 use washoi::client::fps_player_audio::{player_voice_for_entity, set_local_player_voice};
 use washoi::client::gib_system::{GibRenderer, GibSystem};
+use washoi::client::hit_spatter::{Hit, HitSpatter, HitSpatterRenderer, HitZone, bloodless};
 use washoi::client::hud::widgets::loadout_picker;
 use washoi::client::hud::widgets::pickup_prompt::{horizontal_distance_sq, in_pickup_range};
 use washoi::client::kill_taunt::{KillFacts, choose_kill_taunt};
@@ -193,6 +194,7 @@ pub struct ViewOptions {
     pub hits: Vec<HitView>,
     pub teleports: Vec<TeleportView>,
     pub gibs: Vec<GibView>,
+    pub spatters: Vec<SpatterView>,
     pub rings: Vec<RingView>,
     pub ragdolls: Vec<RagdollView>,
     /// The first-person weapon to hold (`--weapon`), and whether it is
@@ -754,6 +756,17 @@ pub struct RingView {
     pub alpha: f64,
 }
 
+/// A hit's spatter, held at an age (`--spatter`).
+#[derive(Debug, Clone, PartialEq)]
+pub struct SpatterView {
+    /// The hit player's Quake origin.
+    pub origin: [f64; 3],
+    /// Seconds since the hit.
+    pub age: f64,
+    /// Sparks off a robot rather than blood.
+    pub robot: bool,
+}
+
 /// A body broken into shards, held at an age (`--gib`).
 #[derive(Debug, Clone, PartialEq)]
 pub struct GibView {
@@ -928,6 +941,9 @@ pub struct LoadedMap {
     pub teleports: Vec<TeleportView>,
     /// Gibs to hold on the map.
     pub gibs: Vec<GibView>,
+    /// Hit spatter to hold on the map (`--spatter`); a non-zero `kind` is a
+    /// robot's sparks.
+    pub spatters: Vec<SpatterView>,
     /// Liquid rings to hold on the map.
     pub rings: Vec<RingView>,
     /// Ragdolls to hold on the map.
@@ -1002,6 +1018,7 @@ pub fn load_map(data: &Path, map: &str, report: &mut dyn FnMut(PrepareStep)) -> 
         hits: Vec::new(),
         teleports: Vec::new(),
         gibs: Vec::new(),
+        spatters: Vec::new(),
         rings: Vec::new(),
         ragdolls: Vec::new(),
         effects: Vec::new(),
@@ -1136,6 +1153,9 @@ pub struct MapRenderer {
     /// Bodies breaking into shards on a gib death.
     pub gibs: GibSystem,
     gib_renderer: GibRenderer,
+    /// `HitSpatter`: blood or sparks where a hit lands.
+    pub spatter: HitSpatter,
+    spatter_renderer: HitSpatterRenderer,
     /// The map's `func_explosive` brush models and which are up
     /// (`BrushModelState`), and the disabled list last applied.
     brush_models: BrushModelState,
@@ -1176,7 +1196,7 @@ pub struct MapRenderer {
     hand_weapons: HandWeapons,
     live_weapons: Arc<HashMap<String, String>>,
     /// Each live player's body (`modelChoiceFor`), from [`styled_players`].
-    pub live_models: HashMap<String, &'static str>,
+    pub live_models: HashMap<String, (&'static str, f64)>,
     /// Players whose body a ragdoll took, hidden until they leave the list.
     ragdolled: HashSet<String>,
     /// Poses of players who left the list this frame, for a death that
@@ -1643,11 +1663,11 @@ impl MapRenderer {
             }
             upsert(&mut self.live_styles, id, *style);
             // The body `styled_players` chose (`modelChoiceFor`).
-            let choice = self
+            let (choice, scale) = self
                 .live_models
                 .get(id)
                 .copied()
-                .unwrap_or_else(|| player_model_choice(PlayerModelSide::Enemy));
+                .unwrap_or_else(|| (player_model_choice(PlayerModelSide::Enemy), 1.0));
             renderer.update_live(
                 id,
                 interp,
@@ -1656,6 +1676,7 @@ impl MapRenderer {
                 self.live_weapons.get(id).map(String::as_str),
                 self.effect_time,
                 choice,
+                scale,
             );
             if let Some(world) = renderer.world_of(id, interp) {
                 upsert(&mut self.live_worlds, id, world);
@@ -1825,6 +1846,7 @@ impl MapRenderer {
             self.spare_trails.push((def.id, trail));
         }
         self.gibs.clear();
+        self.spatter.clear();
         self.slide_dust.reset();
         self.bomb_debris.clear();
         self.damage_numbers.clear();
@@ -2013,6 +2035,80 @@ impl MapRenderer {
                 self.cartoon_hits.spawn(at, *damage);
             }
         }
+    }
+
+    /// FrameEffects' `HitSpatter.update` and GameEvents' `spatterHit`: blood
+    /// (sparks off a robot) from where each hit landed, away from whoever
+    /// made it, on anyone but the body the view is in (`view_entity`).
+    /// `players` and `local` (our entity and feet) place the shooters.
+    pub fn play_spatter(
+        &mut self,
+        events: &[SnapshotEvent],
+        view_entity: Option<&str>,
+        players: &[(String, InterpolatedEntity, PlayerModelVisualStyle)],
+        local: Option<(&str, DVec3)>,
+        dt: f64,
+    ) {
+        self.spatter.update(dt);
+        let splats_on = with_cvars(|c| c.get_bool("cl_blood_splats"));
+        for event in events {
+            let SnapshotEvent::Damage {
+                entity_id,
+                attacker_id,
+                damage,
+                weapon_id,
+                at,
+                hit_location,
+                ..
+            } = event
+            else {
+                continue;
+            };
+            if Some(entity_id.as_str()) == view_entity || *damage == 0 || bloodless(weapon_id) {
+                continue;
+            }
+            let position_of = |id: &str| {
+                local.filter(|(l, _)| *l == id).map(|(_, at)| at).or_else(|| {
+                    players
+                        .iter()
+                        .find(|(p, _, _)| p == id)
+                        .map(|(_, e, _)| DVec3::new(e.x, e.y, e.z))
+                })
+            };
+            let shooter = (attacker_id != entity_id).then(|| position_of(attacker_id)).flatten();
+            let (model, scale) = self.live_models.get(entity_id).copied().unwrap_or(("", 1.0));
+            let hit = Hit {
+                origin: DVec3::new(at.x, at.y, at.z),
+                zone: HitZone::from_location(*hit_location),
+                damage: f64::from(*damage),
+                away: shooter.map(|s| (at.x - s.x, at.z - s.z)),
+                robot: model == "robot",
+                scale,
+            };
+            self.spawn_spatter(&hit, splats_on);
+        }
+    }
+
+    /// One hit's spatter, with the floor straight under it: one trace for
+    /// all its pieces.
+    pub fn spawn_spatter(&mut self, hit: &Hit, splats_on: bool) {
+        use shagger::physics::collision_backend::TraceOptions;
+        use shagger::physics::content_flags::masks;
+        let from = HitSpatter::hit_point(hit);
+        let floor = self.shot_world.as_mut().and_then(|w| {
+            let v = |p: DVec3| shagger::babylon::maths::math_vector::Vector3::new(p.x, p.y, p.z);
+            let trace = w.trace(
+                v(from),
+                v(from - DVec3::Y * washoi::client::hit_spatter::FLOOR_REACH),
+                TraceOptions {
+                    radius: Some(0.0),
+                    height: Some(0.0),
+                    content_mask: Some(masks::SHOT),
+                },
+            );
+            (!trace.start_solid && trace.fraction < 1.0).then_some(trace.end_pos.y)
+        });
+        self.spatter.spawn(hit, floor, splats_on);
     }
 
     /// The shards fly on, and GameEvents' `handleDeathEvent` breaks a body
@@ -2575,6 +2671,7 @@ impl MapRenderer {
             );
         }
         self.gib_renderer.draws(&self.gibs, &mut self.frame_draws);
+        self.spatter_renderer.draws(&self.spatter, &mut self.frame_draws);
         self.bomb.draws(&mut self.frame_draws);
         self.slide_dust.eye = Some(camera.position.as_dvec3());
         self.slide_dust_renderer.draws(&self.slide_dust, &mut self.frame_draws);
@@ -3155,6 +3252,7 @@ pub fn build_renderer(gpu: &Gpu, map: &mut LoadedMap, output_format: wgpu::Textu
         }
     }
     let gib_renderer = GibRenderer::new(gpu, &mut models);
+    let spatter_renderer = HitSpatterRenderer::new(gpu, &mut models);
     let bomb = BombRenderer::new(gpu, &mut models);
     let slide_dust_renderer = SlideDustRenderer::new(gpu, &mut models);
     // The `func_explosive` brush models (`BrushModelState`), and in a demo
@@ -3512,6 +3610,8 @@ pub fn build_renderer(gpu: &Gpu, map: &mut LoadedMap, output_format: wgpu::Textu
         teleport_last: HashMap::new(),
         gibs: GibSystem::default(),
         gib_renderer,
+        spatter: HitSpatter::default(),
+        spatter_renderer,
         brush_models,
         lifts: LiftSystem::new(extract_lifts(&map.bsp.entities, &map.bsp.models, None)),
         applied_disabled: None,
@@ -3586,6 +3686,24 @@ pub fn build_renderer(gpu: &Gpu, map: &mut LoadedMap, output_format: wgpu::Textu
             renderer.play_gibs(&[], 1.0 / 60.0);
         }
     }
+    // Held hit spatter (`--spatter`): a hard body hit from the west, flown
+    // on to its age.
+    for held in &map.spatters {
+        let hit = Hit {
+            origin: babylon(held.origin),
+            zone: HitZone::Body,
+            damage: 60.0,
+            away: Some((1.0, 0.0)),
+            robot: held.robot,
+            scale: 1.0,
+        };
+        renderer.spawn_spatter(&hit, true);
+    }
+    if let Some(age) = map.spatters.iter().map(|g| g.age).reduce(f64::min) {
+        for _ in 0..(age * 60.0).round() as usize {
+            renderer.spatter.update(1.0 / 60.0);
+        }
+    }
     // Held ragdolls (`--ragdoll`): an idle body launched, then fallen on to
     // its age; one that has faded by then has burst into gibs.
     if let (Some(ragdolls), Some(players)) = (&mut renderer.ragdolls, &mut renderer.remote_players) {
@@ -3628,7 +3746,10 @@ pub fn styled_players(
     appearance: &mut PlayerAppearance,
     view: &AppearanceView<'_>,
 ) -> StyledPlayers {
-    let models = players.iter().map(|(id, _)| (id.clone(), view.model_for(id))).collect();
+    let models = players
+        .iter()
+        .map(|(id, _)| (id.clone(), (view.model_for(id), view.scale_for(id))))
+        .collect();
     let players = players
         .into_iter()
         .map(|(id, p)| {
@@ -3642,7 +3763,7 @@ pub fn styled_players(
 /// [`styled_players`]: the players with their styles, and their bodies.
 pub type StyledPlayers = (
     Vec<(String, InterpolatedEntity, PlayerModelVisualStyle)>,
-    HashMap<String, &'static str>,
+    HashMap<String, (&'static str, f64)>,
 );
 
 /// The view, demo or match until its window closes; the exit code.
@@ -3788,6 +3909,7 @@ pub fn start_prepared(o: &ViewOptions, prepared: Prepared) -> Result<i32, String
     map.hits.clone_from(&o.hits);
     map.teleports.clone_from(&o.teleports);
     map.gibs.clone_from(&o.gibs);
+    map.spatters.clone_from(&o.spatters);
     map.rings.clone_from(&o.rings);
     map.ragdolls.clone_from(&o.ragdolls);
     map.weapon.clone_from(&o.weapon);
@@ -3856,7 +3978,7 @@ pub fn start_prepared(o: &ViewOptions, prepared: Prepared) -> Result<i32, String
         );
     }
     let mut hud: Option<FpsHud> = None;
-    let mut overlay = crate::reel_overlay::ReelOverlay::default();
+    let mut overlay = crate::reel_overlay::ReelOverlay;
     // Whom a demo's transport bar says the view follows.
     let mut followed: Option<String> = None;
     if let Some(feed) = &mut feed {
@@ -3924,7 +4046,17 @@ pub fn start_prepared(o: &ViewOptions, prepared: Prepared) -> Result<i32, String
                 );
                 overlay.update(reel, 1.0 / 60.0);
             }
+            let before = match &*feed {
+                Feed::Demo(d) => Some(d.playhead_tick()),
+                _ => None,
+            };
             let view = feed.advance(1.0 / 60.0);
+            // In a demo the effects run on the demo clock, as the window's
+            // do: still through a pause or a reel's freeze frame.
+            let effect_dt = match (&*feed, before) {
+                (Feed::Demo(d), Some(before)) => ((d.playhead_tick() - before) / d.tick_rate()).clamp(0.0, 0.25),
+                _ => 1.0 / 60.0,
+            };
             if let Feed::Play(p, _) = feed {
                 if let Some(yaw) = p.take_spawn_facing() {
                     camera.yaw = yaw as f32;
@@ -3959,6 +4091,7 @@ pub fn start_prepared(o: &ViewOptions, prepared: Prepared) -> Result<i32, String
                 &AppearanceView {
                     teams: &view.teams,
                     looks: &view.looks,
+                    names: &view.names,
                     perspective: followed.as_deref(),
                     own: feed.local_entity(),
                     team_based: feed.match_state().team_based(),
@@ -3971,14 +4104,27 @@ pub fn start_prepared(o: &ViewOptions, prepared: Prepared) -> Result<i32, String
                 .and_then(|r| apply_reel_camera(&mut camera, r, &players, base_fov));
             renderer.set_live_weapons(&view.weapons);
             let hidden: Vec<&str> = eyes.as_deref().into_iter().collect();
-            renderer.set_live_players(&players, &hidden, 1.0 / 60.0, 1.0 / 60.0);
-            renderer.set_live_projectiles(&projectiles, 1.0 / 60.0, &camera);
-            renderer.play_effects(&view.effects, &view.weapons, 1.0 / 60.0, &camera);
+            renderer.set_live_players(&players, &hidden, 1.0 / 60.0, effect_dt);
+            renderer.set_live_projectiles(&projectiles, effect_dt, &camera);
+            renderer.play_effects(&view.effects, &view.weapons, effect_dt, &camera);
             renderer.dropped_weapons.use_server_transforms = matches!(feed, Feed::Demo(_));
-            renderer.play_dropped_weapons(&view.effects, &view.dropped_weapons, 1.0 / 60.0);
-            renderer.play_bomb_sites(feed.match_state(), 1.0 / 60.0);
-            renderer.play_pickups(&view.pickup_active, 1.0 / 60.0);
-            renderer.play_gibs(&view.effects, 1.0 / 60.0);
+            renderer.play_dropped_weapons(&view.effects, &view.dropped_weapons, effect_dt);
+            renderer.play_bomb_sites(feed.match_state(), effect_dt);
+            renderer.play_pickups(&view.pickup_active, effect_dt);
+            renderer.play_gibs(&view.effects, effect_dt);
+            {
+                let local = match &*feed {
+                    Feed::Play(p, _) => p.feet().map(|f| (p.entity_id.as_str(), DVec3::new(f.x, f.y, f.z))),
+                    _ => None,
+                };
+                renderer.play_spatter(
+                    &view.effects,
+                    view_entity(feed.local_entity(), &players, o.follow),
+                    &players,
+                    local,
+                    effect_dt,
+                );
+            }
             renderer.play_hit_feedback(
                 &view.effects,
                 view_entity(feed.local_entity(), &players, o.follow),
@@ -4258,17 +4404,23 @@ fn print_reel(reel: &CinematicDemoPlayer) {
         r.total_duration_ms / 1000.0
     );
     for s in &r.segments {
-        let card = washoi::client::reel_cards::shot_card(s, r.total_scenes);
+        let tag = washoi::client::cinematic_demo_player::scene_tag(&s.highlight);
+        let freeze = s
+            .freeze
+            .as_ref()
+            .map_or(String::new(), |f| format!(", freeze {}", f.caption));
         println!(
-            "  {:>2}. ticks {}-{} {:<16} {:<6} {} by {} ({:.1} s)",
+            "  {:>2}. ticks {}-{} {:<16} {:<6} {} by {} ({:.1} s, {} in, {} out{freeze})",
             s.segment_index + 1,
             s.start_tick,
             s.end_tick,
             s.camera_preset.as_str(),
             s.role.as_str(),
-            card.title,
-            card.player,
-            s.duration_ms / 1000.0
+            tag.what,
+            tag.who,
+            s.duration_ms / 1000.0,
+            s.transition_in.as_str(),
+            s.transition_out.as_str(),
         );
     }
 }

@@ -40,8 +40,14 @@ use winit::window::{Window, WindowId};
 use crate::match_loading_screen::twin_style;
 use crate::window::{OpenWindow, next_frame, open_window, present, run_on_event_loop};
 
-/// The music's playlists, served beside the packages.
-const PLAYLISTS: [&str; 3] = ["game.playlist.json", "menu.playlist.json", "endgame.playlist.json"];
+/// The music's playlists, served beside the packages: every one the game
+/// plays, without its `data/` folder.
+fn playlists() -> Vec<&'static str> {
+    washoi::client::game_events::ALL_PLAYLISTS
+        .iter()
+        .map(|p| p.trim_start_matches("data/"))
+        .collect()
+}
 const BACKGROUND: wgpu::Color = wgpu::Color {
     r: 0.035,
     g: 0.03,
@@ -126,7 +132,7 @@ fn start(
         // A panic in the sync is a failure the screen can offer a retry
         // for, not a spinner forever.
         let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            sync_packages(&base_url, &dir, &PLAYLISTS, &cancel, &mut |p| {
+            sync_packages(&base_url, &dir, &playlists(), &cancel, &mut |p| {
                 set(Phase::Running(p.clone()));
             })
         }));

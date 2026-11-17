@@ -4,6 +4,7 @@ pub mod air_meter;
 pub mod ammo_counter;
 pub mod ammo_warning;
 pub mod bomb_status;
+pub mod campaign_briefing;
 pub mod chat;
 pub mod death_screen;
 pub mod event_feed;

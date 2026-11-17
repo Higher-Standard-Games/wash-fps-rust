@@ -24,6 +24,7 @@ use crate::client::hud::widgets::air_meter::AirMeter;
 use crate::client::hud::widgets::ammo_counter::AmmoCounter;
 use crate::client::hud::widgets::ammo_warning::AmmoWarning;
 use crate::client::hud::widgets::bomb_status::BombStatus;
+use crate::client::hud::widgets::campaign_briefing::CampaignBriefing;
 use crate::client::hud::widgets::chat::Chat;
 use crate::client::hud::widgets::death_screen::DeathScreen;
 use crate::client::hud::widgets::event_feed::EventFeed;
@@ -83,6 +84,8 @@ pub struct FpsHud {
     /// `FPSHintPanel`: tips for new players, fed by the window.
     pub hints: HintPanel,
     round_result: RoundResult,
+    /// A campaign mission's briefing, over its opening countdown.
+    briefing: CampaignBriefing,
     bomb_status: BombStatus,
     death: DeathScreen,
     damage: DamageOverlay,
@@ -155,6 +158,7 @@ impl FpsHud {
             air: AirMeter::default(),
             ready: ReadyBar::default(),
             round_result: RoundResult::default(),
+            briefing: CampaignBriefing::default(),
             spectator_bar: SpectatorBar::default(),
             spectator_cue: SpectatorCue::default(),
             hints: HintPanel::default(),
@@ -398,6 +402,8 @@ impl FpsHud {
         self.ready.draw(&mut self.hud, &fonts, vw / 2.0, 176.0 * s);
         // `.fps-hud-top-left`: the bomb objective.
         self.bomb_status.draw(&mut self.hud, &fonts, 20.0 * s, 20.0 * s);
+        // `.fps-campaign-briefing`: placed by its own style.
+        self.briefing.draw(&mut self.hud, &fonts, 0.0, 0.0);
         // `.fps-hud-center`: the round's result.
         self.round_result.draw(&mut self.hud, &fonts, vw / 2.0, vh / 2.0);
         // `.fps-frag-container`: 31 % down, centred.
@@ -478,8 +484,9 @@ impl FpsHud {
         }
     }
 
-    fn widgets_mut(&mut self) -> [&mut dyn FpsHudWidget; 21] {
+    fn widgets_mut(&mut self) -> [&mut dyn FpsHudWidget; 22] {
         [
+            &mut self.briefing,
             &mut self.spectator_bar,
             &mut self.spectator_cue,
             &mut self.hints,

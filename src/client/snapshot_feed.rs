@@ -45,6 +45,9 @@ pub struct DemoView {
     pub teams: Arc<HashMap<String, String>>,
     /// Each free-for-all player's server-assigned look, by entity.
     pub looks: Arc<HashMap<String, u8>>,
+    /// Each player's name, by entity: a campaign gives a named bot its own
+    /// model and size.
+    pub names: Arc<HashMap<String, String>>,
     /// The players of every snapshot that arrived since the last frame, as
     /// sent (`processFPSMovementAudio` reads them).
     pub snapshots: Vec<HashMap<String, EntitySnapshot>>,
@@ -74,6 +77,8 @@ pub struct SnapshotFeed {
     pub teams: Arc<HashMap<String, String>>,
     /// `applyLooks`: each player's server-assigned free-for-all look.
     pub looks: Arc<HashMap<String, u8>>,
+    /// Each player's name, by entity (`names`).
+    pub names: Arc<HashMap<String, String>>,
     /// The match as its `match_state` events tell it.
     pub match_state: MatchStateManager,
     /// The newest snapshot's players (`state.players`): names, scores,
@@ -130,6 +135,18 @@ impl SnapshotFeed {
     pub fn push(&mut self, now: f64, state: &GameState<SnapshotEvent>, local_entity_id: &str) {
         apply_roster(Arc::make_mut(&mut self.teams), state, local_entity_id);
         apply_looks(Arc::make_mut(&mut self.looks), state);
+        // By name, as live: a campaign bot's own model and size are given
+        // by its name.
+        if state
+            .players
+            .values()
+            .any(|p| self.names.get(&p.entity_id) != Some(&p.name))
+        {
+            let names = Arc::make_mut(&mut self.names);
+            for player in state.players.values() {
+                names.insert(player.entity_id.clone(), player.name.clone());
+            }
+        }
         // Every snapshot: the convergent source of truth for which pickups
         // are up, so a dropped snapshot heals on the next one.
         reconcile_active_set(Arc::make_mut(&mut self.pickup_active), &state.pickup_active_mask);
@@ -229,6 +246,7 @@ impl SnapshotFeed {
             weapons: Arc::clone(&self.weapons),
             teams: Arc::clone(&self.teams),
             looks: Arc::clone(&self.looks),
+            names: Arc::clone(&self.names),
             snapshots: std::mem::take(&mut self.snapshots),
             pickup_active: Arc::clone(&self.pickup_active),
             dropped_weapons: Arc::clone(&self.dropped_weapons),

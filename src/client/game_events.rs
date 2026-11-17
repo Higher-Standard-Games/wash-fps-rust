@@ -394,6 +394,36 @@ pub const GAME_PLAYLIST: &str = "data/game.playlist.json";
 pub const ENDGAME_PLAYLIST: &str = "data/endgame.playlist.json";
 pub const MENU_PLAYLIST: &str = "data/menu.playlist.json";
 
+/// SHAG `engine/audio/MatchPlaylist.ts`: the playlist the game named for
+/// the match being joined (a campaign mission's own song); `None` for the
+/// game playlist.
+static MATCH_PLAYLIST: std::sync::Mutex<Option<&'static str>> = std::sync::Mutex::new(None);
+
+/// `setMatchPlaylist`.
+pub fn set_match_playlist(url: Option<&'static str>) {
+    *MATCH_PLAYLIST.lock().unwrap_or_else(std::sync::PoisonError::into_inner) = url;
+}
+
+/// `matchPlaylist`: the playlist the current match plays.
+#[must_use]
+pub fn match_playlist() -> &'static str {
+    MATCH_PLAYLIST
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .unwrap_or(GAME_PLAYLIST)
+}
+
+/// Every playlist the game may play, as `data/<name>.playlist.json`.
+pub const ALL_PLAYLISTS: [&str; 7] = [
+    GAME_PLAYLIST,
+    ENDGAME_PLAYLIST,
+    MENU_PLAYLIST,
+    crate::client::campaign::campaign_music::CAMPAIGN_MENU_PLAYLIST,
+    crate::client::campaign::campaign_music::MISSION_PLAYLISTS[0],
+    crate::client::campaign::campaign_music::MISSION_PLAYLISTS[1],
+    crate::client::campaign::campaign_music::MISSION_PLAYLISTS[2],
+];
+
 impl GameAudio {
     /// A demo seek (`resetFPSMovementAudio`, `demoReloadAudio.reset()`):
     /// footsteps and reloads start again from the new position.
@@ -437,7 +467,7 @@ impl GameAudio {
     pub fn load_music(&mut self, pk3: &Pk3Loader, data: &Path) -> usize {
         let mut packages: Vec<String> = Vec::new();
         let mut playable = 0;
-        for key in [GAME_PLAYLIST, ENDGAME_PLAYLIST, MENU_PLAYLIST] {
+        for key in ALL_PLAYLISTS {
             let file = data.join(key.trim_start_matches("data/"));
             let Some(playlist) = std::fs::read_to_string(&file)
                 .ok()
@@ -472,7 +502,18 @@ impl GameAudio {
     /// read every map. `muted` is the lobby music key's stored choice.
     /// Returns how many tracks can play.
     pub fn start_menu_music(&mut self, data: &Path, muted: bool) -> usize {
-        let Some(playlist) = std::fs::read_to_string(data.join(MENU_PLAYLIST.trim_start_matches("data/")))
+        let playable = self.read_menu_playlist(data, MENU_PLAYLIST);
+        // The campaign page's opener, ready for the page.
+        self.read_menu_playlist(data, crate::client::campaign::campaign_music::CAMPAIGN_MENU_PLAYLIST);
+        self.set_menu_muted(muted);
+        self.load_playlist(MENU_PLAYLIST);
+        playable
+    }
+
+    /// Reads one of the lobby's playlists from `data`, with only the
+    /// packages that hold its tracks. Returns how many tracks can play.
+    fn read_menu_playlist(&mut self, data: &Path, key: &str) -> usize {
+        let Some(playlist) = std::fs::read_to_string(data.join(key.trim_start_matches("data/")))
             .ok()
             .and_then(|text| Playlist::parse(&text).ok())
         else {
@@ -491,17 +532,30 @@ impl GameAudio {
                 self.music_packages.has_file(&t.file) || self.music_packages.has_file(&format!("music/{}", t.file))
             })
             .count();
-        self.playlists.insert(MENU_PLAYLIST.to_owned(), playlist);
-        self.set_menu_muted(muted);
-        self.load_playlist(MENU_PLAYLIST);
+        self.playlists.insert(key.to_owned(), playlist);
         playable
+    }
+
+    /// `switchPlaylist`: the lobby page's music (the campaign page's opener
+    /// or the menus' playlist), the other put aside where it is.
+    pub fn switch_page_music(&mut self, key: &str) {
+        let playlist = self.playlists.get(key).cloned();
+        let packages = &mut self.music_packages;
+        self.music
+            .switch_playlist(&mut self.sfx, &mut |p| packages.get_file(p), playlist, key);
     }
 
     /// `setPlaylistMuted(MENU_PLAYLIST, muted)`: the lobby music key.
     pub fn set_menu_muted(&mut self, muted: bool) {
         let packages = &mut self.music_packages;
-        self.music
-            .set_playlist_muted(&mut self.sfx, &mut |p| packages.get_file(p), MENU_PLAYLIST, muted);
+        // The lobby music key mutes the lobby's music, whichever page plays it.
+        for key in [
+            MENU_PLAYLIST,
+            crate::client::campaign::campaign_music::CAMPAIGN_MENU_PLAYLIST,
+        ] {
+            self.music
+                .set_playlist_muted(&mut self.sfx, &mut |p| packages.get_file(p), key, muted);
+        }
     }
 
     /// The lobby's frame: the menu music's fades and next track.
@@ -529,13 +583,13 @@ impl GameAudio {
             None => self.load_playlist(if phase == MatchPhase::PostGame {
                 ENDGAME_PLAYLIST
             } else {
-                GAME_PLAYLIST
+                match_playlist()
             }),
             Some(old) if old != phase => {
                 if phase == MatchPhase::PostGame {
                     self.load_playlist(ENDGAME_PLAYLIST);
                 } else if old == MatchPhase::PostGame {
-                    self.load_playlist(GAME_PLAYLIST);
+                    self.load_playlist(match_playlist());
                 }
             }
             Some(_) => {}

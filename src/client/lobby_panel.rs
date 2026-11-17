@@ -31,7 +31,7 @@ use shagger::core::cvar::with_cvars;
 use shagger::lobby::lobby_client::{CLIENT_DISCONNECT_REASON, LobbyClient, LobbyEvent};
 use shagger::lobby::player_identity::normalize_key;
 use shagger::lobby::settings_sync::SettingsSync;
-use shagger::lobby::types::{AuthError, GametypeInfo, LiveMatchInfo, LobbyConnect, LobbyIn};
+use shagger::lobby::types::{AuthError, CampaignMissionInfo, GametypeInfo, LiveMatchInfo, LobbyConnect, LobbyIn};
 use shagger::ui::components::lobby_twin::{
     RAIL_SKEW, TwinRail, TwinStyle, clamp_css, cream, elide, gradient_polygon, horizontal_gradient, hsl, hsla,
     paint_backdrop, paint_brand, paint_light_in, paint_rail, text, violet,
@@ -44,6 +44,14 @@ use shagger::ui::egui_layer::egui;
 
 use egui::{Color32, FontFamily, FontId, Painter, Pos2, Rect, Shape, Stroke, pos2, vec2};
 
+use crate::client::campaign::campaign_cutscene::{CampaignCutscene, CutsceneEvent};
+use crate::client::campaign::campaign_music::CAMPAIGN_MENU_PLAYLIST;
+use crate::client::campaign::campaign_session::{
+    cache_campaign, cache_mission_looks, cached_campaign, remember_campaign_match, take_campaign_retry,
+    take_campaign_return,
+};
+use crate::client::campaign::campaign_story::campaign_story;
+use crate::client::campaign::campaign_view::{CampaignAction, CampaignView};
 use crate::client::credits::credits_dialog::{CreditsAnswer, CreditsDialog};
 use crate::client::demos_view::DemosView;
 use crate::client::leaderboard_view::LeaderboardView;
@@ -190,6 +198,7 @@ pub const DEVLOG_URL: &str = "https://washoi.net/devlog";
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Tab {
     Play,
+    Campaign,
     Leaderboard,
     Demos,
     Settings,
@@ -416,6 +425,22 @@ pub struct LobbyPanel {
     selected_mode: usize,
     settings_sync: Option<SettingsSync>,
     started: Instant,
+    /// The Campaign page.
+    pub campaign: CampaignView,
+    /// A mission to play again at once (`campaignRetry`): started once the
+    /// lobby has sent the campaign and is on screen.
+    campaign_retry: Option<String>,
+    /// The campaign's missions and how far it is unlocked, as the lobby
+    /// last sent them, for a retry waiting to start.
+    campaign_missions: Option<(Vec<CampaignMissionInfo>, u32)>,
+    /// The lobby runs the campaign (welcome's `campaign` feature).
+    campaign_supported: bool,
+    /// The comic card over everything while a mission starts.
+    pub cutscene: Option<CampaignCutscene>,
+    /// The mission being started, until its match connects or fails.
+    starting_mission: Option<CampaignMissionInfo>,
+    /// The page drawn last frame, for the page's music.
+    campaign_shown: bool,
 }
 
 impl LobbyPanel {
@@ -485,6 +510,13 @@ impl LobbyPanel {
             selected_mode: 0,
             settings_sync: None,
             started: Instant::now(),
+            campaign: CampaignView::default(),
+            campaign_retry: None,
+            campaign_missions: None,
+            campaign_supported: false,
+            cutscene: None,
+            starting_mission: None,
+            campaign_shown: false,
         }
     }
 
@@ -500,12 +532,43 @@ impl LobbyPanel {
         if let Some(why) = error {
             self.notice = why;
         }
+        // Back in the lobby: what a campaign match forced (its models, its
+        // crew in green, its song) goes. The TypeScript reloads the page.
+        crate::client::campaign::campaign_session::apply_campaign_looks(None);
         if completed {
             if let Some(room) = &self.room {
                 self.client.leave_lobby(&room.lobby_id);
             }
             self.show_play_stage();
             self.room_to_rejoin = None;
+        }
+        // Back from a campaign match: the campaign is where the player was,
+        // and a lost mission asked to be played again starts at once.
+        if take_campaign_return().is_some() {
+            self.tab = Tab::Campaign;
+            self.campaign.show_current();
+            // A campaign match is its own room: done, it is left.
+            if let Some(room) = &self.room {
+                self.client.leave_lobby(&room.lobby_id);
+            }
+            self.show_play_stage();
+            self.room_to_rejoin = None;
+        }
+        self.campaign_retry = take_campaign_retry();
+        if self.connected && self.campaign_supported {
+            self.client.request_campaign();
+        }
+        self.retry_campaign_mission();
+    }
+
+    /// The menus' playlist on every page but the Campaign's, which plays
+    /// its own opener (`playPageMusic`).
+    #[must_use]
+    pub fn page_playlist(&self) -> &'static str {
+        if self.tab == Tab::Campaign {
+            CAMPAIGN_MENU_PLAYLIST
+        } else {
+            crate::client::game_events::MENU_PLAYLIST
         }
     }
 
@@ -605,6 +668,8 @@ impl LobbyPanel {
         self.pending_private_create = false;
         self.pending_quick_play = false;
         self.private_lobby_supported = false;
+        self.campaign_supported = false;
+        self.fail_campaign_start("Lost the lobby server.");
         self.server_gametypes.clear();
         self.live_matches.clear();
         self.online.clear();
@@ -756,6 +821,15 @@ impl LobbyPanel {
                 if self.tab == Tab::Leaderboard {
                     self.leaderboard.refresh(&mut self.client);
                 }
+                self.campaign_supported = feature("campaign");
+                if let Some(id) = &self.account_id
+                    && let Some(cached) = cached_campaign(id)
+                {
+                    self.campaign.set_state(Some(cached));
+                }
+                if self.campaign_supported {
+                    self.client.request_campaign();
+                }
                 self.profile.bind(
                     feature("playerStats"),
                     feature("leaderboard") && feature("skillRatings"),
@@ -825,12 +899,30 @@ impl LobbyPanel {
                 system: false,
             }),
             LobbyIn::RoomState(lobby) => self.handle_lobby_created(&lobby),
+            LobbyIn::CampaignState(state) => {
+                if let Some(id) = &self.account_id {
+                    cache_campaign(id, &state);
+                }
+                // A campaign demo is drawn as its mission was, from these.
+                cache_mission_looks(&state.missions);
+                self.campaign_missions = Some((state.missions.clone(), state.unlocked_through));
+                self.campaign.set_state(Some(*state));
+                self.retry_campaign_mission();
+            }
             LobbyIn::Connect(LobbyConnect {
                 server_url,
                 map,
                 admission_ticket,
+                campaign,
                 ..
             }) => {
+                // A campaign match's mission and models go with it to the game.
+                let is_campaign = campaign.is_some();
+                remember_campaign_match(campaign.map(|c| *c));
+                if is_campaign && let Some(cut) = &mut self.cutscene {
+                    cut.close();
+                    self.starting_mission = None;
+                }
                 // `MatchLobbyView`'s handoff: the local player's side.
                 let team = self
                     .room
@@ -855,6 +947,7 @@ impl LobbyPanel {
                 self.queue_pending = false;
                 self.pending_private_create = false;
                 self.pending_quick_play = false;
+                self.fail_campaign_start(&e);
                 self.notice = e;
             }
             LobbyIn::Other { kind, message } => self.on_other(&kind, &message),
@@ -909,8 +1002,9 @@ impl LobbyPanel {
             "stats:summary" | "stats:error" => self.profile.on_message(kind, message, &account!(self)),
             "lobby:kicked" => {
                 if self.room.as_ref().map(|r| r.lobby_id.clone()) == field("lobbyId") {
-                    self.show_play_stage();
                     let reason = field("reason").unwrap_or_default();
+                    self.fail_campaign_start(&format!("Left the mission: {reason}"));
+                    self.show_play_stage();
                     self.system_line(format!("Left room: {reason}"));
                 }
             }
@@ -1003,7 +1097,8 @@ impl LobbyPanel {
             return;
         }
         let private = lobby.get("visibility").and_then(Value::as_str) == Some("private");
-        let quick_play = self.pending_quick_play && private;
+        let campaign_room = lobby.get("campaign").is_some_and(|c| !c.is_null());
+        let quick_play = self.pending_quick_play && private && !campaign_room;
         // `currentInviteToken`: a private room's share link carries it.
         let invite = private
             .then(|| lobby.get("shareUrl").and_then(Value::as_str))
@@ -1039,7 +1134,15 @@ impl LobbyPanel {
         self.levelshots.want(room.maps.iter().map(|m| m.name.as_str()));
         self.room_chat = Some(RoomChatView::new(lobby));
         self.room = Some(room);
-        self.tab = Tab::Play;
+        // A campaign room stays on the Campaign page (its music too) behind
+        // the comic card; `handleLobbyCreated` changes no tab.
+        if !campaign_room {
+            self.tab = Tab::Play;
+        }
+        // A campaign room opens behind the comic card.
+        if self.cutscene.is_some() && campaign_room {
+            self.ready_for_campaign();
+        }
     }
 
     /// Opens a room from its state, as `lobby:created` does: for drawing a
@@ -1193,6 +1296,16 @@ impl LobbyPanel {
                 _ => {}
             }
         }
+        self.refresh_campaign();
+        if (self.tab == Tab::Campaign) != self.campaign_shown {
+            self.campaign_shown = self.tab == Tab::Campaign;
+            if self.campaign_shown {
+                if self.campaign_supported && self.connected {
+                    self.client.request_campaign();
+                }
+                self.campaign.show_current();
+            }
+        }
         self.stage(ui, &layout, style, &mut action);
         self.rail(ui, &layout, style);
         // Above the links bar (its keys, 44 tall on a 5 px base, 17 px up).
@@ -1208,6 +1321,7 @@ impl LobbyPanel {
         if let Some(url) = self.open_url.take() {
             action = Some(PanelAction::OpenUrl(url));
         }
+        self.cutscene_ui(ui.ctx());
         // Keep the light drifting.
         ui.ctx().request_repaint();
         action
@@ -1416,6 +1530,145 @@ fn cut_panel(painter: &Painter, r: Rect, cut: f32, stops: &[(f32, Color32)], bor
     }
 }
 
+/// The campaign (`LobbyPanel.ts`'s campaign tab).
+impl LobbyPanel {
+    /// `refreshCampaign`: mission keys work with a lobby that runs the
+    /// campaign and no room open.
+    fn refresh_campaign(&mut self) {
+        let reason = if !self.connected {
+            "The campaign needs the lobby server."
+        } else if !self.campaign_supported {
+            "This lobby server does not run the campaign."
+        } else if self.room.is_some() && self.starting_mission.is_none() {
+            "Leave your room on the Play page to start a mission."
+        } else {
+            ""
+        };
+        let startable = reason.is_empty() && !self.queue_pending && self.starting_mission.is_none();
+        self.campaign.set_startable(startable, reason);
+    }
+
+    /// `retryCampaignMission`: play again the mission the player asked to
+    /// retry, straight from the black screen.
+    fn retry_campaign_mission(&mut self) {
+        let Some(mission_id) = self.campaign_retry.clone() else {
+            return;
+        };
+        let Some((missions, unlocked_through)) = &self.campaign_missions else {
+            return;
+        };
+        self.campaign_retry = None;
+        let mission = missions.iter().find(|m| m.id == mission_id).cloned();
+        if let Some(mission) = mission
+            && mission.number <= *unlocked_through
+        {
+            self.start_campaign_mission(mission, true);
+        }
+    }
+
+    /// `startCampaignMission`: the comic card plays on a black screen
+    /// while the lobby sets up the mission's room and bots behind it, and
+    /// the player readies up once the card has been read. A retry skips the
+    /// card.
+    pub fn start_campaign_mission(&mut self, mission: CampaignMissionInfo, retry: bool) {
+        if self.starting_mission.is_some() || self.room.is_some() || self.queue_pending {
+            return;
+        }
+        if !self.connected || !self.campaign_supported {
+            return;
+        }
+        let story = campaign_story(&mission.id);
+        let title = story.map_or(mission.map_title.as_str(), |s| s.title);
+        let card = if retry { None } else { story.and_then(|s| s.card) };
+        let mut cutscene = CampaignCutscene::new(card, title);
+        cutscene.set_status(&format!("Deploying to {}…", mission.map_title));
+        self.cutscene = Some(cutscene);
+        self.queue_pending = true;
+        self.levelshots.want([mission.map.as_str()]);
+        self.client.create_campaign_lobby(&mission.id, &mission.gametype);
+        self.starting_mission = Some(mission);
+        self.refresh_campaign();
+    }
+
+    /// Starts the mission to play next, as its Play key does: for
+    /// `washoi menu --page campaign --play`. True once it has started.
+    pub fn start_next_campaign_mission(&mut self) -> bool {
+        self.refresh_campaign();
+        let Some(state) = self.campaign.state() else {
+            return false;
+        };
+        let next = state
+            .missions
+            .iter()
+            .find(|m| {
+                crate::client::campaign::campaign_view::mission_status(m.number, Some(state))
+                    == crate::client::campaign::campaign_view::MissionStatus::Current
+            })
+            .cloned();
+        let Some(mission) = next else { return false };
+        if !self.connected || !self.campaign_supported || self.room.is_some() || self.queue_pending {
+            return false;
+        }
+        self.start_campaign_mission(mission, false);
+        self.starting_mission.is_some()
+    }
+
+    /// `readyForCampaign`: the card is read and the room open: ready up;
+    /// the lobby starts the match once every mission bot is seated too.
+    fn ready_for_campaign(&mut self) {
+        let read = self.cutscene.as_ref().is_some_and(CampaignCutscene::panels_read);
+        let (Some(room), Some(mission)) = (&self.room, &self.starting_mission) else {
+            return;
+        };
+        if !read {
+            return;
+        }
+        let status = campaign_story(&mission.id).map_or_else(
+            || "Starting the mission…".to_owned(),
+            |s| format!("{} incoming…", s.rival),
+        );
+        if let Some(cut) = &mut self.cutscene {
+            cut.set_status(&status);
+        }
+        self.client.set_ready(&room.lobby_id, true);
+    }
+
+    /// `failCampaignStart`: a mission that was starting has failed: say so
+    /// on the card, which offers the way back to the campaign.
+    fn fail_campaign_start(&mut self, message: &str) {
+        let (Some(cut), Some(_)) = (&mut self.cutscene, &self.starting_mission) else {
+            return;
+        };
+        cut.fail(message);
+        self.starting_mission = None;
+        self.queue_pending = false;
+    }
+
+    /// The comic card over everything, and what it asks for.
+    fn cutscene_ui(&mut self, ctx: &egui::Context) {
+        let Some(cut) = &mut self.cutscene else { return };
+        let event = cut.ui(ctx, &mut self.campaign.art);
+        let gone = cut.is_gone();
+        match event {
+            // A card read on its own closes once read.
+            Some(CutsceneEvent::PanelsDone) if self.starting_mission.is_none() => cut.close(),
+            Some(CutsceneEvent::PanelsDone) => self.ready_for_campaign(),
+            Some(CutsceneEvent::Back) => {
+                if let Some(room) = &self.room {
+                    self.client.leave_lobby(&room.lobby_id);
+                }
+                self.show_play_stage();
+                self.room_to_rejoin = None;
+                self.tab = Tab::Campaign;
+            }
+            None => {}
+        }
+        if gone {
+            self.cutscene = None;
+        }
+    }
+}
+
 impl LobbyPanel {
     /// Opens a page by name, as `settings` or `settings/video`: for
     /// screenshots and the in-match Settings key.
@@ -1462,8 +1715,21 @@ impl LobbyPanel {
             }
             return;
         }
+        // `campaign/<mission id>`: its comic card, as a mission start plays
+        // it, for screenshots.
+        if tab == "campaign" && sub == "complete" {
+            self.campaign.preview_finale();
+        }
+        if tab == "campaign"
+            && let Some(story) = campaign_story(sub)
+        {
+            let mut cutscene = CampaignCutscene::new(story.card, story.title);
+            cutscene.set_status("Deploying…");
+            self.cutscene = Some(cutscene);
+        }
         self.tab = match tab {
             "leaderboard" => Tab::Leaderboard,
+            "campaign" => Tab::Campaign,
             "demos" => Tab::Demos,
             "settings" => Tab::Settings,
             _ => Tab::Play,
@@ -1574,9 +1840,11 @@ impl LobbyPanel {
         let label_size = clamp_css(15.0, l.w * 0.011, 21.0);
         let nav_w = l.rail_right - l.rail_left;
         let play_hint = if self.room.is_some() { "In a room" } else { "4 modes" };
-        let keys: [(&str, &str, Option<Tab>); 4] = [
+        let campaign_hint = self.campaign.progress_hint();
+        let keys: [(&str, &str, Option<Tab>); 5] = [
             ("Quick play", "FFA vs bots", None),
             ("Play", play_hint, Some(Tab::Play)),
+            ("Campaign", &campaign_hint, Some(Tab::Campaign)),
             ("Leaderboard", "Top players", Some(Tab::Leaderboard)),
             ("Demos", "Replays", Some(Tab::Demos)),
         ];
@@ -1833,6 +2101,7 @@ impl LobbyPanel {
             Tab::Settings => Some(self.settings_view().ghost().to_owned()),
             Tab::Leaderboard => Some("TOP".to_owned()),
             Tab::Demos => Some("REPLAY".to_owned()),
+            Tab::Campaign => None,
         };
         if let Some(word) = ghost {
             let size = clamp_css(200.0, l.w * 0.25, 440.0);
@@ -1854,10 +2123,30 @@ impl LobbyPanel {
             pos2(l.screen.min.x + l.rail_w + 28.0, l.screen.min.y + 30.0),
             pos2(l.screen.max.x - 52.0, l.screen.max.y - links_h - 20.0),
         );
+        // The Campaign page is its own night, edge to edge under the links.
+        if self.tab == Tab::Campaign {
+            let page = Rect::from_min_max(pos2(page_left, l.screen.min.y), l.screen.max);
+            let content = Rect::from_min_max(
+                content.min,
+                pos2(
+                    content.max.x.min(content.min.x + 1720.0),
+                    l.screen.max.y - links_h - 8.0,
+                ),
+            );
+            match self.campaign.ui(ui, page, content) {
+                Some(CampaignAction::Start(mission)) => self.start_campaign_mission(mission, false),
+                // `readCard`: the card panel by panel, starting nothing.
+                Some(CampaignAction::Read(card, title)) if self.cutscene.is_none() => {
+                    self.cutscene = Some(CampaignCutscene::new(Some(card), title));
+                }
+                _ => {}
+            }
+        }
         if let Some(a) = self.links(ui, l, style) {
             *action = Some(a);
         }
         match self.tab {
+            Tab::Campaign => {}
             Tab::Play => self.play_page(ui, l, content, &mode),
             Tab::Settings => {
                 // `« Back to welcome`, above the page, while the guide waits.
@@ -1945,14 +2234,12 @@ impl LobbyPanel {
         action
     }
 
-    /// Kicker and title (`lobby__heading`); returns its bottom.
-    fn heading(painter: &Painter, l: &Layout, at: Pos2, kicker: &str, title: &str, accent: Color32) -> f32 {
-        let kicker = line(painter, &kicker.to_uppercase(), 12.0, body(), accent, 0.32);
-        let kicker_h = kicker.size().y;
-        painter.galley(at, kicker, accent);
+    /// The title (`lobby__heading`) at the top of its header; returns its
+    /// bottom.
+    fn heading(painter: &Painter, l: &Layout, at: Pos2, title: &str) -> f32 {
         let size = clamp_css(40.0, l.w * 0.044, 74.0);
         let title = line(painter, title, size, display_family(), cream(), 0.0);
-        let ty = at.y + kicker_h + 8.0;
+        let ty = at.y;
         painter.galley_with_override_text_color(pos2(at.x + 5.0, ty + 6.0), title.clone(), hsl(250.0, 50.0, 3.0));
         let th = title.size().y;
         painter.galley(pos2(at.x, ty), title, cream());
@@ -1966,7 +2253,7 @@ impl LobbyPanel {
             self.room_page(ui, l, content, &accent);
             return;
         }
-        let bottom = Self::heading(&painter, l, content.min, "Play", "Pick your fight", accent.face);
+        let bottom = Self::heading(&painter, l, content.min, "Pick your fight");
 
         // `lobby__play-tiles`: a column per mode, two a row when narrow.
         let tile_h = clamp_css(130.0, l.h * 0.18, 176.0);
@@ -2780,6 +3067,7 @@ mod tests {
             map: "dm2".into(),
             gametype: "snd".into(),
             admission_ticket: Some("t".into()),
+            campaign: None,
         }));
         let choice = panel.take_choice().expect("a choice");
         assert_eq!(

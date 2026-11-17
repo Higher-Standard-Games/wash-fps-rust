@@ -2731,6 +2731,110 @@ whole areas rather than single items. 0.2.0 closes them in two steps.
 
 ## 24. Progress log
 
+### Staging catch-up: the campaign's story and finale (November 17, 2026)
+
+Ported from SHAG staging 6fa6c61 (fps 8c9f6fe):
+
+- **The Campaign page** opens on the campaign's story in a cream caption box
+  under the title (one line of it on a screen 1000 px tall or less), with the
+  cleared count beside the title on a dark purple plate and a segment per
+  operation. Each operation's title sits on the same plate, with its part of
+  the story beside its card. Clicking an open operation's card reads it panel
+  by panel without starting anything. Operations 7 and 8 have their cards.
+- **The finale** (`card9.webp`, scaled to 2048 wide for the GPU) sits under
+  the last operation: a classified strip until all eight are cleared, then a
+  larger card turning slowly under a deep purple **Campaign complete!** plate.
+  The turn in depth (`rotateX`/`rotateY`) has no flat equivalent and is left
+  out. `menu --page campaign/complete` shows it for screenshots.
+- **In the match:** the briefing adds a line of story under the goal, Bot
+  Trap plays its own playlist (`campaign_survival.playlist.json`), and the
+  missions' looks for demos are added to what is kept rather than replaced.
+- **Fixes:** a demo shows the death card for the recorded player's death; the
+  watched player's gun wears the quad outline when spectating a live match
+  too; dropped weapons in a demo spin while they fly and lie flat at rest; the
+  match state resets in full. Splats and gibs already looked for the floor
+  with a point.
+- **The lobby** drops the small labels that repeated a page's title (Play,
+  Leaderboard, Demos, Settings, the welcome guide, credits).
+- **Highlight reels** (shagger's `demo_analyzer.rs`, `sequence_builder.rs`
+  and `cinematic_camera_paths.rs`, proved by regenerated golden vectors that
+  now bias toward players on a run): a player's frags chained within 5 s
+  (pairs) or 10 s (three or more) are a frag sequence, filmed as it happened
+  (a chase between frags, the killer's eyes for each with a counter, long
+  waits skipped on speed lines, the orbit). Frags get `air_rocket` and `blade`
+  tags, the death event's `killWeapon` wins over `weaponId`, and routes carry
+  yaw. The reel's three best frag scenes end on a comic freeze frame, about
+  one scene cut in three comes in on speed lines, slow motion follows the
+  planned speed curve with eased ramps, and a victim's-eyes shot ends on the
+  frag and cuts into the orbit, which keeps watching where the victim died.
+  The game side (`cinematic_demo_player.rs`, `reel_effects.rs`) draws the
+  speed lines, freeze frame panel and caption burst, frag counters and the
+  lower-left scene tag with egui shapes (no sheared text); the shot card is
+  gone. Headless screenshots now run a demo's effects on the demo clock, as
+  the window does, so a freeze frame holds still there too.
+- **Later staging fixes** (fps c78e177, shag#3): a frag chain runs at most
+  30 s, a trade (the killer dying on their frag's tick) ends it, close frags
+  in an eyes shot share one slow motion, and changing whom you watch is not
+  a weapon switch for the blade's charge (`WeaponView::followed_changed`).
+  The demo S&D bomb, a cutscene skipped while fading in and a parked music
+  track's end already behaved here.
+- **Not needed here:** the WebAssembly world trace and the bot and lobby
+  changes (servers), the scattered weapon drops (the game server's), the video
+  export's beat cuts (`alignSceneCutsToBeats`, `MusicBeats`).
+
+### Staging catch-up: the single-player campaign (November 16, 2026)
+
+Ported from SHAG staging (a34d658, fps 0184fc1):
+
+- **The Campaign page** (`client/campaign`, from `CampaignView.ts` and
+  `Campaign.css`): a rail key with the progress ("2 / 8 cleared"), the
+  squad on their street across the top drifting with the scroll and a
+  handheld wander, and the operations down a track: cleared, current, open
+  or locked, each with its card (cover-cropped at the story's focus), name,
+  hook, game mode, Most frags and Play or Replay. Locked rows are dark,
+  grey, blurred strips stamped CLASSIFIED. The art is built in
+  (`assets/campaign`, webp) and decoded on threads per card; egui has no
+  CSS filters, so the blurred, darkened and grey copies are made once on
+  the CPU as each card decodes. Progress is cached beside the settings
+  (`campaign/progress.<account>.json`), as are the missions' looks for
+  demos (`campaign/looks.json`).
+- **The comic card** (`campaign_cutscene.rs`, from `CampaignCutscene.ts`):
+  fade to black, then each panel fills the screen in turn with the card
+  blurred behind it, the slow push and turn, speed lines on the move, the
+  title plate and the panel pips; a key or click moves on, Esc skips.
+  After the last panel the lobby readies up ("Cartel King incoming…"); a
+  failure says why and offers Back to campaign. Left out: the tilt in depth
+  and the blur at full speed between panels. `--page campaign/<mission>`
+  plays a card for screenshots, and `menu --page campaign --play` starts
+  the next mission end to end.
+- **In the match:** the mission's forced models, per-bot models and sizes
+  (the boss at 1.8, with its weapons through the hand bone), the crew in
+  lime, the opening countdown holding everyone still, the briefing plate
+  over it, the round intermission screen, a Retry key over Back to the
+  lobby when a mission is lost, and the mission's own playlist. The
+  Campaign page plays its own opener and the menus' playlist is parked
+  and carried on (shagger `Music::switch_playlist`).
+- **Demos:** version 8 headers name the mission; a campaign demo draws its
+  mission's looks. Its comic card before playback is not ported yet.
+- **Hit spatter** (`client/hit_spatter.rs`, from `HitSpatter.ts`): blood
+  cubes, or orange and yellow shards for robots, thrown from the hit zone
+  away from the shot, scaled by the victim's size, landing in splats on the
+  floor below (`cl_blood_splats`). `view --spatter X,Y,Z,AGE[,robot]` holds
+  one for screenshots.
+- **Ragdolls** spin down: angular damping on the bones, a cap on their spin
+  and a softer bounce on landing (`ragdoll_system.rs`).
+- **Also:** quick play leaves Ready to the player, an aim held through a
+  weapon switch no longer charges the blade, Survival's waiting bots are
+  left out of the HUD, and spectating finds teammates by the room's teams.
+- **Demo quad glow** (staging 2441312, fps ed045c8): watching a demo
+  through a player's eyes, their gun wears the quad outline while they
+  carry it. The body glow already held between recorded ticks, since demo
+  frames go through the `SnapshotBuffer`, which keeps the newer mask.
+- **Not yet:** the S&D EMP bomb model (`bomb_emp.glb` is not in the
+  published packs yet). The
+  campaign playlists and `washoi_campaign_soundtrack.pk3` are fetched as
+  optional extras and play once eu.washoi.net has them.
+
 ### 0.6.1: a finished match comes back to Play (November 14, 2026)
 
 After a match's post-game the client came back into the match's room; the

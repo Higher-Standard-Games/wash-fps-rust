@@ -82,6 +82,7 @@ use washoi::client::hud::widgets::pickup_prompt::{asks_to_swap, swap_text};
 use washoi::client::hud::widgets::spectator_cue::pad_bindings;
 use washoi::client::match_state_manager::MatchPhase;
 use washoi::client::move_stick::{MoveAxis, stick_direction, stick_keys};
+use washoi::client::quad_damage_visual::mask_has_quad;
 use washoi::client::remote_player_logic::CLIENT_KEY_PREFIX;
 use washoi::client::settings::controller_model::controller_buttons;
 use washoi::client::spectate_view::{DeathCameraCue, SpectateView};
@@ -185,6 +186,8 @@ struct App {
     /// The player whose eyes we look through in a demo or a watch, and
     /// their reconstructed view (`DemoPovState`).
     pov_entity: Option<String>,
+    /// The watched player changed since the view model last drew.
+    followed_changed: bool,
     pov: DemoPovState,
     /// The free-for-all colours of this session (`ffaColors`).
     appearance: PlayerAppearance,
@@ -986,6 +989,7 @@ impl App {
             let appearance_view = AppearanceView {
                 teams: &view.teams,
                 looks: &view.looks,
+                names: &view.names,
                 perspective: self.pov_entity.as_deref(),
                 own: feed.local_entity(),
                 team_based: feed.match_state().team_based(),
@@ -1073,6 +1077,7 @@ impl App {
             // `SpectateView`: dead in a round, a teammate's eyes after the
             // corpse, and what decided the round at its end.
             if let Feed::Play(p, _) = &*feed {
+                self.spectate.set_roster_teams(std::sync::Arc::clone(&view.teams));
                 let cue = self.spectate.update(
                     f64::from(dt),
                     !p.alive,
@@ -1109,6 +1114,10 @@ impl App {
             // player's eyes, their screen's view effects, and their weapon
             // in hand, swaying with their stride.
             self.followed_aiming = None;
+            // `FollowedViewWeapon`: the watched player's gun glows while they
+            // carry the quad, as the player's own does, in a demo or
+            // spectating a live match.
+            let mut followed_quad = false;
             let followed = self
                 .follow
                 .and_then(|i| players.get(i))
@@ -1119,7 +1128,9 @@ impl App {
                     if cut {
                         self.pov.reset();
                         self.pov_entity = Some(id.clone());
+                        self.followed_changed = true;
                     }
+                    followed_quad = mask_has_quad(p.powerup_mask.unwrap_or(0));
                     let aiming = p.aiming.unwrap_or(false);
                     self.pov.set_aiming(aiming);
                     self.followed_aiming = Some(aiming);
@@ -1159,6 +1170,7 @@ impl App {
                 }
                 None => {
                     if self.pov_entity.take().is_some() {
+                        self.followed_changed = true;
                         s.renderer.hold_cut(None);
                     }
                 }
@@ -1195,6 +1207,23 @@ impl App {
             }
             s.renderer.play_pickups(&view.pickup_active, effect_dt);
             s.renderer.play_gibs(&view.effects, effect_dt);
+            {
+                let local = match &*feed {
+                    Feed::Play(p, _) => p.feet().map(|f| (p.entity_id.as_str(), DVec3::new(f.x, f.y, f.z))),
+                    _ => None,
+                };
+                s.renderer.play_spatter(
+                    &view.effects,
+                    view_entity(
+                        feed.local_entity().filter(|_| self.spectate.watching().is_none()),
+                        &players,
+                        self.follow,
+                    ),
+                    &players,
+                    local,
+                    effect_dt,
+                );
+            }
             // Our own death: the camera follows the corpse or the burst
             // until we are back (`applyDeathCamera`).
             if let Some((follow, at, yaw)) = s.renderer.take_local_death() {
@@ -1342,11 +1371,12 @@ impl App {
                 );
             }
             // `FPSPlayer`: our quad puts its outline on the gun.
-            let quad = matches!(feed, Feed::Play(..))
-                && s.hud.as_mut().is_some_and(|h| {
-                    let now = h.state.now;
-                    h.state.powerups.is_active("quad", now)
-                });
+            let quad = followed_quad
+                || matches!(feed, Feed::Play(..))
+                    && s.hud.as_mut().is_some_and(|h| {
+                        let now = h.state.now;
+                        h.state.powerups.is_active("quad", now)
+                    });
             // `FPSPickup`'s and `DroppedWeaponRenderer`'s swap prompts: in
             // play, alive, with the mouse ours; asked for under each owner.
             if let Some(hud) = &mut s.hud {
@@ -1496,6 +1526,11 @@ impl App {
                 horizontal = o.horizontal_speed;
                 bob_cycle = o.bob_cycle;
                 landing_velocity = o.landing_velocity;
+            }
+            // Whom you watch changed: not a weapon switch for the blade's
+            // charge.
+            if std::mem::take(&mut self.followed_changed) {
+                view_model.view.followed_changed();
             }
             view_model.view.update(&ViewModelInput {
                 delta_time: f64::from(dt),
@@ -1987,13 +2022,27 @@ impl ApplicationHandler for App {
                 button: MouseButton::Left,
                 ..
             } => {
+                // A campaign mission not won, played again (`setRetryAction`).
+                let retry = (state == ElementState::Pressed && !self.captured)
+                    .then(|| {
+                        let h = self.surface.as_ref()?.hud.as_ref()?;
+                        let (x, y) = self.cursor?;
+                        h.scoreboard
+                            .retry_hit(x as f32 / h.scale, y as f32 / h.scale)
+                            .map(str::to_owned)
+                    })
+                    .flatten();
+                if let Some(mission) = &retry {
+                    washoi::client::campaign::campaign_session::request_campaign_retry(mission);
+                }
                 // The post-game's way home (`setReturnAction`).
-                let home = state == ElementState::Pressed
-                    && !self.captured
-                    && self.surface.as_ref().and_then(|s| s.hud.as_ref()).is_some_and(|h| {
-                        self.cursor
-                            .is_some_and(|(x, y)| h.scoreboard.return_hit(x as f32 / h.scale, y as f32 / h.scale))
-                    });
+                let home = retry.is_some()
+                    || state == ElementState::Pressed
+                        && !self.captured
+                        && self.surface.as_ref().and_then(|s| s.hud.as_ref()).is_some_and(|h| {
+                            self.cursor
+                                .is_some_and(|(x, y)| h.scoreboard.return_hit(x as f32 / h.scale, y as f32 / h.scale))
+                        });
                 if home {
                     println!("lobby: back to the lobby");
                     end_screen(event_loop);
@@ -2542,6 +2591,7 @@ pub fn run(
         view_offset: None,
         on_ladder: false,
         pov_entity: None,
+        followed_changed: false,
         pov: DemoPovState::default(),
         appearance: PlayerAppearance::default(),
         followed_aiming: None,
@@ -2556,7 +2606,7 @@ pub fn run(
         settings_open: false,
         native_settings: None,
         reel,
-        overlay: ReelOverlay::default(),
+        overlay: ReelOverlay,
         demo_hud: None,
         drawn: Vec::new(),
         bench,

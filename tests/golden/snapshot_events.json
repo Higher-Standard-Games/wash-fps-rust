@@ -1,4 +1,4 @@
-{"generator":"shagger tools/golden/protocol.mjs","shag":"2a4817588485cb8d1d5112a7207fccdec5abcd22","node":"v22.23.4","vectors":[{"bytes":"0000000000000000000000000000000000000000010000","events":[]},
+{"generator":"shagger tools/golden/protocol.mjs","shag":"a34d658b54df8ba1393a01cff051dd9afbc56faf","node":"v22.23.4","vectors":[{"bytes":"0000000000000000000000000000000000000000010000","events":[]},
 {"bytes":"0100000000000000000000000000000000000000010001060070726f6a5f33a35f7e584f","events":[{"type":"combat_state","entityId":"proj_3","health":"40d7e8c000000000","armor":"40d61f8000000000","dead":true}]},
 {"bytes":"020000000000000000000000000000000000000002000207007b22626164223a0205003165343030","error":"Unexpected end of JSON input"},
 {"bytes":"030000000000000000000000000000000000000001000307006974656d5f3132060070726f6a5f331b007b2232223a2274776f222c2231223a226f6e65222c227a223a307d15005b22626c6173746572222c2273686f7467756e225dcce838d3e9","events":[{"type":"weapon_state","entityId":"item_12","currentWeapon":"proj_3","weapons":{"1":"one","2":"two","z":"0000000000000000"},"ammo":["blaster","shotgun"],"reloading":true,"lastFireTick":"41ed3a671d000000"}]},

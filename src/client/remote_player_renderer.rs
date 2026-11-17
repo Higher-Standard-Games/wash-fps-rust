@@ -80,11 +80,18 @@ pub const JUMP_VELOCITY: f64 = 320.0;
 /// sliding (`updateModel`).
 #[must_use]
 pub fn feet_y(interp: &InterpolatedEntity) -> f64 {
+    scaled_feet_y(interp, 1.0)
+}
+
+/// [`feet_y`] for a body `scale` times a player's (a campaign boss), which
+/// drops as much more as it is bigger.
+#[must_use]
+pub fn scaled_feet_y(interp: &InterpolatedEntity, scale: f64) -> f64 {
     let mut feet = interp.y + PLAYER_MINS_Z + MODEL_Y_OFFSET;
     if interp.sliding {
-        feet -= 20.0;
+        feet -= 20.0 * scale;
     } else if interp.crouching {
-        feet -= 10.0;
+        feet -= 10.0 * scale;
     }
     feet
 }
@@ -113,15 +120,28 @@ pub fn update_powerup_glow(draws: &mut [ModelDraw], powerup_mask: u32, elapsed: 
 /// The anchor: at the feet, turned by the yaw (`updateModel`).
 #[must_use]
 pub fn anchor_matrix(interp: &InterpolatedEntity) -> Mat4 {
-    Mat4::from_translation(Vec3::new(interp.x as f32, feet_y(interp) as f32, interp.z as f32))
-        * Mat4::from_quat(Quat::from_rotation_y(interp.yaw as f32))
+    scaled_anchor_matrix(interp, 1.0)
+}
+
+fn scaled_anchor_matrix(interp: &InterpolatedEntity, scale: f64) -> Mat4 {
+    Mat4::from_translation(Vec3::new(
+        interp.x as f32,
+        scaled_feet_y(interp, scale) as f32,
+        interp.z as f32,
+    )) * Mat4::from_quat(Quat::from_rotation_y(interp.yaw as f32))
 }
 
 /// The model's world matrix: the anchor, then the mesh lifted by its fit
 /// and scaled with no rotation (`createInstance`, `updateModel`).
 #[must_use]
 pub fn body_matrix(interp: &InterpolatedEntity, model: &PlayerModel) -> Mat4 {
-    anchor_matrix(interp) * model.root_matrix(MODEL_SCALE)
+    scaled_body_matrix(interp, model, 1.0)
+}
+
+/// [`body_matrix`] for a body `scale` times a player's (a campaign boss).
+#[must_use]
+pub fn scaled_body_matrix(interp: &InterpolatedEntity, model: &PlayerModel, scale: f64) -> Mat4 {
+    scaled_anchor_matrix(interp, scale) * model.root_matrix(MODEL_SCALE * scale as f32)
 }
 
 /// `movesBackward`.
@@ -249,6 +269,8 @@ struct RemoteBody {
     /// A kill taunt waiting for the blade swing to end, until then on the
     /// pose clock (`pendingTaunt`).
     pending_taunt: Option<(&'static str, f64)>,
+    /// How many times a player's size the body is drawn (a campaign boss).
+    scale: f64,
 }
 
 /// Where a player's held weapon hangs: the weapon hand in the world and
@@ -375,6 +397,7 @@ impl RemotePlayerRenderer {
                 blade_upright: false,
                 weapon: None,
                 pending_taunt: None,
+                scale: 1.0,
             }
         });
         (model, remote)
@@ -415,9 +438,17 @@ impl RemotePlayerRenderer {
         weapon: Option<&str>,
         pose_time: f64,
         choice: &str,
+        scale: f64,
     ) {
         let (run_legs, run_upper) = run_rates();
         let (model, remote) = self.ensure(id, choice);
+        remote.scale = scale;
+        // A bigger body covers its size's multiple per stride.
+        let stride = InterpolatedEntity {
+            vx: interp.vx / scale,
+            vz: interp.vz / scale,
+            ..*interp
+        };
         // Keep the next locomotion pose current while an attack owns the bones.
         let locomotion = derive_animation(interp);
         let blade = weapon == Some("blade");
@@ -471,7 +502,7 @@ impl RemotePlayerRenderer {
         remote.blade_upright = stance.is_some() && !model.is_one_shot_playing(instance);
         if !model.is_full_body_one_shot_playing(instance) {
             let running = matches!(anim, "run" | "run_relaxed" | "run_back");
-            instance.speed_ratio = animation_speed_ratio(anim, interp, time_scale, run_legs);
+            instance.speed_ratio = animation_speed_ratio(anim, &stride, time_scale, run_legs);
             let share = if running && run_legs > 0.0 {
                 run_upper / run_legs
             } else {
@@ -559,7 +590,11 @@ impl RemotePlayerRenderer {
     #[must_use]
     pub fn world_of(&self, id: &str, interp: &InterpolatedEntity) -> Option<Mat4> {
         let remote = self.instances.get(id)?;
-        Some(body_matrix(interp, &self.bodies[remote.body].model))
+        Some(scaled_body_matrix(
+            interp,
+            &self.bodies[remote.body].model,
+            remote.scale,
+        ))
     }
 
     /// Where a player's weapon hangs (`mixamorig:RightHand` under the
@@ -571,7 +606,7 @@ impl RemotePlayerRenderer {
         held_frame(
             model,
             &remote.instance,
-            body_matrix(interp, model),
+            scaled_body_matrix(interp, model, remote.scale),
             remote.blade_upright,
         )
     }
@@ -585,7 +620,7 @@ impl RemotePlayerRenderer {
         let skeleton = &model.model.skeleton;
         let joint = skeleton.find(&format!("mixamorig:{bone}"))?;
         let globals = skeleton.global_matrices(&remote.instance.locals);
-        let world = body_matrix(interp, model) * *globals.get(joint)?;
+        let world = scaled_body_matrix(interp, model, remote.scale) * *globals.get(joint)?;
         Some((world.w_axis.truncate().as_dvec3(), interp.yaw))
     }
 
@@ -602,7 +637,7 @@ impl RemotePlayerRenderer {
             return;
         };
         let body = &self.bodies[remote.body];
-        let world = body_matrix(interp, &body.model);
+        let world = scaled_body_matrix(interp, &body.model, remote.scale);
         body_draws(body, &remote.instance, world, style, joints, draws);
     }
 }

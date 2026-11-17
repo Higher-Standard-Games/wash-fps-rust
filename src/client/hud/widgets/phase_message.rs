@@ -155,7 +155,9 @@ impl FpsHudWidget for PhaseMessage {
                 Line::Subtitle(m.gametype_name().to_uppercase()),
             ]);
         }
-        if phase == MatchPhase::Countdown {
+        // Between rounds the intermission overlay counts down instead
+        // (`FPSRoundResult`).
+        if phase == MatchPhase::Countdown && m.next_round_in().is_none() {
             let n = m.get_countdown_number();
             if n != self.last_countdown && n > 0 {
                 self.last_countdown = n;

@@ -147,10 +147,7 @@ impl FpsSettingsView {
             self.armed = None;
         }
         let painter = ui.painter().clone();
-        // `fps-set-head`: kicker and title, then the saved note and resets.
-        let kicker = line(&painter, "SETTINGS", 12.0, body(), hsl(190.0, 100.0, 60.0), 0.32);
-        let kh = kicker.size().y;
-        painter.galley(rect.min, kicker, cream());
+        // `fps-set-head`: the title, then the saved note and resets.
         let title_size = clamp_css(36.0, ui.ctx().content_rect().width() * 0.034, 60.0);
         let title = line(
             &painter,
@@ -160,7 +157,7 @@ impl FpsSettingsView {
             cream(),
             0.0,
         );
-        let ty = rect.top() + kh + 8.0;
+        let ty = rect.top();
         let th = title.size().y;
         painter.galley_with_override_text_color(
             pos2(rect.left() + 5.0, ty + 6.0),

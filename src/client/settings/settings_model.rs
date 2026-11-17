@@ -1144,6 +1144,8 @@ pub fn register_client_cvars(cvars: &mut Cvars) {
     // PlayerModelVisualSettings.ts, FPSPlayerAudio.ts.
     register_player_model_visual_cvars(cvars);
     register_player_audio_cvars(cvars);
+    // HitSpatter.ts.
+    crate::client::hit_spatter::register_hit_spatter_cvars(cvars);
     // RemotePlayerRenderer.ts.
     crate::client::remote_player_renderer::register_remote_player_cvars(cvars);
     // RenderVars.ts and RemotePlayerRenderer.ts: what the video page's

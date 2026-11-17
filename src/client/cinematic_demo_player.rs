@@ -5,15 +5,23 @@
 //! camera is: behind a player's eyes, or on a fly-by path aimed at the
 //! players and kept in front of walls.
 //!
+//! Each shot plays at its planned speeds and holds its freeze frame, and the
+//! player reports the transitions ([`CinematicDemoPlayer::veil`]) and the
+//! comic effects over the picture ([`CinematicDemoPlayer::effects`]).
+//!
 //! The TypeScript drives Babylon's `DemoViewer` and `CameraSystem`; here the
 //! player drives [`DemoPlayback`] and leaves the camera to the window, which
-//! reads [`CinematicDemoPlayer::camera`].
+//! reads [`CinematicDemoPlayer::camera`]. The video export's cuts on the
+//! music's beats (`alignCutsToBeats`, `cutAtMs`) are not ported: the native
+//! client has no video export.
 
 use std::cell::RefCell;
 
 use shagger::shared::bsp::spawn_point_table::PLAYER_ORIGIN_HEIGHT;
 use shagger::shared::demo::cinematic_camera_paths::{CameraPath, generate_camera_path, interpolate_path};
-use shagger::shared::demo::demo_analyzer::{DemoAnalysis, DemoAnalyzer};
+use shagger::shared::demo::demo_analyzer::{
+    DemoAnalysis, DemoAnalyzer, HighlightCandidate, HighlightTag, HighlightType,
+};
 use shagger::shared::demo::demo_reader::DemoHeader;
 use shagger::shared::demo::sequence_builder::{self, CameraPreset, CinematicReel, CinematicSegment, Transition};
 use shagger::shared::js::js_atan2;
@@ -21,6 +29,7 @@ use shagger::shared::net::game_state::Vec3;
 
 use crate::client::demo_playback::DemoPlayback;
 use crate::client::reel_cards::{ReelSummary, ReelTitle, reel_summary, reel_title};
+use crate::client::reel_effects::{ReelEffects, ReelFreezeEffect, ReelStampEffect, ReelTagEffect, ReelWipe};
 
 /// `CinematicPlayerState`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -31,8 +40,97 @@ pub enum ReelState {
     Ended,
 }
 
-/// How fast a speed change settles, per second of real time.
-const SPEED_EASE_RATE: f64 = 12.0;
+fn weapon_name(weapon: &str) -> Option<&'static str> {
+    Some(match weapon {
+        "rlauncher" => "Rocket",
+        "glauncher" => "Grenade",
+        "electrobolt" => "Electrobolt",
+        "lasergun" => "Laser",
+        "plasmagun" => "Plasma",
+        "riotgun" => "Riotgun",
+        "machinegun" => "Machinegun",
+        "voltaic" => "Voltaic",
+        "blade" => "Blade",
+        _ => return None,
+    })
+}
+
+const MULTI_KILL_NAMES: [&str; 5] = ["", "Frag", "Double kill", "Triple kill", "Quad kill"];
+
+/// `SceneTag`: what a scene's tag says: whose play it is, and what they did.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SceneTag {
+    pub who: String,
+    pub what: String,
+}
+
+/// `sceneTag`: the player, and the one trick that names the play.
+#[must_use]
+pub fn scene_tag(h: &HighlightCandidate) -> SceneTag {
+    SceneTag {
+        who: h.primary_player_name.clone(),
+        what: trick_name(h),
+    }
+}
+
+/// `trickName`.
+#[must_use]
+pub fn trick_name(h: &HighlightCandidate) -> String {
+    let kills = h.kill_count.unwrap_or(1);
+    let has = |tag: HighlightTag| h.has(tag);
+    if h.kind == HighlightType::FragSequence {
+        return format!("{kills}-frag run");
+    }
+    if kills >= 2 {
+        return MULTI_KILL_NAMES
+            .get(kills as usize)
+            .map_or_else(|| format!("{kills} kills"), |&n| n.to_owned());
+    }
+    let name = if h.kind == HighlightType::Movement {
+        if has(HighlightTag::WallJump) && has(HighlightTag::HeightGain) {
+            "Wall climb"
+        } else if has(HighlightTag::BunnyHop) {
+            "Bunny hops"
+        } else if has(HighlightTag::WallJump) {
+            "Wall jump"
+        } else if has(HighlightTag::Slide) && !has(HighlightTag::TrickJump) {
+            "Slide"
+        } else {
+            "Trick jump"
+        }
+    } else if has(HighlightTag::AirRocket) {
+        "Air rocket"
+    } else if has(HighlightTag::Blade) {
+        "Blade frag"
+    } else if has(HighlightTag::RocketJump) {
+        "Rocket jump frag"
+    } else if has(HighlightTag::Airborne) {
+        "Mid-air frag"
+    } else if has(HighlightTag::LongRange) {
+        "Long shot"
+    } else if has(HighlightTag::LowHp) {
+        "Clutch frag"
+    } else if has(HighlightTag::Revenge) {
+        "Revenge"
+    } else if has(HighlightTag::FirstBlood) {
+        "First blood"
+    } else {
+        return match h.weapon_id.as_deref().and_then(weapon_name) {
+            Some(weapon) => format!("{weapon} frag"),
+            None => "Frag".to_owned(),
+        };
+    };
+    name.to_owned()
+}
+
+/// How long a frag counter stays on the picture.
+const STAMP_MS: f64 = 900.0;
+/// A scene's tag comes up this far into the scene, once its cut has landed,
+/// and stays this long.
+const TAG_DELAY_MS: f64 = 250.0;
+const TAG_MS: f64 = 3200.0;
+/// The light flash at the middle of a speed-line cut.
+const WIPE_FLASH_PEAK: f64 = 0.3;
 /// How long the reel fades in from black at its start and out at its end.
 const REEL_FADE_MS: f64 = 1000.0;
 /// How strongly a crossfade dips through black at its deepest.
@@ -129,6 +227,19 @@ pub struct CinematicDemoPlayer {
     camera_paths: Vec<CameraPath>,
     tick_rate: f64,
     shot_played_ms: f64,
+    /// What is left of the current freeze frame; 0 while the shot plays.
+    freeze_left_ms: f64,
+    /// The current shot's freeze frame has been held.
+    froze_this_shot: bool,
+    /// When each of the shot's frag counters came up, in shot time.
+    stamp_shown_at: Vec<(i64, f64)>,
+    /// Real time the current scene has played, freezes left out, for its tag.
+    scene_played_ms: f64,
+    /// The scene the last shot belonged to: a new one starts its tag again.
+    tag_scene: Option<usize>,
+    /// Where the fly-by's victim was last seen in this shot: they leave the
+    /// recording when they die.
+    last_victim_pos: Option<Vec3>,
     flyby_pos: Option<Vec3>,
     flyby_look: Option<Vec3>,
     current: usize,
@@ -156,6 +267,12 @@ impl CinematicDemoPlayer {
             camera_paths: Vec::new(),
             tick_rate: 60.0,
             shot_played_ms: 0.0,
+            freeze_left_ms: 0.0,
+            froze_this_shot: false,
+            stamp_shown_at: Vec::new(),
+            scene_played_ms: 0.0,
+            tag_scene: None,
+            last_victim_pos: None,
             flyby_pos: None,
             flyby_look: None,
             current: 0,
@@ -242,27 +359,43 @@ impl CinematicDemoPlayer {
         let Some(segment) = self.current_segment().cloned() else {
             return;
         };
+        // A freeze frame: the picture holds still, the camera with it.
+        if self.freeze_left_ms > 0.0 {
+            self.shot_played_ms += delta_ms;
+            self.freeze_left_ms = (self.freeze_left_ms - delta_ms).max(0.0);
+            if self.freeze_left_ms == 0.0 {
+                demo.play();
+            }
+            return;
+        }
         let playhead = demo.playhead_tick();
         // A shot cut past the last frame ends with the demo, which stops there.
         if playhead >= segment.end_tick as f64 || demo.ended() {
             self.advance_segment(demo, world);
             return;
         }
-        let mut target = segment.playback_speed;
-        for kf in &segment.speed_keyframes {
-            if playhead >= kf.tick as f64 {
-                target = kf.speed;
+        if let Some(freeze) = &segment.freeze
+            && !self.froze_this_shot
+            && playhead >= freeze.tick as f64
+        {
+            self.froze_this_shot = true;
+            self.freeze_left_ms = freeze.ms;
+            demo.pause();
+            return;
+        }
+        // The speed: the plan at the playhead, its ramps and all.
+        self.shot_played_ms += delta_ms;
+        self.scene_played_ms += delta_ms;
+        self.speed = segment.planned_speed_at(playhead);
+        demo.set_speed(self.speed);
+        for stamp in &segment.stamps {
+            if playhead >= stamp.tick as f64 && !self.stamp_shown_at.iter().any(|(t, _)| *t == stamp.tick) {
+                self.stamp_shown_at.push((stamp.tick, self.shot_played_ms));
             }
         }
-        self.shot_played_ms += delta_ms;
-        self.speed += (target - self.speed) * (1.0 - (-SPEED_EASE_RATE * delta_ms / 1000.0).exp());
-        if (target - self.speed).abs() < 0.005 {
-            self.speed = target;
-        }
-        demo.set_speed(self.speed);
 
         match &self.camera_paths[segment.segment_index] {
-            CameraPath::Chase { .. } => self.follow_chase_target(&segment, playhead, world),
+            CameraPath::Chase { .. } => self.follow_chase_target(&segment, world),
             CameraPath::Freefly {
                 keyframes,
                 interpolation,
@@ -270,7 +403,7 @@ impl CinematicDemoPlayer {
                 let planned = interpolate_path(keyframes, playhead, *interpolation);
                 let own_fov = keyframes.iter().any(|k| k.fov.is_some());
                 let (position, look_at) =
-                    self.frame_flyby(&segment, planned.position, planned.look_at, delta_ms, world);
+                    self.frame_flyby(&segment, planned.position, planned.look_at, delta_ms, playhead, world);
                 self.camera = Some(ReelCamera::Freefly {
                     position,
                     look_at,
@@ -291,7 +424,7 @@ impl CinematicDemoPlayer {
     pub fn resume(&mut self, demo: &mut DemoPlayback) {
         if self.state == ReelState::Paused {
             self.state = ReelState::Playing;
-            if self.title_hold_ms == 0.0 {
+            if self.title_hold_ms == 0.0 && self.freeze_left_ms == 0.0 {
                 demo.play();
             }
         }
@@ -312,6 +445,8 @@ impl CinematicDemoPlayer {
         }
         self.current = index.min(reel.segments.len() - 1);
         self.title_hold_ms = 0.0;
+        // A jump shows the scene's tag again.
+        self.tag_scene = None;
         self.apply_segment(demo, world);
         if matches!(self.state, ReelState::Paused | ReelState::Ended) {
             self.state = ReelState::Playing;
@@ -352,7 +487,9 @@ impl CinematicDemoPlayer {
     /// The closing card.
     #[must_use]
     pub fn summary(&self) -> Option<ReelSummary> {
-        Some(reel_summary(self.reel.as_ref()?, self.analysis.as_ref()?))
+        Some(reel_summary(self.reel.as_ref()?, self.analysis.as_ref()?, |s| {
+            trick_name(&s.highlight)
+        }))
     }
 
     /// Where each shot starts, as fractions of the reel.
@@ -385,7 +522,13 @@ impl CinematicDemoPlayer {
             } else {
                 0.0
             };
-            elapsed += s.duration_ms * through.clamp(0.0, 1.0);
+            let freeze_ms = s.freeze.as_ref().map_or(0.0, |f| f.ms);
+            let frozen_ms = if self.froze_this_shot {
+                freeze_ms - self.freeze_left_ms
+            } else {
+                0.0
+            };
+            elapsed += frozen_ms + (s.duration_ms - freeze_ms) * through.clamp(0.0, 1.0);
         }
         if self.state == ReelState::Ended {
             elapsed = total;
@@ -420,6 +563,7 @@ impl CinematicDemoPlayer {
             return;
         }
         self.current = 0;
+        self.tag_scene = None;
         self.apply_segment(demo, world);
         self.state = ReelState::Playing;
         self.hold_for_title(demo);
@@ -456,8 +600,7 @@ impl CinematicDemoPlayer {
         let first = self.current == 0;
         let last = self.current + 1 == reel.segments.len();
         let into = 1.0 - (self.shot_played_ms / if first { REEL_FADE_MS } else { span }).min(1.0);
-        let ticks_left = segment.end_tick as f64 - demo.playhead_tick();
-        let ms_left = ticks_left / self.tick_rate * 1000.0 / self.speed.max(0.05);
+        let ms_left = self.shot_ms_left(segment, demo);
         let out = 1.0 - (ms_left.max(0.0) / if last { REEL_FADE_MS } else { span }).min(1.0);
         let mut veil = clear;
         let mut take = |white: bool, opacity: f64| {
@@ -469,11 +612,13 @@ impl CinematicDemoPlayer {
             Transition::FadeToBlack => take(false, into),
             Transition::WhiteFlash => take(true, FLASH_PEAK * into * into),
             Transition::Crossfade => take(false, CROSSFADE_DIP * into),
+            Transition::SpeedWipe => take(true, WIPE_FLASH_PEAK * into * into),
             Transition::Cut => {}
         }
         match segment.transition_out {
             Transition::FadeToBlack => take(false, out),
             Transition::WhiteFlash => take(true, FLASH_PEAK * out * out),
+            Transition::SpeedWipe => take(true, WIPE_FLASH_PEAK * out * out),
             _ => {}
         }
         if reel
@@ -486,21 +631,110 @@ impl CinematicDemoPlayer {
         veil
     }
 
+    /// `_shotMsLeft`: real time left in the shot, through its ticks at its
+    /// speed now, and its freeze.
+    fn shot_ms_left(&self, segment: &CinematicSegment, demo: &DemoPlayback) -> f64 {
+        let ticks_left = segment.end_tick as f64 - demo.playhead_tick();
+        let freeze = match &segment.freeze {
+            Some(f) if !self.froze_this_shot => f.ms,
+            _ => self.freeze_left_ms,
+        };
+        ticks_left / self.tick_rate * 1000.0 / self.speed.max(0.05) + freeze
+    }
+
+    /// `getEffects`: the comic effects over the picture now: speed lines
+    /// across a cut that jumps ahead, the freeze frame's panel and caption,
+    /// a frag counter and the scene's tag.
+    #[must_use]
+    pub fn effects(&self, demo: &DemoPlayback) -> ReelEffects {
+        let mut effects = ReelEffects::default();
+        let Some(segment) = self.current_segment() else {
+            return effects;
+        };
+        if self.state == ReelState::Ended || self.title_hold_ms > 0.0 {
+            return effects;
+        }
+        let span = segment.transition_duration_ms.max(1.0);
+        // Each wipe sweeps one way, the next the other.
+        let wipe_angle = |index: i64| if index % 2 == 0 { -8.0 } else { 172.0 };
+        let index = self.current as i64;
+        if segment.transition_in == Transition::SpeedWipe && self.shot_played_ms < span {
+            effects.wipe = Some(ReelWipe {
+                progress: 0.5 + 0.5 * (self.shot_played_ms / span),
+                angle: wipe_angle(index - 1),
+                seed: index - 1,
+            });
+        } else if segment.transition_out == Transition::SpeedWipe {
+            let left = self.shot_ms_left(segment, demo);
+            if left < span {
+                effects.wipe = Some(ReelWipe {
+                    progress: 0.5 * (1.0 - left.max(0.0) / span),
+                    angle: wipe_angle(index),
+                    seed: index,
+                });
+            }
+        }
+        if let Some(freeze) = &segment.freeze
+            && self.froze_this_shot
+            && self.freeze_left_ms > 0.0
+        {
+            effects.freeze = Some(ReelFreezeEffect {
+                elapsed_ms: freeze.ms - self.freeze_left_ms,
+                total_ms: freeze.ms,
+                caption: freeze.caption.clone(),
+                seed: index,
+            });
+        }
+        for stamp in &segment.stamps {
+            let Some(&(_, at)) = self.stamp_shown_at.iter().find(|(t, _)| *t == stamp.tick) else {
+                continue;
+            };
+            let age_ms = self.shot_played_ms - at;
+            if age_ms < STAMP_MS && effects.stamp.as_ref().is_none_or(|s| age_ms < s.age_ms) {
+                effects.stamp = Some(ReelStampEffect {
+                    text: stamp.text.clone(),
+                    age_ms,
+                    total_ms: STAMP_MS,
+                });
+            }
+        }
+        // The scene's tag, while it is new; a freeze frame has its own caption.
+        let tag_age_ms = self.scene_played_ms - TAG_DELAY_MS;
+        if effects.freeze.is_none() && (0.0..TAG_MS).contains(&tag_age_ms) {
+            let tag = scene_tag(&segment.highlight);
+            effects.tag = Some(ReelTagEffect {
+                who: tag.who,
+                what: tag.what,
+                age_ms: tag_age_ms,
+                total_ms: TAG_MS,
+            });
+        }
+        effects
+    }
+
     fn apply_segment(&mut self, demo: &mut DemoPlayback, world: &mut dyn ReelWorld) {
         let Some(segment) = self.current_segment().cloned() else {
             return;
         };
         self.shot_played_ms = 0.0;
+        if self.tag_scene != Some(segment.scene) {
+            self.tag_scene = Some(segment.scene);
+            self.scene_played_ms = 0.0;
+        }
         self.flyby_pos = None;
         self.flyby_look = None;
+        self.freeze_left_ms = 0.0;
+        self.froze_this_shot = false;
+        self.stamp_shown_at.clear();
+        self.last_victim_pos = None;
         demo.seek_to_tick(segment.start_tick as f64);
-        self.speed = segment.playback_speed;
+        self.speed = segment.planned_speed_at(segment.start_tick as f64);
         demo.set_speed(self.speed);
         demo.play();
         match &self.camera_paths[segment.segment_index] {
             CameraPath::Chase { .. } => {
                 self.chase_target = None;
-                self.follow_chase_target(&segment, segment.start_tick as f64, world);
+                self.follow_chase_target(&segment, world);
             }
             CameraPath::Freefly { keyframes, .. } => {
                 // Snap to the first keyframe at once.
@@ -516,22 +750,17 @@ impl CinematicDemoPlayer {
         self.segment_changes.push(segment.segment_index);
     }
 
-    /// `_followChaseTarget`: the player the shot is about. A victim shot
-    /// watches the victim up to the frag and the killer after it; whoever
-    /// the shot wants gives way to the other while they are not recorded.
-    fn follow_chase_target(&mut self, segment: &CinematicSegment, playhead: f64, world: &mut dyn ReelWorld) {
+    /// `_followChaseTarget`: the player the shot is about. A victim's shot
+    /// ends on the frag, so the camera never has to leave their eyes for the
+    /// killer's. Whoever the shot wants gives way to the other while they
+    /// are not recorded.
+    fn follow_chase_target(&mut self, segment: &CinematicSegment, world: &mut dyn ReelWorld) {
         let killer = segment.highlight.primary_player.clone();
         let victim = segment.highlight.victim_player.clone();
-        let named = match &self.camera_paths[segment.segment_index] {
+        let mut wanted = match &self.camera_paths[segment.segment_index] {
             CameraPath::Chase { target_entity_id } => target_entity_id.clone(),
             CameraPath::Freefly { .. } => segment.camera_target.clone().unwrap_or_else(|| killer.clone()),
         };
-        let mut wanted =
-            if segment.camera_preset == CameraPreset::VictimPov && playhead >= segment.highlight.peak_tick as f64 {
-                killer.clone()
-            } else {
-                named
-            };
         let other = if wanted == killer { victim } else { Some(killer) };
         if world.position_of(&wanted).is_none()
             && let Some(other) = other
@@ -553,11 +782,26 @@ impl CinematicDemoPlayer {
         planned_pos: Vec3,
         planned_look: Vec3,
         delta_ms: f64,
+        demo_playhead: f64,
         world: &mut dyn ReelWorld,
     ) -> (Vec3, Vec3) {
+        // A scene's ending orbits the frag itself, so when the two are apart
+        // it watches the victim take the hit, and keeps watching where they
+        // died once they have left the recording.
         let h = &segment.highlight;
         let killer = world.position_of(&h.primary_player);
-        let victim = h.victim_player.as_deref().and_then(|v| world.position_of(v));
+        let victim_id = segment.victim_target.as_deref().or(h.victim_player.as_deref());
+        let seen = victim_id.and_then(|v| world.position_of(v));
+        if seen.is_some() {
+            self.last_victim_pos = seen;
+        }
+        let frag_done = demo_playhead >= h.peak_tick as f64;
+        let death_spot = if segment.camera_preset == CameraPreset::ReplayOrbit && frag_done {
+            h.victim_pos
+        } else {
+            None
+        };
+        let victim = seen.or(self.last_victim_pos).or(death_spot);
         let together = match (killer, victim) {
             (Some(k), Some(v)) => {
                 let (dx, dy, dz) = sub(k, v);
@@ -660,15 +904,38 @@ mod tests {
             assert_eq!(reel.veil(&demo).opacity, 1.0);
             let mut seen = reel.take_segment_changes();
             let mut frames = 0;
+            let segments = reel.reel().unwrap().segments.clone();
+            let freezes = segments.iter().filter(|s| s.freeze.is_some()).count();
+            let stamped = segments.iter().any(|s| !s.stamps.is_empty());
+            let wiped = segments.iter().any(|s| s.transition_in == Transition::SpeedWipe);
+            let (mut frozen, mut stamps, mut wipes, mut tags) = (Vec::new(), false, false, false);
             while reel.state() == ReelState::Playing {
                 reel.update(1000.0 / 60.0, &mut demo, &mut NoWorld);
+                let playhead = demo.playhead_tick();
                 let _ = demo.advance(1.0 / 60.0);
+                let effects = reel.effects(&demo);
+                if let Some(freeze) = &effects.freeze {
+                    // A freeze frame holds the picture still.
+                    assert_eq!(demo.playhead_tick(), playhead, "{}", file.display());
+                    if !frozen.contains(&reel.current) {
+                        frozen.push(reel.current);
+                    }
+                    assert!(!freeze.caption.is_empty());
+                    assert!(effects.tag.is_none());
+                }
+                stamps |= effects.stamp.is_some();
+                wipes |= effects.wipe.is_some();
+                tags |= effects.tag.is_some();
                 seen.extend(reel.take_segment_changes());
                 assert!(reel.camera().is_some());
                 frames += 1;
                 assert!(frames < 60 * 600, "{} never ends", file.display());
             }
             assert_eq!(seen, (0..shots).collect::<Vec<_>>(), "{}", file.display());
+            assert_eq!(frozen.len(), freezes, "{}", file.display());
+            assert_eq!(stamps, stamped, "{}", file.display());
+            assert_eq!(wipes, wiped, "{}", file.display());
+            assert!(tags);
             assert_eq!(reel.veil(&demo).opacity, 1.0);
             let info = reel.reel_info(&demo);
             assert_eq!(info.reel_progress, 1.0);

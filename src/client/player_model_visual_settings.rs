@@ -150,9 +150,37 @@ pub fn parse_rgb_cvar(value: &str, fallback: Vec3) -> Vec3 {
     Vec3::new(parts[0] as f32, parts[1] as f32, parts[2] as f32)
 }
 
+/// The outline size a campaign teammate keeps when the setting has
+/// outlines off or thin.
+const CAMPAIGN_TEAMMATE_OUTLINE_SIZE: f64 = 25.0;
+static CAMPAIGN_TEAMMATES: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// `setCampaignTeammates`: in a campaign match teammates always wear the
+/// palette's lime tint and outline, whatever the colour, tint and outline
+/// settings say, so the crew is told apart from the enemy at a glance. Set
+/// at connect; off for every other match.
+pub fn set_campaign_teammates(on: bool) {
+    CAMPAIGN_TEAMMATES.store(on, std::sync::atomic::Ordering::Relaxed);
+}
+
 /// `getPlayerModelVisualStyle`.
 #[must_use]
 pub fn get_player_model_visual_style(slot: PlayerTeamSlot, model_scale: f32) -> PlayerModelVisualStyle {
+    if slot == PlayerTeamSlot::Ally && CAMPAIGN_TEAMMATES.load(std::sync::atomic::Ordering::Relaxed) {
+        let lime = TEAM_COLORS.iter().find(|c| c.id == "lime").unwrap_or(&TEAM_COLORS[0]);
+        return with_cvars(|c| {
+            let number = |name: &str, d: f64| if c.exists(name) { c.get_number(name) } else { d };
+            let size = CAMPAIGN_TEAMMATE_OUTLINE_SIZE.max(number("cl_player_outline_size", 25.0)) as f32;
+            PlayerModelVisualStyle {
+                tint_color: Some(parse_rgb_cvar(lime.fill, player_model_visual_default(slot))),
+                fullbright_enabled: number("cl_player_fullbright", 0.0) != 0.0,
+                fullbright_intensity: number("cl_player_fullbright_intensity", 0.25).clamp(0.0, 1.0) as f32,
+                outline_enabled: true,
+                outline_color: parse_rgb_cvar(lime.outline, player_model_outline_default(slot)),
+                outline_width: size / (model_scale * 16.0).max(1.0),
+            }
+        });
+    }
     with_cvars(|c| {
         let text = |name: &str| {
             if c.exists(name) {
@@ -308,7 +336,7 @@ pub fn get_player_team_slot(team_id: Option<&str>, local_team_id: Option<&str>) 
 
 /// `canonicalTeam`: the lobby's and the BSP's team names folded onto the
 /// match's two.
-fn canonical_team(team_id: &str) -> Option<&'static str> {
+pub fn canonical_team(team_id: &str) -> Option<&'static str> {
     match team_id.trim().to_lowercase().as_str() {
         "udon" | "bravo" => Some("udon"),
         "soba" | "alpha" | "beta" => Some("soba"),

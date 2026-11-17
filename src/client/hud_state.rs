@@ -202,7 +202,14 @@ impl HudState {
             }
         };
         let post_game = match_state.phase() == MatchPhase::PostGame;
+        // A player the match holds out of play for now (a Survival robot
+        // waiting for its wave) is on the spectator roster too: listed
+        // there, not on a side.
+        let waiting = |id: &str| match_state.spectators().iter().any(|s| s.player_id == id);
         for (player_id, player) in players {
+            if waiting(player_id) {
+                continue;
+            }
             let team_id = side_of(client_key_display_id(player_id));
             let fin = post_game
                 .then(|| match_state.standings().iter().find(|e| &e.player_id == player_id))

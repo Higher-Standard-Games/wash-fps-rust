@@ -266,12 +266,14 @@ impl HighlightEvent for SnapshotEvent {
                 entity_id,
                 killer_id,
                 weapon_id,
+                kill_weapon,
                 at,
                 ..
             } => AnalyzerEvent::Death {
                 entity_id,
                 killer_id,
                 weapon_id,
+                kill_weapon: kill_weapon.as_deref().unwrap_or(""),
                 at: Vec3::new(at.x, at.y, at.z),
             },
             _ => AnalyzerEvent::Other,

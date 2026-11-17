@@ -213,10 +213,10 @@ impl DroppedWeaponVisual {
                 self.throw_elapsed / ITEM_STEP_SECONDS
             };
         }
-        if self.use_server_transforms {
-            return;
-        }
+        // A demo places the weapon where the server had it
+        // (`set_server_position`); it still spins as it flies.
         match self.throw {
+            _ if self.use_server_transforms => {}
             // The server's path, drawn between its steps.
             Some(t) if !(t.settled && self.server_settled) => {
                 self.position = lerp(self.throw_previous, arr(t.position), between);
@@ -448,6 +448,15 @@ mod tests {
         r.update(1.0 / 60.0, None::<&mut Floor>);
         let (_, w) = r.visuals().next().unwrap();
         assert_eq!(w.position, [5.0, 6.0, 7.0]);
-        assert_eq!(w.rotation, [0.0; 3]);
+        // Still in the air, it spins as it flies.
+        assert_ne!(w.rotation, [0.0; 3]);
+        // At rest it lies flat.
+        r.sync_server_entities(&info([5.0, 6.0, 7.0], true), 100.0);
+        for _ in 0..240 {
+            r.update(1.0 / 60.0, None::<&mut Floor>);
+        }
+        let (_, w) = r.visuals().next().unwrap();
+        let pi = std::f64::consts::PI;
+        assert!(((w.rotation[0] - pi / 2.0) / pi - ((w.rotation[0] - pi / 2.0) / pi).round()).abs() < 1e-3);
     }
 }

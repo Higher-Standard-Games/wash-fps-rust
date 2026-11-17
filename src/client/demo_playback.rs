@@ -65,6 +65,8 @@ impl DemoPlayback {
             .read_header()
             .map_err(|e| format!("{}: {e}", path.display()))?
             .clone();
+        // A campaign demo is drawn as its mission was, from its first frame.
+        crate::client::campaign::campaign_session::apply_demo_look(header.campaign.as_deref());
         let duration_ms = reader.read_index().map_or(0.0, |i| f64::from(i.duration_ms));
         let frames = reader
             .read_all_frames(&WashoiEvents)
