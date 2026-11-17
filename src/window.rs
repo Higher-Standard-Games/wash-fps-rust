@@ -186,6 +186,8 @@ struct App {
     /// The player whose eyes we look through in a demo or a watch, and
     /// their reconstructed view (`DemoPovState`).
     pov_entity: Option<String>,
+    /// The watched player changed since the view model last drew.
+    followed_changed: bool,
     pov: DemoPovState,
     /// The free-for-all colours of this session (`ffaColors`).
     appearance: PlayerAppearance,
@@ -1126,6 +1128,7 @@ impl App {
                     if cut {
                         self.pov.reset();
                         self.pov_entity = Some(id.clone());
+                        self.followed_changed = true;
                     }
                     followed_quad = mask_has_quad(p.powerup_mask.unwrap_or(0));
                     let aiming = p.aiming.unwrap_or(false);
@@ -1167,6 +1170,7 @@ impl App {
                 }
                 None => {
                     if self.pov_entity.take().is_some() {
+                        self.followed_changed = true;
                         s.renderer.hold_cut(None);
                     }
                 }
@@ -1522,6 +1526,11 @@ impl App {
                 horizontal = o.horizontal_speed;
                 bob_cycle = o.bob_cycle;
                 landing_velocity = o.landing_velocity;
+            }
+            // Whom you watch changed: not a weapon switch for the blade's
+            // charge.
+            if std::mem::take(&mut self.followed_changed) {
+                view_model.view.followed_changed();
             }
             view_model.view.update(&ViewModelInput {
                 delta_time: f64::from(dt),
@@ -2582,6 +2591,7 @@ pub fn run(
         view_offset: None,
         on_ladder: false,
         pov_entity: None,
+        followed_changed: false,
         pov: DemoPovState::default(),
         appearance: PlayerAppearance::default(),
         followed_aiming: None,
