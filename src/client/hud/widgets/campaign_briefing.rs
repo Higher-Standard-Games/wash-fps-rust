@@ -7,7 +7,7 @@
 
 use shagger::ui::hud_2d::{Hud2d, TextStyle};
 
-use crate::client::campaign::campaign_session::campaign_match;
+use crate::client::campaign::campaign_session::campaign_mission_id;
 use crate::client::campaign::campaign_story::{CampaignBriefing as Briefing, campaign_story};
 use crate::client::hud::hud_widget::{FpsHudWidget, HudFrame};
 use crate::client::hud::washiki::{Fonts, Gradient, Slab, UI_SCALE, hsla};
@@ -59,9 +59,9 @@ impl FpsHudWidget for CampaignBriefing {
         // The opening countdown only: a round mode counts down again before
         // every later round.
         let story = (m.phase() == MatchPhase::Countdown && m.round() <= 1)
-            .then(campaign_match)
+            .then(campaign_mission_id)
             .flatten()
-            .and_then(|c| campaign_story(&c.mission_id));
+            .and_then(|id| campaign_story(&id));
         self.show = story.is_some();
         if let Some(s) = story {
             self.briefing = Some(&s.briefing);

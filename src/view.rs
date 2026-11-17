@@ -4112,6 +4112,19 @@ pub fn start_prepared(o: &ViewOptions, prepared: Prepared) -> Result<i32, String
             renderer.play_bomb_sites(feed.match_state(), effect_dt);
             renderer.play_pickups(&view.pickup_active, effect_dt);
             renderer.play_gibs(&view.effects, effect_dt);
+            {
+                let local = match &*feed {
+                    Feed::Play(p, _) => p.feet().map(|f| (p.entity_id.as_str(), DVec3::new(f.x, f.y, f.z))),
+                    _ => None,
+                };
+                renderer.play_spatter(
+                    &view.effects,
+                    view_entity(feed.local_entity(), &players, o.follow),
+                    &players,
+                    local,
+                    effect_dt,
+                );
+            }
             renderer.play_hit_feedback(
                 &view.effects,
                 view_entity(feed.local_entity(), &players, o.follow),

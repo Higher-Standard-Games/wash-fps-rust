@@ -532,6 +532,9 @@ impl LobbyPanel {
         if let Some(why) = error {
             self.notice = why;
         }
+        // Back in the lobby: what a campaign match forced (its models, its
+        // crew in green, its song) goes. The TypeScript reloads the page.
+        crate::client::campaign::campaign_session::apply_campaign_looks(None);
         if completed {
             if let Some(room) = &self.room {
                 self.client.leave_lobby(&room.lobby_id);
@@ -1131,7 +1134,11 @@ impl LobbyPanel {
         self.levelshots.want(room.maps.iter().map(|m| m.name.as_str()));
         self.room_chat = Some(RoomChatView::new(lobby));
         self.room = Some(room);
-        self.tab = Tab::Play;
+        // A campaign room stays on the Campaign page (its music too) behind
+        // the comic card; `handleLobbyCreated` changes no tab.
+        if !campaign_room {
+            self.tab = Tab::Play;
+        }
         // A campaign room opens behind the comic card.
         if self.cutscene.is_some() && campaign_room {
             self.ready_for_campaign();

@@ -37,6 +37,9 @@ impl LiveWatch {
     /// Connects as a spectator and waits up to `timeout` for the welcome,
     /// which names the map.
     pub fn connect(url: &str, name: &str, ticket: Option<String>, timeout: Duration) -> Result<Self, String> {
+        // `Game.ts`'s connect, watching too: a match watched is drawn by the
+        // player's settings, whatever a campaign match before it forced.
+        crate::client::campaign::campaign_session::apply_campaign_looks(None);
         let session = NetworkSession::start(
             SessionConfig {
                 url: url.to_owned(),

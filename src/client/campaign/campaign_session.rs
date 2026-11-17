@@ -119,6 +119,13 @@ pub fn campaign_match() -> Option<LobbyCampaignInfo> {
     lock(&MATCH).clone()
 }
 
+/// The campaign match's mission id, without copying the rest of it: read
+/// every HUD frame of a countdown.
+#[must_use]
+pub fn campaign_mission_id() -> Option<String> {
+    lock(&MATCH).as_ref().map(|c| c.mission_id.clone())
+}
+
 /// `requestCampaignRetry`: the player lost a mission and asked to play it
 /// again: the lobby starts it on return.
 pub fn request_campaign_retry(mission_id: &str) {
@@ -142,17 +149,7 @@ pub fn take_campaign_return() -> Option<LobbyCampaignInfo> {
 /// its crew in green, the countdown that holds everyone still and its own
 /// song. Any other match goes back to the settings.
 pub fn apply_campaign_looks(campaign: Option<&LobbyCampaignInfo>) {
-    use crate::client::player_model_selection::force_player_models;
-    use crate::client::player_model_visual_settings::set_campaign_teammates;
-    match campaign {
-        Some(c) => force_player_models(
-            Some((c.models.ally.as_str(), c.models.enemy.as_str())),
-            c.bot_models.iter().map(|(n, m)| (n.as_str(), m.as_str())),
-            c.bot_scales.iter().map(|(n, s)| (n.as_str(), *s)),
-        ),
-        None => force_player_models(None, [], []),
-    }
-    set_campaign_teammates(campaign.is_some());
+    draw_look(campaign);
     crate::client::game_events::set_match_playlist(
         campaign.and_then(|c| crate::client::campaign::campaign_music::mission_playlist(&c.mission_id)),
     );
@@ -160,15 +157,22 @@ pub fn apply_campaign_looks(campaign: Option<&LobbyCampaignInfo>) {
 
 /// `DemoService.applyCampaignLook`: draw a campaign demo as its match was
 /// drawn, from the look this computer last heard for its mission; `None`
-/// puts every match back to the player's settings.
+/// puts every match back to the player's settings. A demo has no match
+/// song (the web page that plays it has never connected to a match).
 pub fn apply_demo_look(mission_id: Option<&str>) {
-    use crate::client::player_model_selection::force_player_models;
-    use crate::client::player_model_visual_settings::set_campaign_teammates;
     let look = mission_id.and_then(mission_look);
     if let (Some(id), None) = (mission_id, &look) {
         println!("demo: no look known for campaign mission \"{id}\": open the campaign page once");
     }
-    match &look {
+    draw_look(look.as_ref());
+    crate::client::game_events::set_match_playlist(None);
+}
+
+/// A campaign's models and green crew, or the player's settings for `None`.
+fn draw_look(look: Option<&LobbyCampaignInfo>) {
+    use crate::client::player_model_selection::force_player_models;
+    use crate::client::player_model_visual_settings::set_campaign_teammates;
+    match look {
         Some(c) => force_player_models(
             Some((c.models.ally.as_str(), c.models.enemy.as_str())),
             c.bot_models.iter().map(|(n, m)| (n.as_str(), m.as_str())),
