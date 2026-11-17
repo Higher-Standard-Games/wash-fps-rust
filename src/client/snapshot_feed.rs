@@ -152,15 +152,13 @@ impl SnapshotFeed {
         reconcile_active_set(Arc::make_mut(&mut self.pickup_active), &state.pickup_active_mask);
         self.dropped_weapons = Arc::new(extract_dropped_weapons(state));
         self.roster = state.players.iter().map(|(k, p)| (k.to_owned(), p.clone())).collect();
-        let entities = extract_entities(state, local_entity_id);
         // The sounds hear every player, our own footsteps too
         // (`processFPSMovementAudio` reads the whole state); only the
-        // drawing leaves our body out.
-        self.snapshots.push(if local_entity_id.is_empty() {
-            entities.clone()
-        } else {
-            extract_entities(state, "")
-        });
+        // drawing leaves our body out. One extraction serves both.
+        let all = extract_entities(state, "");
+        let mut entities = all.clone();
+        entities.remove(local_entity_id);
+        self.snapshots.push(all);
         self.buffer.push(now, state.tick, entities, None);
         for event in &state.events {
             if let SnapshotEvent::LiftState { lifts } = event {

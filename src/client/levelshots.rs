@@ -57,6 +57,9 @@ pub enum Levelshot {
     Ready(Arc<egui::ColorImage>),
 }
 
+/// A levelshot is a JPEG of a few hundred kilobytes; a body past this is not one.
+const MAX_LEVELSHOT: u64 = 8 * 1024 * 1024;
+
 impl Levelshot {
     pub fn start(base: Option<&str>, map: &str) -> Self {
         if !safe_map(map) {
@@ -71,7 +74,12 @@ impl Levelshot {
         match base {
             Some(base) => Self::Fetching(
                 map.to_owned(),
-                HttpFetch::start(&format!("{base}/{map}.jpg"), LEVELSHOT_IDLE, LEVELSHOT_TOTAL),
+                HttpFetch::start_at_most(
+                    &format!("{base}/{map}.jpg"),
+                    LEVELSHOT_IDLE,
+                    LEVELSHOT_TOTAL,
+                    Some(MAX_LEVELSHOT),
+                ),
             ),
             None => Self::None,
         }

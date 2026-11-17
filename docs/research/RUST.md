@@ -2390,7 +2390,7 @@ renderer never had that overhead (batched world, one uniform upload per
 frame, pipelines built ahead of time), so the same moves are not
 automatically wins here. They are judged by measurement.
 
-`washoi bench <demo> [--frames N] [--warmup N] [--out FILE.json]` plays a
+`washoi bench <demo> [--frames N] [--warmup N] [--size WxH] [--out FILE.json]` plays a
 recorded match through the game's own frame loop (`window.rs`) at a fixed
 60 steps a second with vsync off, and times each frame's CPU stages
 (`feed`: demo and interpolation; `scene`: players, effects, HUD, sound;
