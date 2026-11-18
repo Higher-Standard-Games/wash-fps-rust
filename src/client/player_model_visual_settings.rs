@@ -109,6 +109,7 @@ pub fn register_player_model_visual_cvars(cvars: &mut Cvars) {
         1.0,
     );
     proxy.flags.persist = false;
+    proxy.flags.developer = true;
     cvars.register("cl_player_outline_proxy", 0, proxy);
     cvars.register(
         "cl_player_outline_size",
