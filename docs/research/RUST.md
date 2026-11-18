@@ -2751,6 +2751,13 @@ installed game would take it. To replace the key, add the new public key
 to `UPDATE_KEYS` one release before signing with it. Unit tests sign with
 a throwaway key; openssl's signatures were checked to verify with ring.
 
+**Release supply chain (security review, November 18, 2026).** Every
+action in `ci.yml` and `release.yml` is pinned to a commit SHA, with the tag
+it was in a comment, since whoever controls a tag runs code beside the
+signing secrets. Dependabot (`.github/dependabot.yml`) proposes new SHAs
+weekly. The `release` job runs in the `release` environment, which should
+hold `UPDATE_SIGNING_KEY` and admit only `v*` tags and `main`.
+
 **`r_frame_latency`** (1 to 3, default 2) is the swapchain's
 `desired_maximum_frame_latency`. 1 shows each frame about one frame
 sooner, at some throughput on a busy GPU. A screen's window reads it when
