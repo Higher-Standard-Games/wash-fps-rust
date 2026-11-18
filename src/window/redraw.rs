@@ -29,6 +29,12 @@ impl App {
         // `cl_fov`, as `currentBaseFov` gives every camera.
         self.camera.fov_y = with_cvars(|c| current_base_fov(c)) as f32;
         let Some(s) = &mut self.surface else { return };
+        // `r_frame_latency` takes effect at once (the bench keeps its own).
+        let latency = frame_latency();
+        if self.bench.is_none() && s.config.desired_maximum_frame_latency != latency {
+            s.config.desired_maximum_frame_latency = latency;
+            s.surface.configure(&s.gpu.device, &s.config);
+        }
         s.renderer.world.animate(&s.gpu, f64::from(dt));
         // The rotators turn and the lifts stand where the lift state says.
         let feed = self.feed.as_ref();
