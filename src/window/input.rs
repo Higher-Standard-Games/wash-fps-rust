@@ -128,7 +128,7 @@ impl App {
                     let mode = state.gametype_name().to_owned();
                     let timing = state.loadout_mode().map(str::to_owned);
                     let current = loadout_picker::remembered(&mode);
-                    self.loadout_picker.open(&mode, current, timing.as_deref(), true);
+                    self.loadout_picker.open(current, timing.as_deref(), true);
                 }
             }
             PauseMenuAction::Settings => {
@@ -165,7 +165,7 @@ impl App {
         let timing = state.loadout_mode().map(str::to_owned);
         let current = loadout_picker::remembered(&mode);
         self.pause_menu.close();
-        self.loadout_picker.open(&mode, current, timing.as_deref(), false);
+        self.loadout_picker.open(current, timing.as_deref(), false);
         self.set_captured(false);
     }
 
@@ -329,8 +329,8 @@ impl App {
         self.captured = grab;
     }
 
-    /// Talk mode's keys (`FPSChat`'s input): T or Y opens it while
-    /// playing; while open, every key types, Enter sends and Escape
+    /// Talk mode's keys (`FPSHud`'s chat key handler): T, Enter or Y
+    /// opens it while playing, Shift or Y to the team; while open, every key types, Enter sends and Escape
     /// cancels. True when the key was the chat's.
     pub(super) fn chat_key(&mut self, code: KeyCode, event: &winit::event::KeyEvent) -> bool {
         let Some(Feed::Play(play, _)) = &self.feed else {
@@ -341,8 +341,26 @@ impl App {
         };
         let chat = &mut hud.chat;
         if !chat.is_input_active() {
-            if event.state == ElementState::Pressed && !event.repeat && matches!(code, KeyCode::KeyT | KeyCode::KeyY) {
-                chat.open_input(code == KeyCode::KeyY);
+            let held = |k| self.held.contains(&k);
+            let shift = held(KeyCode::ShiftLeft) || held(KeyCode::ShiftRight);
+            let other = [
+                KeyCode::AltLeft,
+                KeyCode::AltRight,
+                KeyCode::ControlLeft,
+                KeyCode::ControlRight,
+                KeyCode::SuperLeft,
+                KeyCode::SuperRight,
+            ]
+            .into_iter()
+            .any(held);
+            // T (Q3 messagemode habit) or Enter (modern habit) both open
+            // talk mode; Y, or either with Shift held, opens it to the team.
+            if event.state == ElementState::Pressed
+                && !event.repeat
+                && !other
+                && matches!(code, KeyCode::KeyT | KeyCode::KeyY | KeyCode::Enter | KeyCode::NumpadEnter)
+            {
+                chat.open_input(code == KeyCode::KeyY || shift);
                 // Nothing stays held while typing.
                 self.held.clear();
                 self.firing = false;

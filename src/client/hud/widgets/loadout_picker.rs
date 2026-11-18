@@ -134,7 +134,6 @@ pub struct LoadoutPicker {
     choice: LoadoutChoice,
     /// The weapon on the stand: follows hover, falls back to the primary.
     focus: &'static str,
-    mode_name: String,
     /// `LoadoutPickerOptions.timing`: `round` or `respawn`.
     timing: Option<String>,
     /// Opened to change a kit in use, from the Esc menu.
@@ -153,7 +152,6 @@ impl Default for LoadoutPicker {
             open: false,
             choice: DEFAULT_LOADOUT,
             focus: DEFAULT_LOADOUT.primary,
-            mode_name: "Search & Destroy".into(),
             timing: None,
             changing: false,
             cancellable: false,
@@ -172,12 +170,9 @@ impl LoadoutPicker {
     /// `open`: `current` pre-selects the kit already chosen, so reopening it
     /// mid-match is a review rather than a fresh decision. `changing` opens
     /// it from the Esc menu, where Back and Esc return with the kit as it was.
-    pub fn open(&mut self, mode_name: &str, current: Option<LoadoutChoice>, timing: Option<&str>, changing: bool) {
+    pub fn open(&mut self, current: Option<LoadoutChoice>, timing: Option<&str>, changing: bool) {
         if let Some(current) = current {
             self.choice = current;
-        }
-        if !mode_name.is_empty() {
-            self.mode_name = mode_name.to_owned();
         }
         self.timing = timing.map(str::to_owned);
         self.changing = changing;
@@ -434,7 +429,7 @@ impl LoadoutPicker {
                         back,
                         KeyKind::Leave,
                         "Back",
-                        "Keep your kit",
+                        "",
                         false,
                         14.0 * k,
                         self.nav == Some(Spot::Back),
@@ -482,16 +477,6 @@ impl LoadoutPicker {
 
         let left = hero.left() + 40.0 * k;
         let mut y = hero.top() + 14.0 * k;
-        let gold = hsl(45.0, 92.0, 64.0);
-        let kicker = galley(
-            painter,
-            &self.mode_name.to_uppercase(),
-            egui::FontId::proportional(11.0 * k),
-            gold,
-            11.0 * k * 0.18,
-        );
-        painter.galley(pos2(left, y), kicker, gold);
-        y += 14.0 * k;
         let text = hsl(180.0, 100.0, 95.0);
         let heading = galley(
             painter,
@@ -729,7 +714,7 @@ mod tests {
     #[test]
     fn open_it_draws_and_waits() {
         let mut picker = LoadoutPicker::default();
-        picker.open("Free For All", None, Some("respawn"), false);
+        picker.open(None, Some("respawn"), false);
         let (outcome, shapes) = frame(&mut picker);
         assert_eq!(outcome, None);
         assert!(shapes > 0);
@@ -739,7 +724,7 @@ mod tests {
     #[test]
     fn the_first_join_cannot_be_backed_out_of() {
         let mut picker = LoadoutPicker::default();
-        picker.open("Search & Destroy", None, Some("round"), false);
+        picker.open(None, Some("round"), false);
         assert_eq!(picker.escape(), None);
         assert_eq!(picker.nav(UiIntent::Back), None);
         assert!(picker.is_open());
@@ -749,7 +734,7 @@ mod tests {
     fn from_the_menu_back_keeps_the_kit() {
         let mut picker = LoadoutPicker::default();
         let kit = LoadoutChoice::parse("electrobolt", "riotgun").unwrap();
-        picker.open("Amphi", Some(kit), Some("round"), true);
+        picker.open(Some(kit), Some("round"), true);
         assert_eq!(picker.confirm_label(), "Use this kit");
         assert_eq!(picker.escape(), Some(LoadoutOutcome::Cancel));
         assert!(!picker.is_open());
@@ -758,7 +743,7 @@ mod tests {
     #[test]
     fn a_controller_picks_both_and_confirms() {
         let mut picker = LoadoutPicker::default();
-        picker.open("Free For All", None, Some("respawn"), false);
+        picker.open(None, Some("respawn"), false);
         // Down to the Voltaic and pick it.
         picker.nav(UiIntent::Down);
         picker.nav(UiIntent::Down);

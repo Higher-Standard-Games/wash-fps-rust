@@ -617,7 +617,7 @@ pub fn start_prepared(o: &ViewOptions, prepared: Prepared) -> Result<i32, String
     }
     if let Some(weapon) = &o.loadout {
         let picker = std::cell::RefCell::new(loadout_picker::LoadoutPicker::default());
-        picker.borrow_mut().open("Free For All", None, Some("respawn"), false);
+        picker.borrow_mut().open(None, Some("respawn"), false);
         if !weapon.is_empty() {
             picker.borrow_mut().focus(weapon);
         }

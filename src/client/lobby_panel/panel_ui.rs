@@ -830,8 +830,9 @@ impl LobbyPanel {
         };
         let key = if on {
             RaisedKey::new(("mode", m.id), rect, picked.clone())
-                .rest_press(-0.5)
-                .hover(picked, -0.75)
+                // The chosen mode stays pressed in, in its own colour.
+                .rest_press(0.62)
+                .hover(picked, 0.62)
                 .active_face(vec![(0.0, accent.face), (1.0, accent.lo)])
         } else {
             RaisedKey::new(("mode", m.id), rect, rest)
@@ -853,15 +854,6 @@ impl LobbyPanel {
             Stroke::NONE,
         ));
         let inner = Rect::from_min_max(r.min + vec2(40.0, 18.0), r.max - vec2(26.0, 22.0));
-        let number = line(
-            painter,
-            &format!("{:02}", index + 1),
-            13.0,
-            display_family(),
-            face.sub,
-            0.14,
-        );
-        painter.galley(inner.left_top(), number, face.sub);
         let available = self.mode_ready(m.id);
         if self.connected && !available {
             let soon = line(painter, "SOON", 13.0, display_family(), face.sub, 0.14);
@@ -876,7 +868,7 @@ impl LobbyPanel {
             face.text,
             0.02,
         );
-        let subtitle = line(painter, &m.subtitle.to_uppercase(), 14.0, body(), face.sub, 0.18);
+        let subtitle = line(painter, &m.subtitle.to_uppercase(), 19.0, body(), face.sub, 0.18);
         let sub_y = inner.bottom() - subtitle.size().y;
         let name_y = sub_y - 8.0 - name.size().y;
         painter.galley(pos2(inner.left(), name_y), name, face.text);
@@ -931,7 +923,6 @@ impl LobbyPanel {
         }
         // Private lobby, beside it when it fits, else under it.
         let private_label = "Private lobby";
-        let hint = "Invite only or bot matches";
         let lw = line(
             &painter,
             &private_label.to_uppercase(),
@@ -942,10 +933,7 @@ impl LobbyPanel {
         )
         .size()
         .x;
-        let hw = line(&painter, &hint.to_uppercase(), 13.0, body(), cream(), 0.12)
-            .size()
-            .x;
-        let private_w = lw.max(hw) + 62.0;
+        let private_w = lw + 62.0;
         let beside = find.right() + 9.6 * 0.75 + 30.0;
         let at = if beside + private_w <= r.right() {
             pos2(beside, find.center().y - 32.0)
@@ -956,11 +944,11 @@ impl LobbyPanel {
         let face = RaisedKey::new("private", private, KeyLook::cream().depth(6.6))
             .disabled(keys.private_disabled)
             .show(ui);
-        KeyText::new(private_label, hint, display_family(), body())
+        KeyText::new(private_label, "", display_family(), body())
             .size(16.0, 13.0)
             .spacing(0.1)
-            .pad(32.0, 30.0)
-            .layout(KeyTextLayout::Stacked)
+            .pad(31.0, 31.0)
+            .layout(KeyTextLayout::Centered)
             .paint(&painter, &face);
         if face.clicked {
             self.show_private_lobby(mode.id);
@@ -1525,4 +1513,24 @@ pub(super) fn key_radar(painter: &Painter, centre: Pos2, time: f64) {
     }
     painter.circle_filled(centre, 3.0, cyan);
     painter.circle_stroke(centre, r, Stroke::new(1.5, cyan.gamma_multiply(0.6)));
+}
+
+#[cfg(test)]
+mod tests {
+    use super::online_pips;
+
+    #[test]
+    fn the_online_meter_lights_a_pip_per_quarter_of_the_cap() {
+        // `refreshPlayerList`: none when empty, one for the first player,
+        // rounding up, and never more than four.
+        assert_eq!(online_pips(0, 64), 0);
+        assert_eq!(online_pips(1, 64), 1);
+        assert_eq!(online_pips(16, 64), 1);
+        assert_eq!(online_pips(17, 64), 2);
+        assert_eq!(online_pips(48, 64), 3);
+        assert_eq!(online_pips(64, 64), 4);
+        assert_eq!(online_pips(200, 64), 4);
+        // A zero cap reads as one, never a division by zero.
+        assert_eq!(online_pips(3, 0), 4);
+    }
 }
