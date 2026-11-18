@@ -37,7 +37,12 @@ const MAX_INSTALLER: u64 = 512 * 1024 * 1024;
 /// bytes): the secret `UPDATE_SIGNING_KEY` signs each package's
 /// [`signed_message`]. More than one while a key is being replaced.
 pub const UPDATE_KEYS: &[[u8; 32]] = &[UPDATE_KEY];
-const UPDATE_KEY: [u8; 32] = [0; 32];
+/// `myfRIxIWo37fdl4SZ9Qt8FPaP+2J3pOXwUp+lvR7sjs=`, the 2026-11 release key
+/// (`openssl pkey -pubout -outform DER | tail -c 32 | base64`).
+const UPDATE_KEY: [u8; 32] = [
+    0x9b, 0x27, 0xd1, 0x23, 0x12, 0x16, 0xa3, 0x7e, 0xdf, 0x76, 0x5e, 0x12, 0x67, 0xd4, 0x2d, 0xf0, 0x53, 0xda, 0x3f,
+    0xed, 0x89, 0xde, 0x93, 0x97, 0xc1, 0x4a, 0x7e, 0x96, 0xf4, 0x7b, 0xb2, 0x3b,
+];
 
 /// A newer game, and its package for this machine.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -695,6 +700,10 @@ mod tests {
             UPDATE_KEYS.iter().all(|key| key != &[0; 32]),
             "UPDATE_KEY is still the placeholder"
         );
+        let written = base64::engine::general_purpose::STANDARD
+            .decode("myfRIxIWo37fdl4SZ9Qt8FPaP+2J3pOXwUp+lvR7sjs=")
+            .unwrap();
+        assert_eq!(written, UPDATE_KEY);
     }
 
     #[test]
