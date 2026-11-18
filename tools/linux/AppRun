@@ -1,32 +1,55 @@
 #!/bin/sh
-# The AppImage's entry point (tools/package.sh). The game links the system's
-# ALSA rather than carrying it; when it is missing the loader fails before
-# the game can say anything, so this names the package to install instead.
+# The AppImage's entry point (tools/package.sh). The game uses the system's
+# libraries rather than carrying them. When one is missing the game cannot
+# say so itself: ALSA is linked, so the loader fails before the game starts,
+# and the window and the GPU libraries are opened at run time, where winit
+# panics without them. This names the packages to install instead.
 here=$(dirname "$(readlink -f "$0")")
 bin="$here/usr/bin/washoi"
+missing=""
 if command -v ldd >/dev/null 2>&1; then
   missing=$(ldd "$bin" 2>/dev/null | awk '/not found/ { print $1 }')
-  if [ -n "$missing" ]; then
-    text="Washoi needs system libraries that are not installed:
+fi
+# The libraries opened at run time, which ldd cannot see.
+ldconfig=$(command -v ldconfig || echo /sbin/ldconfig)
+cache=$("$ldconfig" -p 2>/dev/null)
+if [ -n "$cache" ]; then
+  have() { printf '%s\n' "$cache" | grep -q "^[[:space:]]*$1 "; }
+  # Keyboard layouts, under X11 and Wayland alike.
+  have libxkbcommon.so.0 || missing="$missing
+libxkbcommon.so.0"
+  # winit takes Wayland when it is there, X11 otherwise.
+  if [ -z "$WAYLAND_DISPLAY" ]; then
+    have libxkbcommon-x11.so.0 || missing="$missing
+libxkbcommon-x11.so.0"
+  fi
+  # wgpu draws with Vulkan, or OpenGL through EGL without it.
+  if ! have libvulkan.so.1 && ! have libEGL.so.1; then
+    missing="$missing
+libvulkan.so.1"
+  fi
+fi
+missing=$(printf '%s\n' "$missing" | sed '/^$/d')
+if [ -n "$missing" ]; then
+  text="Washoi needs system libraries that are not installed:
 
 $missing
 
-Install ALSA with your package manager:
-  Arch, Manjaro        sudo pacman -S alsa-lib
-  Debian, Ubuntu       sudo apt install libasound2
-  Fedora               sudo dnf install alsa-lib
-  openSUSE             sudo zypper install alsa"
-    echo "$text" >&2
-    if [ ! -t 2 ]; then
-      if command -v zenity >/dev/null 2>&1; then
-        zenity --error --title=Washoi --no-wrap --text="$text" 2>/dev/null
-      elif command -v kdialog >/dev/null 2>&1; then
-        kdialog --title Washoi --error "$text" 2>/dev/null
-      elif command -v notify-send >/dev/null 2>&1; then
-        notify-send Washoi "$text" 2>/dev/null
-      fi
+Install them with your package manager:
+  Arch, Manjaro        sudo pacman -S alsa-lib libxkbcommon libxkbcommon-x11 vulkan-icd-loader
+  Debian, Ubuntu       sudo apt install libasound2 libxkbcommon0 libxkbcommon-x11-0 libvulkan1
+  Fedora               sudo dnf install alsa-lib libxkbcommon libxkbcommon-x11 vulkan-loader
+  openSUSE             sudo zypper install alsa libxkbcommon0 libxkbcommon-x11-0 libvulkan1"
+  echo "$text" >&2
+  if [ ! -t 2 ]; then
+    if command -v zenity >/dev/null 2>&1; then
+      zenity --error --title=Washoi --no-wrap --text="$text" 2>/dev/null
+    elif command -v kdialog >/dev/null 2>&1; then
+      kdialog --title Washoi --error "$text" 2>/dev/null
+    elif command -v notify-send >/dev/null 2>&1; then
+      notify-send Washoi "$text" 2>/dev/null
     fi
-    exit 127
   fi
+  exit 127
 fi
 exec "$bin" "$@"

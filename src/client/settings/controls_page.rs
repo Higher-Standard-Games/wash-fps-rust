@@ -142,7 +142,8 @@ impl ControlsPage {
                 previous: Some(p),
             } if p.id != action.id => format!("{key} was {}, now {}", p.name, action.name),
             AssignResult::Assigned { previous: Some(_), .. } => return,
-            AssignResult::Assigned { action, previous: None } => format!("{key} → {}", action.name),
+            // " → " in the browser; the fonts here have no arrows.
+            AssignResult::Assigned { action, previous: None } => format!("{key} is now {}", action.name),
         });
     }
 

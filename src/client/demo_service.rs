@@ -38,7 +38,8 @@ pub fn analysis_report(analysis: &DemoAnalysis, map: &str, duration_ms: f64) -> 
         format!("Found {} highlights", highlights.len()),
         String::new(),
         "#    TICK   SCORE  TYPE              PLAYER             TAGS".to_owned(),
-        "─".repeat(72),
+        // "─" in the browser; the console's fonts have no box drawing.
+        "-".repeat(72),
     ];
     for (i, h) in highlights.iter().take(20).enumerate() {
         let tags: Vec<&str> = h.tags.iter().map(|t| t.as_str()).collect();

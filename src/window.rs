@@ -331,10 +331,9 @@ impl ApplicationHandler for App {
         match event {
             WindowEvent::CloseRequested => end_screen(event_loop),
             WindowEvent::Resized(size) => {
-                if let Some(s) = &mut self.surface {
-                    s.config.width = size.width.max(1);
-                    s.config.height = size.height.max(1);
-                    s.surface.configure(&s.gpu.device, &s.config);
+                if let Some(s) = &mut self.surface
+                    && resize_surface(&s.gpu, &s.surface, &mut s.config, size)
+                {
                     s.hdr.resize(&s.gpu, s.config.width, s.config.height);
                 }
             }
@@ -497,7 +496,7 @@ impl ApplicationHandler for App {
             return;
         }
         if let Some(s) = &self.surface {
-            s.window.request_redraw();
+            request_next_frame(event_loop, &s.window);
         }
     }
 }
@@ -721,7 +720,19 @@ pub fn next_frame(
     surface: &mut wgpu::Surface<'static>,
     config: &wgpu::SurfaceConfiguration,
 ) -> Result<Option<Frame>, String> {
-    match surface.get_current_texture() {
+    let skipped = |at: Option<Instant>| FRAME_SKIPPED_AT.with(|s| s.set(at));
+    // Asking the window whether it is minimised is a round trip to the
+    // X server; a 0 × 0 size has been told already.
+    if WINDOW_EMPTY.with(Cell::get) {
+        skipped(Some(Instant::now()));
+        return Ok(None);
+    }
+    let texture = surface.get_current_texture();
+    skipped(match &texture {
+        wgpu::CurrentSurfaceTexture::Success(_) | wgpu::CurrentSurfaceTexture::Suboptimal(_) => None,
+        _ => Some(Instant::now()),
+    });
+    match texture {
         wgpu::CurrentSurfaceTexture::Success(texture) => Ok(Some(Frame { texture, stale: false })),
         wgpu::CurrentSurfaceTexture::Suboptimal(texture) => Ok(Some(Frame { texture, stale: true })),
         wgpu::CurrentSurfaceTexture::Timeout | wgpu::CurrentSurfaceTexture::Occluded => Ok(None),
@@ -741,6 +752,55 @@ pub fn next_frame(
         }
         other => Err(format!("surface: {other:?}")),
     }
+}
+
+thread_local! {
+    /// When the last frame was skipped because the window showed none;
+    /// `None` once one is shown.
+    static FRAME_SKIPPED_AT: Cell<Option<Instant>> = const { Cell::new(None) };
+    /// The window is 0 × 0, as Windows makes a minimised one.
+    static WINDOW_EMPTY: Cell<bool> = const { Cell::new(false) };
+}
+
+/// How long a screen waits to try again while its window shows no frames:
+/// about one frame of a 60 Hz display.
+const HIDDEN_RETRY: Duration = Duration::from_millis(16);
+
+/// Asks for the next frame, as each screen does once its events are
+/// handled. While the window shows none (minimised or covered: Metal says
+/// `Occluded` at once, and a minimised window on Windows has no size), the
+/// next try waits [`HIDDEN_RETRY`] instead of spinning a core on frames
+/// that are never drawn. A match keeps running at that pace.
+pub fn request_next_frame(event_loop: &ActiveEventLoop, window: &Window) {
+    match FRAME_SKIPPED_AT.with(Cell::get) {
+        Some(at) if at.elapsed() < HIDDEN_RETRY => {
+            event_loop.set_control_flow(ControlFlow::WaitUntil(at + HIDDEN_RETRY));
+        }
+        _ => {
+            event_loop.set_control_flow(ControlFlow::Poll);
+            window.request_redraw();
+        }
+    }
+}
+
+/// A window's new size: configures its surface for it and returns true,
+/// or false for a minimised window's 0 × 0, which no surface takes; the
+/// frames are skipped until it comes back.
+pub fn resize_surface(
+    gpu: &Gpu,
+    surface: &wgpu::Surface<'static>,
+    config: &mut wgpu::SurfaceConfiguration,
+    size: PhysicalSize<u32>,
+) -> bool {
+    let empty = size.width == 0 || size.height == 0;
+    WINDOW_EMPTY.with(|e| e.set(empty));
+    if empty {
+        return false;
+    }
+    config.width = size.width;
+    config.height = size.height;
+    surface.configure(&gpu.device, config);
+    true
 }
 
 /// Shows `frame`, then configures the surface again if it had gone stale.
@@ -911,6 +971,8 @@ fn surface_on(event_loop: &ActiveEventLoop, window: Arc<Window>) -> Result<OpenW
     let gpu = Gpu::new(instance, Some(&surface)).map_err(|e| e.to_string())?;
     println!("gpu: {}", gpu.describe());
     let size = window.inner_size();
+    // A kept window may still be minimised from the screen before.
+    WINDOW_EMPTY.with(|e| e.set(size.width == 0 || size.height == 0));
     let mut config = surface
         .get_default_config(&gpu.adapter, size.width.max(1), size.height.max(1))
         .ok_or("the surface does not fit this adapter")?;

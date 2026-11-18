@@ -229,6 +229,10 @@ pub struct CampaignArt {
     receiver: Receiver<Decoded>,
     requested: [bool; CARDS.len() + 1],
     textures: HashMap<String, egui::TextureHandle>,
+    /// The context the textures were loaded into. Each screen's window
+    /// brings its own, and the art outlives them (it is the lobby's): a
+    /// texture from another context shows nothing there.
+    ctx: Option<egui::Context>,
 }
 
 impl Default for CampaignArt {
@@ -239,6 +243,7 @@ impl Default for CampaignArt {
             receiver,
             requested: [false; CARDS.len() + 1],
             textures: HashMap::new(),
+            ctx: None,
         }
     }
 }
@@ -261,8 +266,16 @@ impl CampaignArt {
         }
     }
 
-    /// Takes what has decoded since the last frame.
+    /// Takes what has decoded since the last frame. In a new context
+    /// (back from a match) the pictures are decoded again for it.
     pub fn poll(&mut self, ctx: &egui::Context) {
+        if self.ctx.as_ref() != Some(ctx) {
+            if self.ctx.is_some() {
+                self.textures.clear();
+                self.requested = [false; CARDS.len() + 1];
+            }
+            self.ctx = Some(ctx.clone());
+        }
         while let Ok((name, image)) = self.receiver.try_recv() {
             let texture = ctx.load_texture(&name, image, egui::TextureOptions::LINEAR);
             self.textures.insert(name, texture);
@@ -710,18 +723,18 @@ impl CampaignView {
         }
         painter.circle(pos2(track_x, mid_y), radius - 1.5, fill, Stroke::new(3.0, border));
         let label = match status {
-            MissionStatus::Cleared => "✓".to_owned(),
             MissionStatus::Locked => String::new(),
             _ => format!("{number:02}"),
         };
-        if !label.is_empty() {
-            let size = if status == MissionStatus::Cleared { 16.0 } else { 13.0 };
-            let family = if status == MissionStatus::Cleared {
-                body()
-            } else {
-                display_family()
-            };
-            let g = text(&painter, &label, size, family, label_color, 0.0);
+        if status == MissionStatus::Cleared {
+            // The browser's "✓", drawn: the fonts have no tick.
+            let c = pos2(track_x, mid_y);
+            painter.add(Shape::line(
+                vec![c + vec2(-5.0, 0.5), c + vec2(-1.5, 4.0), c + vec2(5.5, -4.0)],
+                Stroke::new(2.6, label_color),
+            ));
+        } else if !label.is_empty() {
+            let g = text(&painter, &label, 13.0, display_family(), label_color, 0.0);
             let at = pos2(track_x - g.size().x / 2.0, mid_y - g.size().y / 2.0);
             painter.galley(at, g, label_color);
         }
@@ -1625,5 +1638,31 @@ mod tests {
         assert_eq!(art.len(), 2 + 1 + 9 * 3);
         let card = art.iter().find(|(n, _)| n == "card1").unwrap();
         assert_eq!(card.1.size, [1536, 864]);
+    }
+
+    /// Takes card 1 into `ctx`, decoding it if it is not there yet.
+    fn card_in(art: &mut CampaignArt, ctx: &egui::Context) -> bool {
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
+        while std::time::Instant::now() < deadline {
+            art.want(1);
+            art.poll(ctx);
+            if art.texture("card1").is_some() {
+                return true;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(20));
+        }
+        false
+    }
+
+    #[test]
+    fn the_art_comes_back_in_a_new_context() {
+        // The lobby's window after a match is a new egui context: a texture
+        // from the old one would draw nothing in it.
+        let mut art = CampaignArt::default();
+        let (lobby, after_match) = (egui::Context::default(), egui::Context::default());
+        assert!(card_in(&mut art, &lobby));
+        art.poll(&after_match);
+        assert!(art.texture("card1").is_none(), "the old context's texture is let go");
+        assert!(card_in(&mut art, &after_match), "and the card is decoded again");
     }
 }
