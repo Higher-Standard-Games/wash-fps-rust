@@ -86,6 +86,13 @@ struct FigureScene {
 }
 
 impl StageScene for FigureScene {
+    /// Another window's device (the lobby's settings outlive a match):
+    /// every body is uploaded again.
+    fn renderer_lost(&mut self) {
+        self.uploads.clear();
+        self.shown = None;
+    }
+
     fn frame(&mut self, gpu: &Gpu, models: &mut ModelRenderer, size: (u32, u32), time: f64) -> Option<StageView> {
         let choice = self.choice?;
         let style = self.style?;

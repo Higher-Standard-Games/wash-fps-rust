@@ -125,6 +125,9 @@ fn load(map: &str, url: Option<&str>) -> Option<egui::ColorImage> {
 pub struct Levelshots {
     base: String,
     shots: HashMap<String, (Levelshot, Option<egui::TextureHandle>)>,
+    /// The context the textures were loaded into: each screen's window
+    /// brings its own, and a texture from another shows nothing there.
+    ctx: Option<egui::Context>,
 }
 
 impl Levelshots {
@@ -133,6 +136,7 @@ impl Levelshots {
         Self {
             base: levelshot_base(lobby_url),
             shots: HashMap::new(),
+            ctx: None,
         }
     }
 
@@ -148,6 +152,13 @@ impl Levelshots {
 
     /// Moves the fetches on and uploads what arrived.
     pub fn poll(&mut self, ctx: &egui::Context) {
+        // Back from a match, in a new context: upload each image again.
+        if self.ctx.as_ref() != Some(ctx) {
+            for (_, texture) in self.shots.values_mut() {
+                *texture = None;
+            }
+            self.ctx = Some(ctx.clone());
+        }
         for (map, (shot, texture)) in &mut self.shots {
             shot.poll();
             if texture.is_none()

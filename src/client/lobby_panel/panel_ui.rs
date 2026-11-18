@@ -421,7 +421,14 @@ impl LobbyPanel {
             pos2(mid.left() + l.rail_w - RAIL_SKEW - 12.0 - 14.0, mid.bottom()),
         );
         let key_h = if l.h <= 900.0 { 44.0 } else { 58.0 };
-        let label_size = clamp_css(14.0, l.w * 0.01, 18.0);
+        // A short screen has no room for a column of five under the logo:
+        // two by two, so every page stays in sight (`max-height: 820px`).
+        let short = l.h <= 820.0;
+        let (columns, label_size) = if short {
+            (2, clamp_css(10.0, l.w * 0.0095, 13.0))
+        } else {
+            (1, clamp_css(14.0, l.w * 0.01, 18.0))
+        };
         let view = self.settings.get_or_insert_with(FpsSettingsView::default);
         ui.scope_builder(egui::UiBuilder::new().max_rect(list), |ui| {
             egui::ScrollArea::vertical()
@@ -430,7 +437,7 @@ impl LobbyPanel {
                 .show(ui, |ui| {
                     let top = ui.cursor().min;
                     let r = Rect::from_min_size(top, vec2(list.width() - 4.0, 1.0));
-                    let used = view.page_nav(ui, r, key_h, label_size, !l.narrow);
+                    let used = view.page_nav(ui, r, key_h, label_size, !l.narrow && !short, columns);
                     ui.allocate_rect(Rect::from_min_size(top, vec2(r.width(), used)), egui::Sense::hover());
                 });
         });

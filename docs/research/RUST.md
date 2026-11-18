@@ -2731,6 +2731,41 @@ whole areas rather than single items. 0.2.0 closes them in two steps.
 
 ## 24. Progress log
 
+### Release QA: campaign, screens, platform (November 18, 2026)
+
+A final pass before the stable release, with the native client driven
+under Xvfb (llvmpipe) against a local SHAG staging lobby: missions started,
+lost, retried, left and progressed; the results are in
+`papercuts/v1.0.0-release-qa.md` in the project files.
+
+- **Lobby state across a match.** Each screen opens its own wgpu instance,
+  device and egui context, while the lobby's panels outlive them. After any
+  match the Campaign page's art, its comic cards (the next mission's card
+  played on black) and the room's levelshots drew nothing, since their
+  textures belonged to the old context; `CampaignArt` and `Levelshots` now
+  load them again in a new one. Settings > Gameplay crashed the game after
+  a match: its figure previews used the old device's buffers on the new
+  queue. shagger's `ModelStage` now makes its GPU half again on another
+  device (`Gpu::serial`, since wgpu's ids restart in each instance) and
+  tells its scene (`StageScene::renderer_lost`).
+- **Hidden windows.** A minimised window (Metal's `Occluded`, Windows' 0 x 0)
+  made every screen spin a core on frames never drawn. `window::request_next_frame`
+  waits 16 ms between tries while frames are skipped, and a 0 x 0 window no
+  longer configures its surface.
+- **Glyphs the fonts lack.** The cleared mark on the Campaign page is drawn,
+  the controls page says "is now" for the browser's arrow, and the demo
+  analysis rule is ASCII.
+- **The default window (1280 x 720).** A settings card's note wraps under
+  its title when both do not fit (`flex-wrap`), where "What each key does"
+  ran into its note; the rail's settings keys go two by two on a screen
+  820 px tall or less, as the browser's do.
+- **AppImage.** `AppRun` also names the libraries opened at run time
+  (libxkbcommon, libxkbcommon-x11 under X11, Vulkan or EGL), where winit
+  panicked with a crash report before.
+- **Memory.** Heap live in the lobby after one match and after four is the
+  same (79 and 81 MB, heaptrack); RSS grows on llvmpipe with the allocator's
+  retained pages, not a leak.
+
 ### Beta13 papercuts, second round (November 18, 2026)
 
 The four proposals in `v1.0.0-beta13-papercuts.md`, built:

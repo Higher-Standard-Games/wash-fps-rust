@@ -532,9 +532,7 @@ impl ApplicationHandler for SyncApp {
             }
             WindowEvent::Resized(size) => {
                 if let Some(m) = &mut self.open {
-                    m.config.width = size.width.max(1);
-                    m.config.height = size.height.max(1);
-                    m.surface.configure(&m.gpu.device, &m.config);
+                    crate::window::resize_surface(&m.gpu, &m.surface, &mut m.config, size);
                 }
             }
             WindowEvent::RedrawRequested => {
@@ -547,9 +545,9 @@ impl ApplicationHandler for SyncApp {
         }
     }
 
-    fn about_to_wait(&mut self, _event_loop: &ActiveEventLoop) {
+    fn about_to_wait(&mut self, event_loop: &ActiveEventLoop) {
         if let Some(m) = &self.open {
-            m.window.request_redraw();
+            crate::window::request_next_frame(event_loop, &m.window);
         }
     }
 }

@@ -80,6 +80,12 @@ fn load(gpu: &Gpu, models: &mut ModelRenderer, path: &str) -> Option<Loaded> {
 }
 
 impl StageScene for WeaponScene {
+    /// Another window's device: every model is uploaded again.
+    fn renderer_lost(&mut self) {
+        self.loaded.clear();
+        self.shown = None;
+    }
+
     fn frame(&mut self, gpu: &Gpu, models: &mut ModelRenderer, size: (u32, u32), time: f64) -> Option<StageView> {
         let path = self.wanted?;
         let loaded = self
