@@ -781,7 +781,7 @@ impl ProfileView {
                 mode_id: id,
                 mode: name,
                 rank: Some(u64::from(row.rank)),
-                rating: Some((i64::from(row.rating), row.provisional)),
+                rating: Some((row.rating, row.provisional)),
                 wins: u64::from(row.wins),
                 losses: u64::from(row.losses),
                 draws: u64::from(row.draws),

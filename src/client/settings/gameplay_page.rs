@@ -62,7 +62,7 @@ impl GameplayPage {
 
     /// `buildCrosshair`.
     fn crosshair(&mut self, ui: &mut egui::Ui, now: f64) {
-        card(ui,"Crosshair",|ui| {
+        card(ui, "Crosshair", |ui| {
             columns(ui, &[0.8, 1.2], 22.0, |ui, i| {
                 if i == 0 {
                     self.preview(ui, now);
@@ -71,19 +71,8 @@ impl GameplayPage {
                 let on = flag("cg_crosshair");
                 field_grid(ui, 6, 2, |ui, k| match k {
                     0 => on_off(ui, Head::new("Crosshair"), "cg_crosshair", true),
-                    1 => on_off(
-                        ui,
-                        Head::new("Opens up when moving"),
-                        "cg_crosshairSpread",
-                        true,
-                    ),
-                    2 => cvar_slider(
-                        ui,
-                        "Size",
-                        "cg_crosshairSize",
-                        Range::new(8.0, 64.0, 1.0, plain),
-                        on,
-                    ),
+                    1 => on_off(ui, Head::new("Opens up when moving"), "cg_crosshairSpread", true),
+                    2 => cvar_slider(ui, "Size", "cg_crosshairSize", Range::new(8.0, 64.0, 1.0, plain), on),
                     3 => cvar_slider(
                         ui,
                         "Opacity",
@@ -95,19 +84,13 @@ impl GameplayPage {
                         hex_swatches(ui, "Colour", "cg_crosshairColor", &CROSSHAIR_COLORS, on);
                     }
                     _ => {
-                        if hex_swatches(
-                            ui,
-                            "When you hit",
-                            "cg_crosshairDmgColor",
-                            &HIT_COLORS,
-                            on,
-                        ) {
+                        if hex_swatches(ui, "When you hit", "cg_crosshairDmgColor", &HIT_COLORS, on) {
                             self.hit_until = now + 0.5;
                         }
                     }
                 });
             });
-        },);
+        });
     }
 
     /// The scene with the reticle drawn as the game draws it, 1.5× larger.
@@ -194,13 +177,7 @@ pub fn scene(ui: &egui::Ui, rect: Rect, tag: Option<&str>) {
 }
 
 /// A crosshair colour row; true when one was picked.
-fn hex_swatches(
-    ui: &mut egui::Ui,
-    name: &str,
-    cvar: &str,
-    colors: &[(&str, &str)],
-    enabled: bool,
-) -> bool {
+fn hex_swatches(ui: &mut egui::Ui, name: &str, cvar: &str, colors: &[(&str, &str)], enabled: bool) -> bool {
     let current = with_cvars(|c| c.get_string(cvar)).trim().to_uppercase();
     let choices: Vec<Color32> = colors.iter().map(|(hex, _)| hex_color(hex)).collect();
     let at = colors.iter().position(|(hex, _)| *hex == current);
@@ -214,7 +191,7 @@ fn hex_swatches(
 /// `buildTeams`: Your team and Enemy team, each with its model and colour,
 /// then the outline and brightness.
 fn teams(ui: &mut egui::Ui, figures: &mut [Option<PlayerTeamPreview>; 2]) {
-    card(ui,"Who's who",|ui| {
+    card(ui, "Who's who", |ui| {
         columns(ui, &[1.0, 1.0], 20.0, |ui, i| {
             let (side, model_side, name) = if i == 0 {
                 (Side::Ally, PlayerModelSide::Ally, "Your team")
@@ -229,14 +206,10 @@ fn teams(ui: &mut egui::Ui, figures: &mut [Option<PlayerTeamPreview>; 2]) {
             if i == 0 {
                 choice_seg(ui, Head::new("Outline"), &OUTLINE_CHOICES);
             } else {
-                choice_seg(
-                    ui,
-                    Head::new("Brighter players"),
-                    &BOOST_CHOICES,
-                );
+                choice_seg(ui, Head::new("Brighter players"), &BOOST_CHOICES);
             }
         });
-    },);
+    });
 }
 
 /// `.fps-set-team-card`: the side's colour along its top, the figure, the
@@ -366,7 +339,7 @@ fn team_card(ui: &mut egui::Ui, side: Side, model_side: PlayerModelSide, name: &
 /// `buildView`: field of view with its wedge, the gun, and what the screen
 /// shows.
 fn view(ui: &mut egui::Ui) {
-    card(ui,"View & info",|ui| {
+    card(ui, "View & info", |ui| {
         let fields: [(&str, &str); 5] = [
             ("cg_screenshake", "Explosion shake"),
             ("cg_hitshake", "Shake when hit"),
@@ -403,12 +376,7 @@ fn view(ui: &mut egui::Ui) {
                 &[(0.0, "Time left"), (1.0, "Time played")],
                 true,
             ),
-            8 => on_off(
-                ui,
-                Head::new("Switch to picked-up weapons"),
-                "cl_autoswitch",
-                true,
-            ),
+            8 => on_off(ui, Head::new("Switch to picked-up weapons"), "cl_autoswitch", true),
             _ => cvar_seg(
                 ui,
                 Head::new("Connection info"),
@@ -417,7 +385,7 @@ fn view(ui: &mut egui::Ui) {
                 true,
             ),
         });
-    },);
+    });
 }
 
 /// `.fps-set-fov`: the view's wedge from above.

@@ -294,53 +294,23 @@ impl VideoPage {
             ],
             VideoSection::Effects => &[
                 |_, ui| {
-                    cvar_slider(
-                        ui,
-                        "Bloom",
-                        "r_bloom",
-                        Range::new(0.0, 3.0, 0.1, plain),
-                        true,
-                    );
+                    cvar_slider(ui, "Bloom", "r_bloom", Range::new(0.0, 3.0, 0.1, plain), true);
                 },
-                |_, ui| {
-                    on_off(
-                        ui,
-                        Head::new("Reflections").cost(Some(3)),
-                        "r_ssr",
-                        true,
-                    )
-                },
+                |_, ui| on_off(ui, Head::new("Reflections").cost(Some(3)), "r_ssr", true),
                 |_, ui| {
                     let current = with_cvars(|c| super::settings_model::godray_choice(c).id);
                     let labels: Vec<&str> = GODRAY_CHOICES.iter().map(|c| c.label).collect();
                     let at = GODRAY_CHOICES.iter().position(|c| c.id == current);
-                    if let Some(i) = super::settings_fields::seg(
-                        ui,
-                        Head::new("Light shafts").cost(Some(2)),
-                        &labels,
-                        at,
-                        true,
-                    ) {
+                    if let Some(i) =
+                        super::settings_fields::seg(ui, Head::new("Light shafts").cost(Some(2)), &labels, at, true)
+                    {
                         with_cvars(|c| apply_choice(c, &GODRAY_CHOICES[i]));
                     }
                 },
                 |_, ui| {
-                    on_off(
-                        ui,
-                        Head::new("Soft halos").cost(Some(1)),
-                        "r_softhalos",
-                        true,
-                    );
+                    on_off(ui, Head::new("Soft halos").cost(Some(1)), "r_softhalos", true);
                 },
-                |_, ui| {
-                    cvar_slider(
-                        ui,
-                        "Glow",
-                        "r_glow",
-                        Range::new(0.0, 2.0, 0.05, plain),
-                        true,
-                    )
-                },
+                |_, ui| cvar_slider(ui, "Glow", "r_glow", Range::new(0.0, 2.0, 0.05, plain), true),
                 |_, ui| {
                     let ssr = flag("r_ssr");
                     cvar_slider(
@@ -351,14 +321,7 @@ impl VideoPage {
                         ssr,
                     );
                 },
-                |_, ui| {
-                    on_off(
-                        ui,
-                        Head::new("Comic outlines").cost(Some(1)),
-                        "r_cel_outlines",
-                        true,
-                    )
-                },
+                |_, ui| on_off(ui, Head::new("Comic outlines").cost(Some(1)), "r_cel_outlines", true),
                 |_, ui| {
                     on_off(
                         ui,
@@ -367,22 +330,8 @@ impl VideoPage {
                         true,
                     );
                 },
-                |_, ui| {
-                    on_off(
-                        ui,
-                        Head::new("Gibs").cost(Some(1)),
-                        "r_gibs",
-                        true,
-                    )
-                },
-                |_, ui| {
-                    on_off(
-                        ui,
-                        Head::new("Wall marks").cost(Some(1)),
-                        "r_marks",
-                        true,
-                    )
-                },
+                |_, ui| on_off(ui, Head::new("Gibs").cost(Some(1)), "r_gibs", true),
+                |_, ui| on_off(ui, Head::new("Wall marks").cost(Some(1)), "r_marks", true),
                 |_, ui| {
                     on_off(
                         ui,
@@ -420,14 +369,7 @@ impl VideoPage {
                         true,
                     );
                 },
-                |_, ui| {
-                    on_off(
-                        ui,
-                        Head::new("Fog").cost(Some(1)),
-                        "r_fog",
-                        true,
-                    )
-                },
+                |_, ui| on_off(ui, Head::new("Fog").cost(Some(1)), "r_fog", true),
                 |_, ui| {
                     cvar_slider(
                         ui,
@@ -562,14 +504,7 @@ impl VideoPage {
         let current = with_cvars(|c| c.get_number("r_colorcorrection"));
         let width = ui.available_width();
         let painter = ui.painter().clone();
-        let name = line(
-            &painter,
-            "COLOR BLINDNESS",
-            15.0,
-            display_family(),
-            cream(),
-            0.12,
-        );
+        let name = line(&painter, "COLOR BLINDNESS", 15.0, display_family(), cream(), 0.12);
         let nh = name.size().y;
         let nw = name.size().x;
         let at = ui.cursor().min;

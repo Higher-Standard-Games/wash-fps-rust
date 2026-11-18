@@ -358,7 +358,10 @@ impl App {
             if event.state == ElementState::Pressed
                 && !event.repeat
                 && !other
-                && matches!(code, KeyCode::KeyT | KeyCode::KeyY | KeyCode::Enter | KeyCode::NumpadEnter)
+                && matches!(
+                    code,
+                    KeyCode::KeyT | KeyCode::KeyY | KeyCode::Enter | KeyCode::NumpadEnter
+                )
             {
                 chat.open_input(code == KeyCode::KeyY || shift);
                 // Nothing stays held while typing.

@@ -58,7 +58,7 @@ pub fn ui(ui: &mut egui::Ui) {
 }
 
 fn volume_card(ui: &mut egui::Ui, (title, enabled, volume): (&str, &str, &str)) {
-    card(ui,title,|ui| {
+    card(ui, title, |ui| {
         let on = flag(enabled);
         let percent = with_cvars(|c| js_round(c.get_number(volume) * 100.0));
         // `fps-set-vol__big`: the volume in large numbers, then the fields.
@@ -99,16 +99,16 @@ fn volume_card(ui: &mut egui::Ui, (title, enabled, volume): (&str, &str, &str)) 
         let bw = big.size().x;
         painter.galley(pos2(mid.x + digits - bw, mid.y - bh / 2.0), big, color);
         painter.galley(pos2(mid.x + digits + 2.0, mid.y + bh * 0.42 - pct.size().y), pct, color);
-    },);
+    });
 }
 
 fn mix(ui: &mut egui::Ui) {
-    card(ui,"Mix",|ui| {
+    card(ui, "Mix", |ui| {
         for (i, (name, cvar)) in MIX.iter().enumerate() {
             if i > 0 {
                 ui.add_space(16.0);
             }
             cvar_slider(ui, name, cvar, VOLUME, true);
         }
-    },);
+    });
 }

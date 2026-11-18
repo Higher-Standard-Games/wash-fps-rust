@@ -178,7 +178,7 @@ impl ControllerPage {
     }
 
     fn connection(&mut self, ui: &mut egui::Ui) {
-        card(ui,"Controller",|ui| {
+        card(ui, "Controller", |ui| {
             let status = if !self.pad.available {
                 "Controllers can't be read on this computer.".to_owned()
             } else {
@@ -228,11 +228,11 @@ impl ControllerPage {
             let g = line(&painter, &live, 15.0, body(), hsla(45.0, 100.0, 95.0, 0.6), 0.0);
             let (r, _) = ui.allocate_exact_size(vec2(width, 24.0), egui::Sense::hover());
             painter.galley(r.min, g, cream());
-        },);
+        });
     }
 
     fn layout(&mut self, ui: &mut egui::Ui) {
-        card(ui,"Layout",|ui| {
+        card(ui, "Layout", |ui| {
             let painter = ui.painter().clone();
             let current = with_input(|i| controller_preset(i));
             let at = current.map(|p| usize::from(p == ControllerPreset::Bumper));
@@ -246,16 +246,23 @@ impl ControllerPage {
             }
             if current.is_none() {
                 ui.add_space(12.0);
-                let g = line(&painter, "Custom layout", 18.0, body(), hsla(45.0, 100.0, 95.0, 0.7), 0.0);
+                let g = line(
+                    &painter,
+                    "Custom layout",
+                    18.0,
+                    body(),
+                    hsla(45.0, 100.0, 95.0, 0.7),
+                    0.0,
+                );
                 let (r, _) = ui.allocate_exact_size(g.size(), egui::Sense::hover());
                 painter.galley(r.min, g, cream());
             }
-        },);
+        });
     }
 
     /// `fps-pad-diagram`: the pad's outline and a cap per button.
     fn diagram(&mut self, ui: &mut egui::Ui, input: &InputSystem, hl_action: Option<&'static str>) {
-        card(ui,"Your controller",|ui| {
+        card(ui, "Your controller", |ui| {
             let width = ui.available_width();
             let painter = ui.painter().clone();
             ui.add_space(16.0);
@@ -348,12 +355,12 @@ impl ControllerPage {
                     }
                 }
             }
-        },);
+        });
     }
 
     /// `What each button does`: the actions by group, two across.
     fn actions(&mut self, ui: &mut egui::Ui, input: &InputSystem, hl_button: Option<u64>) {
-        card(ui,"What each button does",|ui| {
+        card(ui, "What each button does", |ui| {
             for pair in ACTION_GROUPS.chunks(2) {
                 columns(ui, &[1.0, 1.0], 26.0, |ui, i| {
                     let Some(group) = pair.get(i) else { return };
@@ -412,7 +419,7 @@ impl ControllerPage {
                 });
                 ui.add_space(14.0);
             }
-        },);
+        });
     }
 
     /// `fps-pad-pop`: a gold sheet in the middle of the screen.
@@ -535,72 +542,68 @@ impl ControllerPage {
 
 /// `Stick feel`: turn speeds, curve, dead zones, and the switches.
 fn feel(ui: &mut egui::Ui) {
-    card(
-        ui,
-        "Stick feel",
-        |ui| {
-            let sliders: [(&str, &str, Range); 6] = [
-                (
-                    "Horizontal turn speed (°/s)",
-                    "in_pad_yaw",
-                    Range::new(30.0, 720.0, 10.0, plain),
-                ),
-                (
-                    "Vertical turn speed (°/s)",
-                    "in_pad_pitch",
-                    Range::new(30.0, 720.0, 10.0, plain),
-                ),
-                ("Look response curve", "in_pad_curve", Range::new(1.0, 3.0, 0.1, plain)),
-                (
-                    "Move dead zone",
-                    "in_pad_move_deadzone",
-                    Range::new(0.05, 0.4, 0.01, format_percent),
-                ),
-                (
-                    "Look dead zone",
-                    "in_pad_look_deadzone",
-                    Range::new(0.05, 0.4, 0.01, format_percent),
-                ),
-                ("While aiming", "in_pad_ads", Range::new(0.1, 1.0, 0.05, format_percent)),
-            ];
-            let switches = |ui: &mut egui::Ui| {
-                let width = ui.available_width().min(320.0);
-                for (name, cvar) in [
-                    ("Invert vertical look", "in_pad_invert"),
-                    ("Swap move and look sticks", "in_pad_swap"),
-                    ("Aim assist", "in_pad_assist"),
-                ] {
-                    let mut child = ui.new_child(
-                        egui::UiBuilder::new()
-                            .max_rect(Rect::from_min_size(ui.cursor().min, vec2(width, f32::INFINITY)))
-                            .layout(egui::Layout::top_down(egui::Align::Min)),
-                    );
-                    on_off(&mut child, Head::new(name), cvar, true);
-                    let used = child.min_rect();
-                    ui.allocate_rect(used, egui::Sense::hover());
-                    ui.add_space(16.0);
-                }
-            };
-            // `fps-pad-feel`: sliders left, switches right; one column when narrow.
-            if ui.available_width() < 640.0 {
-                for (name, cvar, range) in sliders {
-                    cvar_slider(ui, name, cvar, range, true);
-                    ui.add_space(16.0);
-                }
-                switches(ui);
-            } else {
-                columns(ui, &[1.0, 1.0], 48.0, |ui, i| {
-                    if i == 0 {
-                        for (name, cvar, range) in sliders {
-                            cvar_slider(ui, name, cvar, range, true);
-                            ui.add_space(16.0);
-                        }
-                    } else {
-                        switches(ui);
-                    }
-                });
+    card(ui, "Stick feel", |ui| {
+        let sliders: [(&str, &str, Range); 6] = [
+            (
+                "Horizontal turn speed (°/s)",
+                "in_pad_yaw",
+                Range::new(30.0, 720.0, 10.0, plain),
+            ),
+            (
+                "Vertical turn speed (°/s)",
+                "in_pad_pitch",
+                Range::new(30.0, 720.0, 10.0, plain),
+            ),
+            ("Look response curve", "in_pad_curve", Range::new(1.0, 3.0, 0.1, plain)),
+            (
+                "Move dead zone",
+                "in_pad_move_deadzone",
+                Range::new(0.05, 0.4, 0.01, format_percent),
+            ),
+            (
+                "Look dead zone",
+                "in_pad_look_deadzone",
+                Range::new(0.05, 0.4, 0.01, format_percent),
+            ),
+            ("While aiming", "in_pad_ads", Range::new(0.1, 1.0, 0.05, format_percent)),
+        ];
+        let switches = |ui: &mut egui::Ui| {
+            let width = ui.available_width().min(320.0);
+            for (name, cvar) in [
+                ("Invert vertical look", "in_pad_invert"),
+                ("Swap move and look sticks", "in_pad_swap"),
+                ("Aim assist", "in_pad_assist"),
+            ] {
+                let mut child = ui.new_child(
+                    egui::UiBuilder::new()
+                        .max_rect(Rect::from_min_size(ui.cursor().min, vec2(width, f32::INFINITY)))
+                        .layout(egui::Layout::top_down(egui::Align::Min)),
+                );
+                on_off(&mut child, Head::new(name), cvar, true);
+                let used = child.min_rect();
+                ui.allocate_rect(used, egui::Sense::hover());
+                ui.add_space(16.0);
             }
-            let _ = with_cvars(|c| c.exists("in_pad_yaw"));
-        },
-    );
+        };
+        // `fps-pad-feel`: sliders left, switches right; one column when narrow.
+        if ui.available_width() < 640.0 {
+            for (name, cvar, range) in sliders {
+                cvar_slider(ui, name, cvar, range, true);
+                ui.add_space(16.0);
+            }
+            switches(ui);
+        } else {
+            columns(ui, &[1.0, 1.0], 48.0, |ui, i| {
+                if i == 0 {
+                    for (name, cvar, range) in sliders {
+                        cvar_slider(ui, name, cvar, range, true);
+                        ui.add_space(16.0);
+                    }
+                } else {
+                    switches(ui);
+                }
+            });
+        }
+        let _ = with_cvars(|c| c.exists("in_pad_yaw"));
+    });
 }

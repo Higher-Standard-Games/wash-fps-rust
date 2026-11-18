@@ -253,12 +253,7 @@ pub fn cost_pips(painter: &Painter, at: Pos2, lit: u8, alpha: f32) {
 
 /// The field's frame: head and control; a disabled field is dimmed
 /// (`aria-disabled`, opacity 0.35) and takes no input.
-fn field<R>(
-    ui: &mut egui::Ui,
-    h: &Head<'_>,
-    enabled: bool,
-    control: impl FnOnce(&mut egui::Ui, f32, f32) -> R,
-) -> R {
+fn field<R>(ui: &mut egui::Ui, h: &Head<'_>, enabled: bool, control: impl FnOnce(&mut egui::Ui, f32, f32) -> R) -> R {
     let width = ui.available_width();
     let alpha = if enabled { 1.0 } else { 0.35 };
     let top = ui.cursor().min;
@@ -312,13 +307,7 @@ impl Range {
 
 /// `slider(...)`: the name and value over a chunky track with a key for a
 /// thumb. Returns the new value while the player drags or clicks it.
-pub fn slider(
-    ui: &mut egui::Ui,
-    name: &str,
-    value: f64,
-    range: Range,
-    enabled: bool,
-) -> Option<f64> {
+pub fn slider(ui: &mut egui::Ui, name: &str, value: f64, range: Range, enabled: bool) -> Option<f64> {
     let h = Head::new(name).value((range.format)(value));
     field(ui, &h, enabled, |ui, width, alpha| {
         slider_track(ui, name, value, range, width, alpha)
@@ -528,13 +517,7 @@ pub fn seg_row(ui: &mut egui::Ui, labels: &[&str], current: Option<usize>, width
 }
 
 /// `seg(...)`: a named row of keys, one held down.
-pub fn seg(
-    ui: &mut egui::Ui,
-    h: Head<'_>,
-    labels: &[&str],
-    current: Option<usize>,
-    enabled: bool,
-) -> Option<usize> {
+pub fn seg(ui: &mut egui::Ui, h: Head<'_>, labels: &[&str], current: Option<usize>, enabled: bool) -> Option<usize> {
     field(ui, &h, enabled, |ui, width, alpha| {
         seg_row(ui, labels, current, width, alpha)
     })

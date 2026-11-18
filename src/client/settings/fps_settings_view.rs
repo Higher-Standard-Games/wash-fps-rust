@@ -119,14 +119,7 @@ impl FpsSettingsView {
     /// The page keys (`takePageNav`), in `columns` columns (1, or 2 two by
     /// two on a short screen) at `rect`'s width, `key_h` tall each. Returns
     /// the height used.
-    pub fn page_nav(
-        &mut self,
-        ui: &mut egui::Ui,
-        rect: Rect,
-        key_h: f32,
-        label_size: f32,
-        columns: usize,
-    ) -> f32 {
+    pub fn page_nav(&mut self, ui: &mut egui::Ui, rect: Rect, key_h: f32, label_size: f32, columns: usize) -> f32 {
         let painter = ui.painter().clone();
         let columns = columns.max(1);
         // `column-gap: 12px`; each row is the key, its 6 px base and a 4 px gap.
@@ -146,8 +139,7 @@ impl FpsSettingsView {
                 .hover(gold, -0.35)
                 .current(self.page == page.id)
                 .show(ui);
-            let text = KeyText::new(page.title, "", display_family(), body())
-                .size(label_size, 12.0);
+            let text = KeyText::new(page.title, "", display_family(), body()).size(label_size, 12.0);
             if columns > 1 {
                 // `justify-content: center`, 12 / 8 px in, `letter-spacing: 0.04em`.
                 text.pad(12.0, 8.0).spacing(0.04).layout(KeyTextLayout::Centered)
@@ -390,13 +382,7 @@ pub fn cvar_slider(ui: &mut egui::Ui, name: &str, cvar: &str, range: Range, enab
 }
 
 /// A row of keys over a cvar's values, hidden when there is no such cvar.
-pub fn cvar_seg(
-    ui: &mut egui::Ui,
-    head: Head<'_>,
-    cvar: &str,
-    choices: &[(f64, &str)],
-    enabled: bool,
-) {
+pub fn cvar_seg(ui: &mut egui::Ui, head: Head<'_>, cvar: &str, choices: &[(f64, &str)], enabled: bool) {
     let Some(value) = with_cvars(|c| c.exists(cvar).then(|| number_of(c, cvar))) else {
         return;
     };

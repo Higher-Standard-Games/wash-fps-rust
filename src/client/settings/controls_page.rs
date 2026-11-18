@@ -232,9 +232,9 @@ impl ControlsPage {
         with_input(|input| {
             columns(ui, &[main, side], 20.0, |ui, i| {
                 if i == 0 {
-                    card(ui,"Keyboard",|ui| {
+                    card(ui, "Keyboard", |ui| {
                         self.keyboard(ui, input, focus_before);
-                    },);
+                    });
                 } else {
                     card(ui, "Mouse", |ui| self.mouse(ui, input, focus_before));
                 }
@@ -242,15 +242,11 @@ impl ControlsPage {
             ui.add_space(20.0);
             columns(ui, &[main, side], 20.0, |ui, i| {
                 if i == 0 {
-                    card(
-                        ui,
-                        "What each key does",
-                        |ui| {
-                            change = self.actions(ui, input);
-                        },
-                    );
+                    card(ui, "What each key does", |ui| {
+                        change = self.actions(ui, input);
+                    });
                 } else {
-                    card(ui,"Mouse feel",|ui| {
+                    card(ui, "Mouse feel", |ui| {
                         cvar_slider(
                             ui,
                             "Sensitivity",
@@ -267,13 +263,8 @@ impl ControlsPage {
                             true,
                         );
                         ui.add_space(16.0);
-                        on_off(
-                            ui,
-                            Head::new("Always run"),
-                            "cl_autorun",
-                            true,
-                        );
-                    },);
+                        on_off(ui, Head::new("Always run"), "cl_autorun", true);
+                    });
                 }
             });
             if let Some(c) = self.pop_sheet(ui, input) {
