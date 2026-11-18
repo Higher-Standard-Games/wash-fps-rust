@@ -82,7 +82,8 @@ pub fn card<R>(ui: &mut egui::Ui, title: &str, note: &str, add: impl FnOnce(&mut
     );
     let painter = child.painter().clone();
     let title_g = line(&painter, &title.to_uppercase(), 15.0, display_family(), cream(), 0.16);
-    let th = title_g.size().y;
+    let mut th = title_g.size().y;
+    let title_w = title_g.size().x;
     painter.galley(inner.min, title_g, cream());
     if !note.is_empty() {
         let note_g = line(
@@ -93,7 +94,15 @@ pub fn card<R>(ui: &mut egui::Ui, title: &str, note: &str, add: impl FnOnce(&mut
             hsla(45.0, 100.0, 95.0, 0.45),
             0.14,
         );
-        let at = pos2(inner.right() - note_g.size().x, inner.top() + th - note_g.size().y);
+        // `flex-wrap: wrap; gap: 6px 12px`: on the title's line at the
+        // right when both fit, else on a line of its own under it.
+        let at = if title_w + 12.0 + note_g.size().x <= inner.width() {
+            pos2(inner.right() - note_g.size().x, inner.top() + th - note_g.size().y)
+        } else {
+            let at = pos2(inner.left(), inner.top() + th + 6.0);
+            th += 6.0 + note_g.size().y;
+            at
+        };
         painter.galley(at, note_g, cream());
     }
     child.add_space(th + 14.0);

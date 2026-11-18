@@ -2755,6 +2755,10 @@ lost, retried, left and progressed; the results are in
 - **Glyphs the fonts lack.** The cleared mark on the Campaign page is drawn,
   the controls page says "is now" for the browser's arrow, and the demo
   analysis rule is ASCII.
+- **The default window (1280 x 720).** A settings card's note wraps under
+  its title when both do not fit (`flex-wrap`), where "What each key does"
+  ran into its note; the rail's settings keys go two by two on a screen
+  820 px tall or less, as the browser's do.
 - **AppImage.** `AppRun` also names the libraries opened at run time
   (libxkbcommon, libxkbcommon-x11 under X11, Vulkan or EGL), where winit
   panicked with a crash report before.

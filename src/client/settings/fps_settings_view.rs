@@ -116,28 +116,52 @@ impl FpsSettingsView {
         self.toast = Some((bold.to_owned(), rest.to_owned(), now + TOAST_SECONDS));
     }
 
-    /// The page keys (`takePageNav`), a column in the rail at `rect`'s width,
-    /// `key_h` tall each. Returns the height used.
-    pub fn page_nav(&mut self, ui: &mut egui::Ui, rect: Rect, key_h: f32, label_size: f32, hints: bool) -> f32 {
+    /// The page keys (`takePageNav`), in `columns` columns (1, or 2 two by
+    /// two on a short screen) at `rect`'s width, `key_h` tall each. Returns
+    /// the height used.
+    pub fn page_nav(
+        &mut self,
+        ui: &mut egui::Ui,
+        rect: Rect,
+        key_h: f32,
+        label_size: f32,
+        hints: bool,
+        columns: usize,
+    ) -> f32 {
         let painter = ui.painter().clone();
-        let mut y = rect.top();
-        for page in SETTINGS_PAGES {
-            let r = Rect::from_min_size(pos2(rect.left(), y), vec2(rect.width(), key_h));
+        let columns = columns.max(1);
+        // `column-gap: 12px`; each row is the key, its 6 px base and a 4 px gap.
+        let gap = 12.0;
+        let key_w = (rect.width() - gap * (columns - 1) as f32) / columns as f32;
+        let row_h = key_h + 6.0 + 4.0;
+        let mut used = 0.0;
+        for (i, page) in SETTINGS_PAGES.iter().enumerate() {
+            let (row, col) = (i / columns, i % columns);
+            let at = pos2(
+                rect.left() + col as f32 * (key_w + gap),
+                rect.top() + row as f32 * row_h,
+            );
+            let r = Rect::from_min_size(at, vec2(key_w, key_h));
             let gold = KeyLook::gold().flat();
             let face = RaisedKey::new(("settings-page", page.title), r, gold.clone())
                 .hover(gold, -0.35)
                 .current(self.page == page.id)
                 .show(ui);
-            KeyText::new(page.title, if hints { page.hint } else { "" }, display_family(), body())
-                .size(label_size, 12.0)
-                .pad(24.0, 20.0)
-                .paint(&painter, &face);
+            let text = KeyText::new(page.title, if hints { page.hint } else { "" }, display_family(), body())
+                .size(label_size, 12.0);
+            if columns > 1 {
+                // `justify-content: center`, 12 / 8 px in, `letter-spacing: 0.04em`.
+                text.pad(12.0, 8.0).spacing(0.04).layout(KeyTextLayout::Centered)
+            } else {
+                text.pad(24.0, 20.0)
+            }
+            .paint(&painter, &face);
             if face.clicked {
                 self.show_page(page.id);
             }
-            y += key_h + 6.0 + 4.0;
+            used = (row + 1) as f32 * row_h;
         }
-        y - rect.top()
+        used
     }
 
     /// The head and the page, in `rect`.
@@ -465,6 +489,7 @@ pub fn over_match(ui: &mut egui::Ui, view: &mut FpsSettingsView, kicker: &str) -
             48.0,
             15.0,
             side.width() > 280.0,
+            1,
         );
         let back_r = Rect::from_min_size(
             pos2(side.left(), side.top() + kh + 22.0 + used + 18.0),
