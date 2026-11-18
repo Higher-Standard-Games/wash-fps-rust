@@ -62,7 +62,7 @@ impl GameplayPage {
 
     /// `buildCrosshair`.
     fn crosshair(&mut self, ui: &mut egui::Ui, now: f64) {
-        card(ui, "Crosshair", "", |ui| {
+        card(ui,"Crosshair",|ui| {
             columns(ui, &[0.8, 1.2], 22.0, |ui, i| {
                 if i == 0 {
                     self.preview(ui, now);
@@ -70,12 +70,11 @@ impl GameplayPage {
                 }
                 let on = flag("cg_crosshair");
                 field_grid(ui, 6, 2, |ui, k| match k {
-                    0 => on_off(ui, Head::new("Crosshair"), "cg_crosshair", None, true),
+                    0 => on_off(ui, Head::new("Crosshair"), "cg_crosshair", true),
                     1 => on_off(
                         ui,
                         Head::new("Opens up when moving"),
                         "cg_crosshairSpread",
-                        Some("Tightens again while you aim"),
                         true,
                     ),
                     2 => cvar_slider(
@@ -83,7 +82,6 @@ impl GameplayPage {
                         "Size",
                         "cg_crosshairSize",
                         Range::new(8.0, 64.0, 1.0, plain),
-                        None,
                         on,
                     ),
                     3 => cvar_slider(
@@ -91,11 +89,10 @@ impl GameplayPage {
                         "Opacity",
                         "cg_crosshairAlpha",
                         Range::new(0.1, 1.0, 0.05, format_percent),
-                        None,
                         on,
                     ),
                     4 => {
-                        hex_swatches(ui, "Colour", "cg_crosshairColor", &CROSSHAIR_COLORS, None, on);
+                        hex_swatches(ui, "Colour", "cg_crosshairColor", &CROSSHAIR_COLORS, on);
                     }
                     _ => {
                         if hex_swatches(
@@ -103,7 +100,6 @@ impl GameplayPage {
                             "When you hit",
                             "cg_crosshairDmgColor",
                             &HIT_COLORS,
-                            Some("Pick one to see it flash"),
                             on,
                         ) {
                             self.hit_until = now + 0.5;
@@ -111,7 +107,7 @@ impl GameplayPage {
                     }
                 });
             });
-        });
+        },);
     }
 
     /// The scene with the reticle drawn as the game draws it, 1.5× larger.
@@ -203,13 +199,12 @@ fn hex_swatches(
     name: &str,
     cvar: &str,
     colors: &[(&str, &str)],
-    help: Option<&str>,
     enabled: bool,
 ) -> bool {
     let current = with_cvars(|c| c.get_string(cvar)).trim().to_uppercase();
     let choices: Vec<Color32> = colors.iter().map(|(hex, _)| hex_color(hex)).collect();
     let at = colors.iter().position(|(hex, _)| *hex == current);
-    if let Some(i) = swatches(ui, name, &choices, at, None, help, enabled) {
+    if let Some(i) = swatches(ui, name, &choices, at, None, enabled) {
         with_cvars(|c| c.set(cvar, colors[i].0));
         return true;
     }
@@ -219,7 +214,7 @@ fn hex_swatches(
 /// `buildTeams`: Your team and Enemy team, each with its model and colour,
 /// then the outline and brightness.
 fn teams(ui: &mut egui::Ui, figures: &mut [Option<PlayerTeamPreview>; 2]) {
-    card(ui, "Who's who", "Your side, and everyone you can shoot", |ui| {
+    card(ui,"Who's who",|ui| {
         columns(ui, &[1.0, 1.0], 20.0, |ui, i| {
             let (side, model_side, name) = if i == 0 {
                 (Side::Ally, PlayerModelSide::Ally, "Your team")
@@ -232,17 +227,16 @@ fn teams(ui: &mut egui::Ui, figures: &mut [Option<PlayerTeamPreview>; 2]) {
         ui.add_space(18.0);
         columns(ui, &[1.0, 1.0], 26.0, |ui, i| {
             if i == 0 {
-                choice_seg(ui, Head::new("Outline"), &OUTLINE_CHOICES, None);
+                choice_seg(ui, Head::new("Outline"), &OUTLINE_CHOICES);
             } else {
                 choice_seg(
                     ui,
                     Head::new("Brighter players"),
                     &BOOST_CHOICES,
-                    Some("Makes players stand out in dark corners"),
                 );
             }
         });
-    });
+    },);
 }
 
 /// `.fps-set-team-card`: the side's colour along its top, the figure, the
@@ -348,7 +342,7 @@ fn team_card(ui: &mut egui::Ui, side: Side, model_side: PlayerModelSide, name: &
     let other = if side == Side::Ally { Side::Enemy } else { Side::Ally };
     let index = |s| with_cvars(|c| side_color(c, s)).and_then(|t| TEAM_COLORS.iter().position(|o| o == t));
     let colors: Vec<Color32> = TEAM_COLORS.iter().map(team_color).collect();
-    if let Some(i) = swatches(&mut child, "Colour", &colors, index(side), index(other), None, true) {
+    if let Some(i) = swatches(&mut child, "Colour", &colors, index(side), index(other), true) {
         with_cvars(|c| set_side_color(c, side, &TEAM_COLORS[i]));
     }
     let bottom = child.min_rect().bottom() + pad;
@@ -372,25 +366,13 @@ fn team_card(ui: &mut egui::Ui, side: Side, model_side: PlayerModelSide, name: &
 /// `buildView`: field of view with its wedge, the gun, and what the screen
 /// shows.
 fn view(ui: &mut egui::Ui) {
-    card(ui, "View & info", "", |ui| {
-        let fields: [(&str, &str, &str); 5] = [
-            (
-                "cg_screenshake",
-                "Explosion shake",
-                "The view shakes when a rocket, grenade, plasma or blade blast goes off near you",
-            ),
-            ("cg_hitshake", "Shake when hit", "The view shakes when you take damage"),
-            ("show_fps", "FPS counter", "Frames per second in the top-right corner"),
-            (
-                "cl_showspeed",
-                "Movement speed",
-                "Your speed at the bottom of the screen",
-            ),
-            (
-                "cl_hints",
-                "Hints",
-                "Tips about movement, weapons and items, above your weapons. Shown in warmup and for the first 2 minutes of a match",
-            ),
+    card(ui,"View & info",|ui| {
+        let fields: [(&str, &str); 5] = [
+            ("cg_screenshake", "Explosion shake"),
+            ("cg_hitshake", "Shake when hit"),
+            ("show_fps", "FPS counter"),
+            ("cl_showspeed", "Movement speed"),
+            ("cl_hints", "Hints"),
         ];
         field_grid(ui, 10, 2, |ui, k| match k {
             0 => {
@@ -399,7 +381,6 @@ fn view(ui: &mut egui::Ui) {
                     "Field of view",
                     "cl_fov",
                     Range::new(80.0, 110.0, 1.0, |v| format!("{v}°")),
-                    Some("How wide you see. Wider shows more, but things look smaller"),
                     true,
                 );
                 fov_wedge(ui);
@@ -409,26 +390,23 @@ fn view(ui: &mut egui::Ui) {
                 Head::new("Gun size"),
                 "cl_gunsize",
                 &[(0.0, "Normal"), (1.0, "Small"), (2.0, "Smallest")],
-                Some("How large your own gun is on screen. Smaller shows more of the view around it"),
                 true,
             ),
             2..=6 => {
-                let (cvar, name, help) = fields[k - 2];
-                on_off(ui, Head::new(name), cvar, Some(help), true);
+                let (cvar, name) = fields[k - 2];
+                on_off(ui, Head::new(name), cvar, true);
             }
             7 => cvar_seg(
                 ui,
                 Head::new("Match clock"),
                 "cl_invertClock",
                 &[(0.0, "Time left"), (1.0, "Time played")],
-                Some("Count the match time down to the end, or up from the start"),
                 true,
             ),
             8 => on_off(
                 ui,
                 Head::new("Switch to picked-up weapons"),
                 "cl_autoswitch",
-                Some("Take out a weapon you walk over. Off keeps what you hold, so a blade fight stays a blade fight"),
                 true,
             ),
             _ => cvar_seg(
@@ -436,11 +414,10 @@ fn view(ui: &mut egui::Ui) {
                 Head::new("Connection info"),
                 "cl_netgraph",
                 &[(0.0, "Off"), (1.0, "Numbers"), (2.0, "Graph")],
-                Some("Ping and packet loss in a corner of the screen"),
                 true,
             ),
         });
-    });
+    },);
 }
 
 /// `.fps-set-fov`: the view's wedge from above.

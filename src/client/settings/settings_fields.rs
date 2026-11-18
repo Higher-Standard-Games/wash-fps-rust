@@ -69,7 +69,7 @@ pub fn plain(v: f64) -> String {
 
 /// `.fps-set-card`: a dark slab with a violet edge, its title, and an aside.
 /// `add` draws the body at the card's inner width.
-pub fn card<R>(ui: &mut egui::Ui, title: &str, note: &str, add: impl FnOnce(&mut egui::Ui) -> R) -> R {
+pub fn card<R>(ui: &mut egui::Ui, title: &str, add: impl FnOnce(&mut egui::Ui) -> R) -> R {
     let width = ui.available_width();
     let top = ui.cursor().min;
     let bg = ui.painter().add(Shape::Noop);
@@ -81,31 +81,10 @@ pub fn card<R>(ui: &mut egui::Ui, title: &str, note: &str, add: impl FnOnce(&mut
             .layout(egui::Layout::top_down(egui::Align::Min)),
     );
     let painter = child.painter().clone();
-    let title_g = line(&painter, &title.to_uppercase(), 15.0, display_family(), cream(), 0.16);
-    let mut th = title_g.size().y;
-    let title_w = title_g.size().x;
+    let title_g = line(&painter, &title.to_uppercase(), 18.0, display_family(), cream(), 0.16);
+    let th = title_g.size().y;
     painter.galley(inner.min, title_g, cream());
-    if !note.is_empty() {
-        let note_g = line(
-            &painter,
-            &note.to_uppercase(),
-            12.0,
-            body(),
-            hsla(45.0, 100.0, 95.0, 0.45),
-            0.14,
-        );
-        // `flex-wrap: wrap; gap: 6px 12px`: on the title's line at the
-        // right when both fit, else on a line of its own under it.
-        let at = if title_w + 12.0 + note_g.size().x <= inner.width() {
-            pos2(inner.right() - note_g.size().x, inner.top() + th - note_g.size().y)
-        } else {
-            let at = pos2(inner.left(), inner.top() + th + 6.0);
-            th += 6.0 + note_g.size().y;
-            at
-        };
-        painter.galley(at, note_g, cream());
-    }
-    child.add_space(th + 14.0);
+    child.add_space(th + 16.0);
     let r = add(&mut child);
     let bottom = child.min_rect().bottom() + pad_bottom;
     let rect = Rect::from_min_max(top, pos2(top.x + width, bottom));
@@ -169,8 +148,8 @@ pub fn mesh_polygon(points: &[Pos2], stops: &[(f32, Color32)]) -> Shape {
 #[derive(Debug, Clone, Default)]
 pub struct Head<'a> {
     pub name: &'a str,
-    /// `fps-set-field__val`, and whether it is the default (`· default`).
-    pub value: Option<(String, bool)>,
+    /// `fps-set-field__val`.
+    pub value: Option<String>,
     /// `fps-set-field__tag`: when a setting takes hold, such as "Next map".
     pub tag: Option<&'a str>,
     /// Frame cost pips (1 to 3).
@@ -187,8 +166,8 @@ impl<'a> Head<'a> {
     }
 
     #[must_use]
-    pub fn value(mut self, value: String, is_default: bool) -> Self {
-        self.value = Some((value, is_default));
+    pub fn value(mut self, value: String) -> Self {
+        self.value = Some(value);
         self
     }
 
@@ -214,9 +193,9 @@ fn head(ui: &mut egui::Ui, h: &Head<'_>, width: f32, alpha: f32) -> f32 {
         &painter,
         &h.name.to_uppercase(),
         15.0,
-        body(),
-        hsla(45.0, 100.0, 95.0, 0.82 * alpha),
-        0.14,
+        display_family(),
+        cream().gamma_multiply(alpha),
+        0.12,
     );
     let mut height = name.size().y;
     let name_w = name.size().x;
@@ -232,7 +211,7 @@ fn head(ui: &mut egui::Ui, h: &Head<'_>, width: f32, alpha: f32) -> f32 {
         cost_pips(&painter, pos2(x, at.y + height / 2.0 - 4.0), pips, alpha);
     }
     painter.galley(at, name, cream());
-    if let Some((value, is_default)) = &h.value {
+    if let Some(value) = &h.value {
         let v = line(
             &painter,
             value,
@@ -241,19 +220,7 @@ fn head(ui: &mut egui::Ui, h: &Head<'_>, width: f32, alpha: f32) -> f32 {
             cream().gamma_multiply(alpha),
             0.0,
         );
-        let mut right = at.x + width;
-        if *is_default {
-            let d = line(
-                &painter,
-                " · DEFAULT",
-                11.0,
-                body(),
-                hsla(45.0, 100.0, 95.0, 0.38 * alpha),
-                0.14,
-            );
-            right -= d.size().x;
-            painter.galley(pos2(right, at.y + v.size().y - d.size().y - 2.0), d, cream());
-        }
+        let right = at.x + width;
         let vh = v.size().y;
         painter.galley(pos2(right - v.size().x, at.y + height - vh + 2.0), v, cream());
         height = height.max(vh - 2.0);
@@ -284,27 +251,11 @@ pub fn cost_pips(painter: &Painter, at: Pos2, lit: u8, alpha: f32) {
     }
 }
 
-/// `.fps-set-field__help`, wrapped at `width`; returns its height.
-fn help(ui: &mut egui::Ui, s: &str, width: f32, alpha: f32) -> f32 {
-    let painter = ui.painter().clone();
-    let g = wrapped(
-        &painter,
-        s,
-        FontId::new(13.0, body()),
-        hsla(45.0, 100.0, 95.0, 0.45 * alpha),
-        width,
-    );
-    let h = g.size().y;
-    painter.galley(ui.cursor().min, g, cream());
-    h
-}
-
-/// The field's frame: head, control, help; a disabled field is dimmed
+/// The field's frame: head and control; a disabled field is dimmed
 /// (`aria-disabled`, opacity 0.35) and takes no input.
 fn field<R>(
     ui: &mut egui::Ui,
     h: &Head<'_>,
-    help_text: Option<&str>,
     enabled: bool,
     control: impl FnOnce(&mut egui::Ui, f32, f32) -> R,
 ) -> R {
@@ -326,15 +277,7 @@ fn field<R>(
         child.disable();
     }
     let r = control(&mut child, width, alpha);
-    let mut bottom = child.min_rect().bottom();
-    if let Some(s) = help_text {
-        let mut at = ui.new_child(egui::UiBuilder::new().max_rect(Rect::from_min_size(
-            pos2(top.x, bottom + 9.0),
-            vec2(width, f32::INFINITY),
-        )));
-        let hh = help(&mut at, s, width, alpha);
-        bottom += 9.0 + hh;
-    }
+    let bottom = child.min_rect().bottom();
     ui.allocate_rect(
         Rect::from_min_max(top, pos2(top.x + width, bottom)),
         egui::Sense::hover(),
@@ -374,13 +317,10 @@ pub fn slider(
     name: &str,
     value: f64,
     range: Range,
-    default: Option<f64>,
-    help_text: Option<&str>,
     enabled: bool,
 ) -> Option<f64> {
-    let is_default = default.is_some_and(|d| (d - value).abs() < 1e-9);
-    let h = Head::new(name).value((range.format)(value), is_default);
-    field(ui, &h, help_text, enabled, |ui, width, alpha| {
+    let h = Head::new(name).value((range.format)(value));
+    field(ui, &h, enabled, |ui, width, alpha| {
         slider_track(ui, name, value, range, width, alpha)
     })
 }
@@ -593,10 +533,9 @@ pub fn seg(
     h: Head<'_>,
     labels: &[&str],
     current: Option<usize>,
-    help_text: Option<&str>,
     enabled: bool,
 ) -> Option<usize> {
-    field(ui, &h, help_text, enabled, |ui, width, alpha| {
+    field(ui, &h, enabled, |ui, width, alpha| {
         seg_row(ui, labels, current, width, alpha)
     })
 }
@@ -621,11 +560,10 @@ pub fn swatches(
     colors: &[Color32],
     current: Option<usize>,
     blocked: Option<usize>,
-    help_text: Option<&str>,
     enabled: bool,
 ) -> Option<usize> {
     let h = Head::new(name);
-    field(ui, &h, help_text, enabled, |ui, width, alpha| {
+    field(ui, &h, enabled, |ui, width, alpha| {
         let top = ui.cursor().min;
         let (size, gap) = (38.0, 9.0);
         let per_row = (((width + gap) / (size + gap)).floor() as usize).max(1);

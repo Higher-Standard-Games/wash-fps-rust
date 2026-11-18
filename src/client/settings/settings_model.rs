@@ -482,9 +482,9 @@ pub fn apply_choice(cvars: &mut Cvars, choice: &CvarChoice) {
 // ── Video presets ──
 
 /// `VIDEO_PRESETS`: what costs frames; brightness, outlines and the like are
-/// left alone. Balanced is the game's own defaults. With each preset's line
-/// and meter bars.
-pub const VIDEO_PRESETS: [(CvarChoice, &str, u8); 4] = [
+/// left alone. Balanced is the game's own defaults. With each preset's
+/// meter bars.
+pub const VIDEO_PRESETS: [(CvarChoice, u8); 4] = [
     (
         CvarChoice {
             id: "ultralow",
@@ -518,7 +518,6 @@ pub const VIDEO_PRESETS: [(CvarChoice, &str, u8); 4] = [
                 ("r_cel_weapon_outlines", 0.0),
             ],
         },
-        "Frames above all: half resolution, flat map colours, no antialiasing, lights, gibs, marks, fog or outlines.",
         0,
     ),
     (
@@ -552,7 +551,6 @@ pub const VIDEO_PRESETS: [(CvarChoice, &str, u8); 4] = [
                 ("r_cel_weapon_outlines", 1.0),
             ],
         },
-        "The most frames. Plain water, no light shafts, no bloom, hard-edged halos.",
         1,
     ),
     (
@@ -587,7 +585,6 @@ pub const VIDEO_PRESETS: [(CvarChoice, &str, u8); 4] = [
                 ("r_cel_weapon_outlines", 1.0),
             ],
         },
-        "The look the game ships with.",
         2,
     ),
     (
@@ -623,7 +620,6 @@ pub const VIDEO_PRESETS: [(CvarChoice, &str, u8); 4] = [
                 ("r_cel_weapon_outlines", 1.0),
             ],
         },
-        "Adds glow, reflections and see-through water. Wants a strong graphics card.",
         3,
     ),
 ];
@@ -677,16 +673,6 @@ pub enum FrameCost {
 }
 
 impl FrameCost {
-    /// `COST_WORD`.
-    #[must_use]
-    pub const fn word(self) -> &'static str {
-        match self {
-            Self::Low => "Light",
-            Self::Mid => "Medium",
-            Self::High => "Heavy",
-        }
-    }
-
     /// The pips lit of three.
     #[must_use]
     pub const fn pips(self) -> u8 {

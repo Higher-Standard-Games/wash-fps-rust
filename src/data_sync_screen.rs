@@ -641,7 +641,7 @@ mod tests {
         let mut screen = DataScreen::new();
         screen.dress(&phase, 6_800_000.0);
         assert_eq!(screen.stage.status, "DOWNLOADING 10%");
-        assert_eq!(screen.stage.footer, "35.8 MB of 346.9 MB · 6.8 MB/s");
+        assert!(screen.stage.line.ends_with("35.8 MB of 346.9 MB · 6.8 MB/s"), "{}", screen.stage.line);
         assert_eq!(screen.stage.title, ["DOWNLOADING", "DATA"]);
         let Some(pixels) = render(&phase, 1.5) else {
             eprintln!("skipped: no GPU adapter");

@@ -232,11 +232,11 @@ impl ControlsPage {
         with_input(|input| {
             columns(ui, &[main, side], 20.0, |ui, i| {
                 if i == 0 {
-                    card(ui, "Keyboard", "Click a key to choose what it does", |ui| {
+                    card(ui,"Keyboard",|ui| {
                         self.keyboard(ui, input, focus_before);
-                    });
+                    },);
                 } else {
-                    card(ui, "Mouse", "", |ui| self.mouse(ui, input, focus_before));
+                    card(ui, "Mouse", |ui| self.mouse(ui, input, focus_before));
                 }
             });
             ui.add_space(20.0);
@@ -245,19 +245,17 @@ impl ControlsPage {
                     card(
                         ui,
                         "What each key does",
-                        "Click an action, then press the key you want",
                         |ui| {
                             change = self.actions(ui, input);
                         },
                     );
                 } else {
-                    card(ui, "Mouse feel", "", |ui| {
+                    card(ui,"Mouse feel",|ui| {
                         cvar_slider(
                             ui,
                             "Sensitivity",
                             "m_sensitivity",
                             Range::new(0.1, 10.0, 0.1, plain),
-                            None,
                             true,
                         );
                         ui.add_space(16.0);
@@ -266,7 +264,6 @@ impl ControlsPage {
                             "While aiming",
                             "cl_ads_sensitivity",
                             Range::new(0.1, 1.0, 0.05, format_percent),
-                            Some("Share of your sensitivity while you hold Aim"),
                             true,
                         );
                         ui.add_space(16.0);
@@ -274,10 +271,9 @@ impl ControlsPage {
                             ui,
                             Head::new("Always run"),
                             "cl_autorun",
-                            Some("On: you run all the time, and holding Sprint walks"),
                             true,
                         );
-                    });
+                    },);
                 }
             });
             if let Some(c) = self.pop_sheet(ui, input) {
@@ -471,7 +467,7 @@ impl ControlsPage {
             );
         }
         let unit = rect.height();
-        let legend_size = (unit * 0.26).clamp(10.0, 13.0);
+        let legend_size = (unit * 0.3).clamp(12.0, 15.0);
         let g = line(painter, legend, legend_size, display_family(), a(text), 0.02);
         painter.galley(face.min + vec2(6.0, 5.0), g, cream());
         if show_act && let Some(act) = action {
@@ -481,7 +477,7 @@ impl ControlsPage {
             } else {
                 act.on_key.unwrap_or(act.name)
             };
-            let size = (unit * 0.21).clamp(9.0, 11.0);
+            let size = (unit * 0.26).clamp(11.0, 13.0);
             let text_w = rect.width() - 12.0;
             let label =
                 shagger::ui::components::lobby_twin::elide(painter, &label.to_uppercase(), size, body(), text_w);
@@ -647,7 +643,7 @@ impl ControlsPage {
             let slot = line(
                 &painter,
                 &name.to_uppercase(),
-                11.0,
+                14.0,
                 body(),
                 hsla(45.0, 100.0, 95.0, 0.5 * dim),
                 0.18,
@@ -658,7 +654,12 @@ impl ControlsPage {
                 Some(a) => (a.name, cream()),
                 None => ("Nothing", hsla(45.0, 100.0, 95.0, 0.32)),
             };
-            let g = line(&painter, act, 16.0, body(), color.gamma_multiply(dim), 0.04);
+            // Shrunk to the slot, as the browser's ellipsis-free label fits it.
+            let mut g = line(&painter, act, 20.0, body(), color.gamma_multiply(dim), 0.04);
+            if g.size().x > label_w - 14.0 {
+                let size = (20.0 * (label_w - 14.0) / g.size().x).max(13.0);
+                g = line(&painter, act, size, body(), color.gamma_multiply(dim), 0.04);
+            }
             painter.galley(r.min + vec2(10.0, 6.0 + sh + 3.0), g, cream());
             if response.clicked() {
                 self.click_input(code, r);
@@ -701,7 +702,8 @@ impl ControlsPage {
     /// `renderActs`: the actions by group, four across, with their keys.
     fn actions(&mut self, ui: &mut egui::Ui, input: &InputSystem) -> Option<(String, Option<&'static str>)> {
         let mut change = None;
-        let per_row = if ui.available_width() < 900.0 { 2 } else { 4 };
+        // CSS grid repeat(auto-fit, minmax(230px, 1fr)) with a 26px gap.
+        let per_row = (((ui.available_width() + 26.0) / 256.0).floor() as usize).clamp(1, ACTION_GROUPS.len());
         let fractions = vec![1.0; per_row];
         for chunk in ACTION_GROUPS.chunks(per_row) {
             columns(ui, &fractions, 26.0, |ui, i| {
@@ -755,8 +757,7 @@ impl ControlsPage {
         );
         job.wrap.break_anywhere = false;
         let name = painter.layout_job(job);
-        let badge = fixed.then(|| line(&painter, "FIXED", 10.0, body(), hsla(45.0, 100.0, 95.0, 0.5), 0.16));
-        let name_h = name.size().y + badge.as_ref().map_or(0.0, |b| b.size().y + 7.0);
+        let name_h = name.size().y;
         // The chips, laid out right to left.
         let chips: Vec<(String, std::sync::Arc<egui::Galley>)> = codes
             .iter()
@@ -764,11 +765,11 @@ impl ControlsPage {
                 let color = if fixed { c } else { ink() };
                 (
                     code.clone(),
-                    line(&painter, &code_name(code), 11.0, display_family(), color, 0.02),
+                    line(&painter, &code_name(code), 14.0, display_family(), color, 0.02),
                 )
             })
             .collect();
-        let chip_h = 24.0;
+        let chip_h = 28.0;
         let height = (name_h + 8.0).max(36.0).max(chip_h + 12.0);
         let (row, response) = ui.allocate_exact_size(vec2(width, height), egui::Sense::click());
         let hovered = response.hovered();
@@ -792,18 +793,7 @@ impl ControlsPage {
             painter.rect_filled(Rect::from_min_size(row.min, vec2(3.0, row.height())), 0.0, c);
         }
         let ny = row.center().y - name_h / 2.0;
-        let nh = name.size().y;
         painter.galley(pos2(row.left() + 13.0, ny), name, cream());
-        if let Some(b) = badge {
-            let r = Rect::from_min_size(pos2(row.left() + 13.0, ny + nh + 4.0), b.size() + vec2(12.0, 4.0));
-            painter.rect_stroke(
-                r,
-                2.0,
-                Stroke::new(1.0, hsla(45.0, 100.0, 95.0, 0.22)),
-                egui::StrokeKind::Inside,
-            );
-            painter.galley(r.min + vec2(6.0, 2.0), b, cream());
-        }
         let mut change = None;
         let mut x = row.right() - 8.0;
         if listening {
@@ -837,7 +827,7 @@ impl ControlsPage {
             painter.galley(r.center() - g.size() / 2.0, g, cream());
         } else {
             for (code, g) in chips.iter().rev() {
-                let w = (g.size().x + 14.0).max(26.0);
+                let w = (g.size().x + 16.0).max(30.0);
                 let r = Rect::from_min_size(pos2(x - w, row.center().y - chip_h / 2.0 - 1.5), vec2(w, chip_h));
                 x = r.left() - 5.0;
                 if fixed {

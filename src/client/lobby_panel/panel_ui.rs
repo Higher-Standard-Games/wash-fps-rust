@@ -496,7 +496,7 @@ impl LobbyPanel {
                 .show(ui, |ui| {
                     let top = ui.cursor().min;
                     let r = Rect::from_min_size(top, vec2(list.width() - 4.0, 1.0));
-                    let used = view.page_nav(ui, r, key_h, label_size, !l.narrow && !short, columns);
+                    let used = view.page_nav(ui, r, key_h, label_size, columns);
                     ui.allocate_rect(Rect::from_min_size(top, vec2(r.width(), used)), egui::Sense::hover());
                 });
         });

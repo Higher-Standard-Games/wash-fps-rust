@@ -125,7 +125,6 @@ impl FpsSettingsView {
         rect: Rect,
         key_h: f32,
         label_size: f32,
-        hints: bool,
         columns: usize,
     ) -> f32 {
         let painter = ui.painter().clone();
@@ -147,7 +146,7 @@ impl FpsSettingsView {
                 .hover(gold, -0.35)
                 .current(self.page == page.id)
                 .show(ui);
-            let text = KeyText::new(page.title, if hints { page.hint } else { "" }, display_family(), body())
+            let text = KeyText::new(page.title, "", display_family(), body())
                 .size(label_size, 12.0);
             if columns > 1 {
                 // `justify-content: center`, 12 / 8 px in, `letter-spacing: 0.04em`.
@@ -236,23 +235,6 @@ impl FpsSettingsView {
         };
         let all = reset_key(ui, Reset::All, all_label, false);
         let page = reset_key(ui, Reset::Page, page_label, self.is_locked(self.page));
-        // `fps-set-saved`: a green dot, and the words.
-        let saved_text = line(
-            &painter,
-            "SAVED AS YOU GO",
-            12.0,
-            body(),
-            hsla(45.0, 100.0, 95.0, 0.45),
-            0.2,
-        );
-        let sy = head_bottom - 12.0 - key_h / 2.0 - saved_text.size().y / 2.0;
-        let sx = right - saved_text.size().x;
-        painter.circle_filled(
-            pos2(sx - 12.0, sy + saved_text.size().y / 2.0),
-            3.0,
-            hsl(96.0, 85.0, 55.0),
-        );
-        painter.galley(pos2(sx, sy), saved_text, cream());
         if page {
             self.arm_or_run(Reset::Page, now);
         } else if all {
@@ -398,12 +380,11 @@ pub fn set_flag(name: &str, on: bool) {
 }
 
 /// A slider over a cvar, hidden when this client has no such cvar.
-pub fn cvar_slider(ui: &mut egui::Ui, name: &str, cvar: &str, range: Range, help: Option<&str>, enabled: bool) {
-    let Some((value, default)) = with_cvars(|c| c.exists(cvar).then(|| (c.get_number(cvar), cvar_default(c, cvar))))
-    else {
+pub fn cvar_slider(ui: &mut egui::Ui, name: &str, cvar: &str, range: Range, enabled: bool) {
+    let Some(value) = with_cvars(|c| c.exists(cvar).then(|| c.get_number(cvar))) else {
         return;
     };
-    if let Some(v) = slider(ui, name, value, range, default, help, enabled) {
+    if let Some(v) = slider(ui, name, value, range, enabled) {
         with_cvars(|c| c.set(cvar, v));
     }
 }
@@ -414,7 +395,6 @@ pub fn cvar_seg(
     head: Head<'_>,
     cvar: &str,
     choices: &[(f64, &str)],
-    help: Option<&str>,
     enabled: bool,
 ) {
     let Some(value) = with_cvars(|c| c.exists(cvar).then(|| number_of(c, cvar))) else {
@@ -422,7 +402,7 @@ pub fn cvar_seg(
     };
     let labels: Vec<&str> = choices.iter().map(|c| c.1).collect();
     let current = choices.iter().position(|c| (c.0 - value).abs() < 1e-6);
-    if let Some(i) = seg(ui, head, &labels, current, help, enabled) {
+    if let Some(i) = seg(ui, head, &labels, current, enabled) {
         let v = choices[i].0;
         with_cvars(|c| {
             if c.get_cvar(cvar).is_some_and(|x| x.kind == CvarType::Bool) {
@@ -435,16 +415,16 @@ pub fn cvar_seg(
 }
 
 /// Off and On over a flag.
-pub fn on_off(ui: &mut egui::Ui, head: Head<'_>, cvar: &str, help: Option<&str>, enabled: bool) {
-    cvar_seg(ui, head, cvar, &[(0.0, "Off"), (1.0, "On")], help, enabled);
+pub fn on_off(ui: &mut egui::Ui, head: Head<'_>, cvar: &str, enabled: bool) {
+    cvar_seg(ui, head, cvar, &[(0.0, "Off"), (1.0, "On")], enabled);
 }
 
 /// A row of keys over choices that each set several cvars.
-pub fn choice_seg(ui: &mut egui::Ui, head: Head<'_>, choices: &[CvarChoice], help: Option<&str>) {
+pub fn choice_seg(ui: &mut egui::Ui, head: Head<'_>, choices: &[CvarChoice]) {
     let current = with_cvars(|c| current_choice(c, choices).map(|c| c.id));
     let labels: Vec<&str> = choices.iter().map(|c| c.label).collect();
     let at = choices.iter().position(|c| Some(c.id) == current);
-    if let Some(i) = seg(ui, head, &labels, at, help, true) {
+    if let Some(i) = seg(ui, head, &labels, at, true) {
         with_cvars(|c| apply_choice(c, &choices[i]));
     }
 }
@@ -488,7 +468,6 @@ pub fn over_match(ui: &mut egui::Ui, view: &mut FpsSettingsView, kicker: &str) -
             Rect::from_min_size(side.min + vec2(0.0, kh + 22.0), vec2(side.width(), 1.0)),
             48.0,
             15.0,
-            side.width() > 280.0,
             1,
         );
         let back_r = Rect::from_min_size(

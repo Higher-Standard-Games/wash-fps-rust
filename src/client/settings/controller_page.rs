@@ -178,7 +178,7 @@ impl ControllerPage {
     }
 
     fn connection(&mut self, ui: &mut egui::Ui) {
-        card(ui, "Controller", "", |ui| {
+        card(ui,"Controller",|ui| {
             let status = if !self.pad.available {
                 "Controllers can't be read on this computer.".to_owned()
             } else {
@@ -190,7 +190,7 @@ impl ControllerPage {
             };
             let width = ui.available_width();
             let painter = ui.painter().clone();
-            let g = wrapped(&painter, &status, egui::FontId::new(16.0, body()), cream(), width);
+            let g = wrapped(&painter, &status, egui::FontId::new(18.0, body()), cream(), width);
             let (r, _) = ui.allocate_exact_size(g.size(), egui::Sense::hover());
             painter.galley(r.min, g, cream());
             // `fps-pad-devices`: a key per pad, to pick which one plays.
@@ -225,29 +225,18 @@ impl ControllerPage {
                 }
                 None => String::new(),
             };
-            let g = line(&painter, &live, 12.0, body(), hsla(45.0, 100.0, 95.0, 0.6), 0.0);
+            let g = line(&painter, &live, 15.0, body(), hsla(45.0, 100.0, 95.0, 0.6), 0.0);
             let (r, _) = ui.allocate_exact_size(vec2(width, 24.0), egui::Sense::hover());
             painter.galley(r.min, g, cream());
-        });
+        },);
     }
 
     fn layout(&mut self, ui: &mut egui::Ui) {
-        card(ui, "Layout", "", |ui| {
+        card(ui,"Layout",|ui| {
             let painter = ui.painter().clone();
-            let width = ui.available_width();
-            let note = wrapped(
-                &painter,
-                "Menu navigation always uses A to select, B to go back, and Menu to pause.",
-                egui::FontId::new(13.0, body()),
-                hsla(45.0, 100.0, 95.0, 0.45),
-                width,
-            );
-            let (r, _) = ui.allocate_exact_size(note.size(), egui::Sense::hover());
-            painter.galley(r.min, note, cream());
-            ui.add_space(14.0);
             let current = with_input(|i| controller_preset(i));
             let at = current.map(|p| usize::from(p == ControllerPreset::Bumper));
-            if let Some(i) = seg(ui, Head::new("Preset"), &["Standard", "Bumper jump"], at, None, true) {
+            if let Some(i) = seg(ui, Head::new("Preset"), &["Standard", "Bumper jump"], at, true) {
                 let preset = if i == 0 {
                     ControllerPreset::Standard
                 } else {
@@ -255,33 +244,21 @@ impl ControllerPage {
                 };
                 with_input(|input| apply_controller_preset(input, preset));
             }
-            ui.add_space(12.0);
-            let text = if current.is_some() {
-                "Edit any action below to make a custom layout."
-            } else {
-                "Custom layout"
-            };
-            let g = line(&painter, text, 15.0, body(), hsla(45.0, 100.0, 95.0, 0.7), 0.0);
-            let (r, _) = ui.allocate_exact_size(g.size(), egui::Sense::hover());
-            painter.galley(r.min, g, cream());
-        });
+            if current.is_none() {
+                ui.add_space(12.0);
+                let g = line(&painter, "Custom layout", 18.0, body(), hsla(45.0, 100.0, 95.0, 0.7), 0.0);
+                let (r, _) = ui.allocate_exact_size(g.size(), egui::Sense::hover());
+                painter.galley(r.min, g, cream());
+            }
+        },);
     }
 
     /// `fps-pad-diagram`: the pad's outline and a cap per button.
     fn diagram(&mut self, ui: &mut egui::Ui, input: &InputSystem, hl_action: Option<&'static str>) {
-        card(ui, "Your controller", "", |ui| {
+        card(ui,"Your controller",|ui| {
             let width = ui.available_width();
             let painter = ui.painter().clone();
-            let note = wrapped(
-                &painter,
-                "Select a button to choose its action. Point at an action to light its button.",
-                egui::FontId::new(13.0, body()),
-                hsla(45.0, 100.0, 95.0, 0.45),
-                width,
-            );
-            let (r, _) = ui.allocate_exact_size(note.size(), egui::Sense::hover());
-            painter.galley(r.min, note, cream());
-            ui.add_space(30.0);
+            ui.add_space(16.0);
             let h = width * 310.0 / 480.0;
             let (area, _) = ui.allocate_exact_size(vec2(width, h), egui::Sense::hover());
             let k = width / 480.0;
@@ -330,7 +307,7 @@ impl ControllerPage {
                     .iter()
                     .find(|a| controller_buttons(input, a.id).contains(&b));
                 let c = action.map_or(Color32::from_rgb(0xc9, 0xc5, 0xb9), |a| group_color(group_of(a.group)));
-                let g = line(&painter, &label, 12.0, body(), cream(), 0.0);
+                let g = line(&painter, &label, 15.0, body(), cream(), 0.0);
                 let size = vec2((g.size().x + 14.0).max(32.0), g.size().y + 10.0);
                 let center = pos2(
                     area.left() + area.width() * x / 100.0,
@@ -361,7 +338,7 @@ impl ControllerPage {
                 } else {
                     Color32::WHITE
                 };
-                let g = line(&painter, &label, 12.0, body(), color, 0.0);
+                let g = line(&painter, &label, 15.0, body(), color, 0.0);
                 painter.galley(r.center() - g.size() / 2.0, g, color);
                 if response.clicked() {
                     if index == 9 {
@@ -371,35 +348,12 @@ impl ControllerPage {
                     }
                 }
             }
-            ui.add_space(8.0);
-            let g = line(
-                &painter,
-                "Sticks: move / look · LS: walk with Always run · Menu: pause / resume",
-                13.0,
-                body(),
-                hsla(45.0, 100.0, 95.0, 0.55),
-                0.0,
-            );
-            let (r, _) = ui.allocate_exact_size(vec2(width, g.size().y), egui::Sense::hover());
-            painter.galley(r.min, g, cream());
-        });
+        },);
     }
 
     /// `What each button does`: the actions by group, two across.
     fn actions(&mut self, ui: &mut egui::Ui, input: &InputSystem, hl_button: Option<u64>) {
-        card(ui, "What each button does", "", |ui| {
-            let painter = ui.painter().clone();
-            let width = ui.available_width();
-            let note = wrapped(
-                &painter,
-                "Select an action, release the controls, then press its new button. Menu cancels.",
-                egui::FontId::new(13.0, body()),
-                hsla(45.0, 100.0, 95.0, 0.45),
-                width,
-            );
-            let (r, _) = ui.allocate_exact_size(note.size(), egui::Sense::hover());
-            painter.galley(r.min, note, cream());
-            ui.add_space(14.0);
+        card(ui,"What each button does",|ui| {
             for pair in ACTION_GROUPS.chunks(2) {
                 columns(ui, &[1.0, 1.0], 26.0, |ui, i| {
                     let Some(group) = pair.get(i) else { return };
@@ -458,7 +412,7 @@ impl ControllerPage {
                 });
                 ui.add_space(14.0);
             }
-        });
+        },);
     }
 
     /// `fps-pad-pop`: a gold sheet in the middle of the screen.
@@ -584,7 +538,6 @@ fn feel(ui: &mut egui::Ui) {
     card(
         ui,
         "Stick feel",
-        "Movement uses full speed outside the dead zone",
         |ui| {
             let sliders: [(&str, &str, Range); 6] = [
                 (
@@ -610,25 +563,42 @@ fn feel(ui: &mut egui::Ui) {
                 ),
                 ("While aiming", "in_pad_ads", Range::new(0.1, 1.0, 0.05, format_percent)),
             ];
-            for (name, cvar, range) in sliders {
-                cvar_slider(ui, name, cvar, range, None, true);
-                ui.add_space(16.0);
-            }
-            let width = ui.available_width().min(320.0);
-            for (name, cvar) in [
-                ("Invert vertical look", "in_pad_invert"),
-                ("Swap move and look sticks", "in_pad_swap"),
-                ("Aim assist", "in_pad_assist"),
-            ] {
-                let mut child = ui.new_child(
-                    egui::UiBuilder::new()
-                        .max_rect(Rect::from_min_size(ui.cursor().min, vec2(width, f32::INFINITY)))
-                        .layout(egui::Layout::top_down(egui::Align::Min)),
-                );
-                on_off(&mut child, Head::new(name), cvar, None, true);
-                let used = child.min_rect();
-                ui.allocate_rect(used, egui::Sense::hover());
-                ui.add_space(16.0);
+            let switches = |ui: &mut egui::Ui| {
+                let width = ui.available_width().min(320.0);
+                for (name, cvar) in [
+                    ("Invert vertical look", "in_pad_invert"),
+                    ("Swap move and look sticks", "in_pad_swap"),
+                    ("Aim assist", "in_pad_assist"),
+                ] {
+                    let mut child = ui.new_child(
+                        egui::UiBuilder::new()
+                            .max_rect(Rect::from_min_size(ui.cursor().min, vec2(width, f32::INFINITY)))
+                            .layout(egui::Layout::top_down(egui::Align::Min)),
+                    );
+                    on_off(&mut child, Head::new(name), cvar, true);
+                    let used = child.min_rect();
+                    ui.allocate_rect(used, egui::Sense::hover());
+                    ui.add_space(16.0);
+                }
+            };
+            // `fps-pad-feel`: sliders left, switches right; one column when narrow.
+            if ui.available_width() < 640.0 {
+                for (name, cvar, range) in sliders {
+                    cvar_slider(ui, name, cvar, range, true);
+                    ui.add_space(16.0);
+                }
+                switches(ui);
+            } else {
+                columns(ui, &[1.0, 1.0], 48.0, |ui, i| {
+                    if i == 0 {
+                        for (name, cvar, range) in sliders {
+                            cvar_slider(ui, name, cvar, range, true);
+                            ui.add_space(16.0);
+                        }
+                    } else {
+                        switches(ui);
+                    }
+                });
             }
             let _ = with_cvars(|c| c.exists("in_pad_yaw"));
         },
