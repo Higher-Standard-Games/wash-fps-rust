@@ -1,7 +1,7 @@
 //! Port of wash-fps `client/ReelEffects.ts`: the highlight reel's comic
 //! effects over the picture: speed lines across a cut that jumps ahead, the
 //! freeze frame's panel border, halftone and caption burst, the frag counter,
-//! and the tag naming each scene's player and play in the lower left.
+//! and the tag naming each scene's player and play in the lower right.
 //!
 //! The TypeScript draws on a 2D canvas; here the same shapes go to an egui
 //! painter, with the canvas transforms worked out by hand. egui cannot shear
@@ -438,10 +438,10 @@ fn draw_stamp(canvas: &Canvas<'_>, stamp: &ReelStampEffect, width: f64, height: 
 
 // ── Scene tag ──
 
-/// `drawTag`: who and what, as a comic caption in the lower left: the play
-/// in ink on a gold box, the player's name on a paper box pinned over its
-/// corner, both with a hard ink shadow. It slides in from the left and drops
-/// away at its end.
+/// `drawTag`: who and what, as a comic caption in the lower right, clear of
+/// the kill feed and chat on the left: the play in ink on a gold box, the
+/// player's name on a paper box pinned over its corner, both with a hard ink
+/// shadow. It slides in from the right and drops away at its end.
 fn draw_tag(canvas: &Canvas<'_>, tag: &ReelTagEffect, width: f64, height: f64, unit: f64) {
     let t = tag.age_ms;
     let enter = (t / TAG_IN_MS).clamp(0.0, 1.0);
@@ -450,9 +450,22 @@ fn draw_tag(canvas: &Canvas<'_>, tag: &ReelTagEffect, width: f64, height: f64, u
         return;
     }
     let room = width * 0.42;
-    let left = 64.0 * unit;
+
+    // Both boxes are measured first: the caption is placed by its right edge.
+    let what = tag.what.to_uppercase();
+    let (what_size, what_w) = fit_text(canvas, &what, 46.0 * unit, room);
+    let pad_x = 26.0 * unit;
+    let box_w = what_w + pad_x * 2.0;
+    let box_h = what_size + 44.0 * unit;
+    let (who_size, who_w) = fit_text(canvas, &tag.who, 28.0 * unit, room * 0.8);
+    let who_box_w = who_w + 36.0 * unit;
+    let who_box_h = who_size + 22.0 * unit;
+    let who_x = -14.0 * unit;
+    let span = box_w.max(who_x + who_box_w) + 8.0 * unit;
+
+    let left = width - 64.0 * unit - span;
     let bottom = height - 150.0 * unit;
-    let slide = (1.0 - ease_out_back(enter)) * -(room + 120.0 * unit) + (1.0 - leave) * 40.0 * unit;
+    let slide = (1.0 - ease_out_back(enter)) * (room + 120.0 * unit) - (1.0 - leave) * 40.0 * unit;
     let canvas = Canvas {
         alpha: canvas.alpha * (leave * 1.5).min(1.0) as f32,
         ..*canvas
@@ -463,11 +476,6 @@ fn draw_tag(canvas: &Canvas<'_>, tag: &ReelTagEffect, width: f64, height: f64, u
         .rotate(-0.045);
 
     // The play, on gold.
-    let what = tag.what.to_uppercase();
-    let (what_size, what_w) = fit_text(&canvas, &what, 46.0 * unit, room);
-    let pad_x = 26.0 * unit;
-    let box_w = what_w + pad_x * 2.0;
-    let box_h = what_size + 44.0 * unit;
     caption_box(&canvas, xf, (0.0, -box_h, box_w, box_h), GOLD, unit);
     // A little below the middle, clear of the name box over the top edge.
     canvas.text(
@@ -484,16 +492,13 @@ fn draw_tag(canvas: &Canvas<'_>, tag: &ReelTagEffect, width: f64, height: f64, u
     // The player, on paper, pinned over its top-left corner a beat later.
     let drop = ((t - TAG_IN_MS * 0.4) / TAG_IN_MS).clamp(0.0, 1.0);
     if drop > 0.0 {
-        let (who_size, who_w) = fit_text(&canvas, &tag.who, 28.0 * unit, room * 0.8);
-        let w = who_w + 36.0 * unit;
-        let h = who_size + 22.0 * unit;
-        let x = -14.0 * unit;
+        let (w, h) = (who_box_w, who_box_h);
         let y = -box_h - h + 6.0 * unit - (1.0 - ease_out_back(drop)) * 24.0 * unit;
         let canvas = Canvas {
             alpha: canvas.alpha * drop as f32,
             ..canvas
         };
-        let xf = xf.translate(x, y).rotate(0.03);
+        let xf = xf.translate(who_x, y).rotate(0.03);
         caption_box(&canvas, xf, (0.0, 0.0, w, h), PAPER, unit);
         canvas.text(
             xf,
