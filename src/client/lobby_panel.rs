@@ -253,8 +253,32 @@ fn login_failure_text(code: &str) -> String {
         "rate_limited" => "Too many tries. Wait a minute, then try again.".into(),
         "lobby_full" => "Servers are full. Your current player key is unchanged. Try again shortly.".into(),
         "already_authenticated" => "This connection is already logged in. Try again.".into(),
+        "banned" => "This player is banned from Washoi's servers.".into(),
         other => format!("Login refused: {other}"),
     }
+}
+
+/// `banNoticeText`: the refusal, the reason, how long and how to appeal.
+fn ban_notice_text(e: &AuthError, now_ms: f64) -> String {
+    let mut parts = vec![login_failure_text("banned")];
+    if let Some(reason) = e.reason.as_deref().filter(|r| !r.is_empty()) {
+        parts.push(format!("Reason: {reason}"));
+    }
+    parts.push(match e.until {
+        Some(until) => {
+            let hours = ((until - now_ms) / 3_600_000.0).ceil().max(1.0);
+            if hours > 48.0 {
+                format!("Ends in {} days.", (hours / 24.0).ceil())
+            } else {
+                format!("Ends in {hours} hours.")
+            }
+        }
+        None => "Until it is lifted.".into(),
+    });
+    if let Some(appeal) = e.appeal.as_deref().filter(|a| !a.is_empty()) {
+        parts.push(format!("To appeal: {appeal}"));
+    }
+    parts.join(" ")
 }
 
 /// `runDeepLinkJoin`'s reading of a link: `?lobby=` first, else
@@ -353,6 +377,8 @@ pub struct LobbyPanel {
     retry_at: Option<Instant>,
     /// The lobby is full and closes the connection; its wait stands.
     lobby_full: bool,
+    /// The lobby refused this player as banned: no retries until a new key logs in.
+    banned: bool,
     /// The room, its invite and the account, when the connection dropped
     /// in a room (`roomToRejoin`).
     room_to_rejoin: Option<(String, Option<String>, Option<String>)>,
@@ -473,6 +499,7 @@ impl LobbyPanel {
             login_failures: 0,
             retry_at: None,
             lobby_full: false,
+            banned: false,
             room_to_rejoin: None,
             room_invite: None,
             account_id: None,
@@ -686,7 +713,7 @@ impl LobbyPanel {
         }
         self.profile.bind(false, false, &account!(self), &mut self.client);
         self.welcome.disconnected();
-        if !deliberate && !self.lobby_full && self.retry_at.is_none() {
+        if !deliberate && !self.lobby_full && !self.banned && self.retry_at.is_none() {
             self.login_failures += 1;
             let seconds = offline_retry_delay_sec(self.login_failures, random01());
             self.full_notice = Some(NoticeKind::Offline);
@@ -699,7 +726,12 @@ impl LobbyPanel {
     fn login_refused(&mut self, e: &AuthError) {
         // A key pasted on the Profile: say why, and log back in as before.
         if self.switch_key.take().is_some() {
-            self.switch_answered(Err(login_failure_text(&e.code)));
+            let why = if e.code == "banned" {
+                ban_notice_text(e, now_ms())
+            } else {
+                login_failure_text(&e.code)
+            };
+            self.switch_answered(Err(why));
             if e.code != "lobby_full" {
                 self.client.auth(self.key.as_deref());
                 return;
@@ -721,6 +753,14 @@ impl LobbyPanel {
                     self.client.auth(None);
                 }
             }
+            return;
+        }
+        // A ban closes the connection; say why and stay offline.
+        if e.code == "banned" {
+            self.banned = true;
+            self.full_notice = None;
+            self.retry_at = None;
+            self.notice = ban_notice_text(e, now_ms());
             return;
         }
         // A full lobby waits as long as it asks (and closes the connection);
@@ -806,6 +846,7 @@ impl LobbyPanel {
                     self.keep_new_key(key);
                 }
                 self.login_failures = 0;
+                self.banned = false;
                 self.retry_at = None;
                 self.full_notice = None;
                 self.account_id = w.identity.as_ref().map(|i| i.id.clone());
@@ -1476,6 +1517,21 @@ use panel_ui::*;
 mod tests {
     use super::*;
     use crate::client::identity_fields::Tone;
+
+    #[test]
+    fn a_ban_notice_gives_the_reason_the_end_and_the_appeal() {
+        let mut e: AuthError = serde_json::from_value(serde_json::json!({
+            "type": "auth:error", "code": "banned", "reason": "Aimbot", "until": 3.0 * 86_400_000.0, "appeal": "write to us"
+        }))
+        .unwrap();
+        assert_eq!(
+            ban_notice_text(&e, 0.0),
+            "This player is banned from Washoi's servers. Reason: Aimbot Ends in 3 days. To appeal: write to us"
+        );
+        e.until = None;
+        e.reason = None;
+        assert!(ban_notice_text(&e, 0.0).contains("Until it is lifted."));
+    }
 
     #[test]
     fn names_take_the_browser_s_colours() {
