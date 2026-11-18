@@ -2770,6 +2770,24 @@ Also: CI's `check` job runs `cargo fetch --locked`, as the release does.
 main's `Cargo.lock` had been committed naming a local shagger path, which
 CI's unlocked build accepts but the release's `--locked` build refuses.
 
+### Staging catch-up: beta.13 hardening (November 18, 2026)
+
+Checked SHAG staging 75f740c (fps 08390cb) since the catch-up below:
+
+- **Ported:** the reel's scene tag sits in the lower right, placed by its
+  right edge 64 units in and sliding in from the right, clear of the kill
+  feed and chat (fps 34c2edd); the round intermission puts Soba left and
+  Udon right, as the scoreboard does (fps 647c857).
+- **Not needed here:** the lobby and game server limits (chat and message
+  floods, connections per address, login and join deadlines, a ready flag
+  that must be `true`, Fisher-Yates map offers): the native client already
+  sends `ready` as a boolean, sends Join as soon as the socket opens, and
+  shows `lobby:error` as the web does. The console's HTML escaping (the
+  native console draws no markup), the chat field's lost focus (a DOM focus
+  bug), the blue glow's material setter and the downloads list rebuild
+  (Babylon and DOM costs), the snapshot replay check (browser renderer) and
+  the `ProjectileSync.ts` move (no behaviour change).
+
 ### Staging catch-up: the campaign's story and finale (November 17, 2026)
 
 Ported from SHAG staging 6fa6c61 (fps 8c9f6fe):

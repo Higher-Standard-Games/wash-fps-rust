@@ -356,14 +356,15 @@ impl FpsHudWidget for RoundResult {
         let soba_num = card.soba.rounds.to_string();
         let udon_w = measure_plate(hud, &card.udon.name) + inner_gap + hud.measure(&udon_num, &number(card.udon.won));
         let soba_w = measure_plate(hud, &card.soba.name) + inner_gap + hud.measure(&soba_num, &number(card.soba.won));
-        let row_w = udon_w + row_gap + dash_w + row_gap + soba_w;
+        // Soba left and Udon right, as the scoreboard puts them.
+        let row_w = soba_w + row_gap + dash_w + row_gap + udon_w;
         let mut px = x - row_w / 2.0;
-        let w = plate(hud, &card.udon.name, udon_hue, px);
+        let w = plate(hud, &card.soba.name, soba_hue, px);
         px += w + inner_gap;
-        px += hud.text_in_box(px, top, row_h, &udon_num, &number(card.udon.won)) - px + row_gap;
+        px += hud.text_in_box(px, top, row_h, &soba_num, &number(card.soba.won)) - px + row_gap;
         px = hud.text_in_box(px, top, row_h, ":", &dash_style) + row_gap;
-        px = hud.text_in_box(px, top, row_h, &soba_num, &number(card.soba.won)) + inner_gap;
-        plate(hud, &card.soba.name, soba_hue, px);
+        px = hud.text_in_box(px, top, row_h, &udon_num, &number(card.udon.won)) + inner_gap;
+        plate(hud, &card.udon.name, udon_hue, px);
 
         // Lower middle: how long until the next round goes live.
         let label = "GET READY FOR THE NEXT ROUND";
