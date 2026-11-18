@@ -599,6 +599,20 @@ pub fn toggle_fullscreen() {
 
 /// The game's first window opens fullscreen unless the player left it
 /// windowed (`vid_fullscreen`, on by default).
+/// `r_frame_latency`: how many finished frames the driver may queue before
+/// showing them. 2 (wgpu's own) keeps the GPU busy; 1 shows each frame about
+/// one frame sooner, so aiming answers sooner, for a few frames a second on a
+/// busy GPU.
+pub fn frame_latency() -> u32 {
+    with_cvars(|c| {
+        if c.exists("r_frame_latency") {
+            c.get_number("r_frame_latency").clamp(1.0, 3.0) as u32
+        } else {
+            2
+        }
+    })
+}
+
 fn starts_fullscreen() -> bool {
     with_cvars(|c| !c.exists("vid_fullscreen") || c.get_number("vid_fullscreen") != 0.0)
 }
@@ -906,6 +920,7 @@ fn surface_on(event_loop: &ActiveEventLoop, window: Arc<Window>) -> Result<OpenW
         config.format = plain;
     }
     config.present_mode = wgpu::PresentMode::AutoVsync;
+    config.desired_maximum_frame_latency = frame_latency();
     surface.configure(&gpu.device, &config);
     Ok(OpenWindow {
         window,

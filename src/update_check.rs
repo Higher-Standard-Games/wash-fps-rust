@@ -5,7 +5,10 @@
 //!
 //! A game that can replace itself does so before the data sync instead
 //! (`self_update`, `apply`): it downloads the newer package, checks its size
-//! and SHA-256 against the index, and puts it in place. On Windows the
+//! and SHA-256 against the index and the release workflow's Ed25519
+//! signature on both ([`UPDATE_KEYS`]), and puts it in place. The signature
+//! is what proves the package is ours: the index and the files come from the
+//! same server, so a hash alone only proves they agree. On Windows the
 //! installer it ran silently does that; an AppImage replaces its own file;
 //! a `Washoi.app` swaps its bundle. Then the new game starts.
 //!
@@ -16,6 +19,8 @@ use std::sync::Mutex;
 use std::sync::atomic::AtomicBool;
 use std::time::Duration;
 
+use base64::Engine as _;
+use ring::signature::{ED25519, UnparsedPublicKey};
 use serde_json::Value;
 use sha2::{Digest, Sha256};
 use shagger::network::client::http_fetch::{FetchEvent, HttpFetch, fetch_at_most};
@@ -28,6 +33,16 @@ const DOWNLOAD_PREFIX: &str = "https://washoi.net/client/";
 const MAX_INDEX: usize = 64 * 1024;
 /// The largest installer the game will download.
 const MAX_INSTALLER: u64 = 512 * 1024 * 1024;
+/// The release workflow's update-signing public keys (raw Ed25519, 32
+/// bytes): the secret `UPDATE_SIGNING_KEY` signs each package's
+/// [`signed_message`]. More than one while a key is being replaced.
+pub const UPDATE_KEYS: &[[u8; 32]] = &[UPDATE_KEY];
+/// `myfRIxIWo37fdl4SZ9Qt8FPaP+2J3pOXwUp+lvR7sjs=`, the 2026-11 release key
+/// (`openssl pkey -pubout -outform DER | tail -c 32 | base64`).
+const UPDATE_KEY: [u8; 32] = [
+    0x9b, 0x27, 0xd1, 0x23, 0x12, 0x16, 0xa3, 0x7e, 0xdf, 0x76, 0x5e, 0x12, 0x67, 0xd4, 0x2d, 0xf0, 0x53, 0xda, 0x3f,
+    0xed, 0x89, 0xde, 0x93, 0x97, 0xc1, 0x4a, 0x7e, 0x96, 0xf4, 0x7b, 0xb2, 0x3b,
+];
 
 /// A newer game, and its package for this machine.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -119,6 +134,8 @@ pub struct File {
     pub url: String,
     pub size: Option<u64>,
     pub sha256: Option<String>,
+    /// The Ed25519 signature on [`signed_message`], base64.
+    pub sig: Option<String>,
 }
 
 /// Reads the index; `None` when it is not one.
@@ -144,6 +161,7 @@ pub fn parse_latest(body: &[u8]) -> Option<Latest> {
                         url: text("url")?,
                         size: f.get("size").and_then(Value::as_u64),
                         sha256: text("sha256"),
+                        sig: text("sig"),
                     })
                 })
                 .collect()
@@ -201,10 +219,22 @@ pub struct Installer {
     pub url: String,
     pub size: u64,
     pub sha256: String,
+    /// As the package's file name, which carries its version.
+    pub name: String,
+    pub signature: [u8; 64],
+}
+
+/// What the release workflow signs for each package: its name (and so its
+/// version), size and SHA-256, so a signed older package cannot stand in for
+/// a newer one.
+#[must_use]
+pub fn signed_message(name: &str, size: u64, sha256: &str) -> String {
+    format!("washoi-update-v1\n{name}\n{size}\n{sha256}\n")
 }
 
 /// The package for this machine ending in `suffix` when `latest` is newer;
-/// `None` without one, or without the size and hash to check it by.
+/// `None` without one, or without the size, hash and signature to check it
+/// by, or when its name is not the version's package at its address.
 #[must_use]
 pub fn installer(latest: &Latest, current: &str, os: &str, arch: &str, suffix: &str) -> Option<Installer> {
     if !newer(&latest.version, current) {
@@ -215,17 +245,27 @@ pub fn installer(latest: &Latest, current: &str, os: &str, arch: &str, suffix: &
         .files
         .iter()
         .find(|f| f.platform == platform && f.name.ends_with(suffix) && f.url.ends_with(suffix) && safe_url(&f.url))?;
+    if !file.name.starts_with(&format!("washoi-{}-", latest.version)) || !file.url.ends_with(&format!("/{}", file.name))
+    {
+        return None;
+    }
     let size = file.size.filter(|s| *s > 0 && *s <= MAX_INSTALLER)?;
     let sha256 = file
         .sha256
         .as_deref()
         .filter(|h| h.len() == 64 && h.bytes().all(|b| b.is_ascii_hexdigit()))?
         .to_ascii_lowercase();
+    let signature = base64::engine::general_purpose::STANDARD
+        .decode(file.sig.as_deref()?)
+        .ok()
+        .and_then(|b| <[u8; 64]>::try_from(b).ok())?;
     Some(Installer {
         version: latest.version.clone(),
         url: file.url.clone(),
         size,
         sha256,
+        name: file.name.clone(),
+        signature,
     })
 }
 
@@ -314,7 +354,7 @@ pub fn self_update(
         },
     )
     .map_err(|e| format!("update download: {e:?}"))?;
-    verify(&body, &update)?;
+    verify(&body, &update, UPDATE_KEYS)?;
     let path = match target {
         // Beside the file it replaces, so the swap is one rename.
         Target::AppImage(image) => {
@@ -331,14 +371,22 @@ pub fn self_update(
     Ok(Some(path))
 }
 
-/// The download is the file the site recorded.
-fn verify(body: &[u8], update: &Installer) -> Result<(), String> {
+/// The download is the file the site recorded, and one of `keys` signed it.
+fn verify(body: &[u8], update: &Installer, keys: &[[u8; 32]]) -> Result<(), String> {
     if body.len() as u64 != update.size {
         return Err(format!("update: {} bytes, not {}", body.len(), update.size));
     }
     let hash: String = Sha256::digest(body).iter().map(|b| format!("{b:02x}")).collect();
     if hash != update.sha256 {
         return Err("update: the download does not match its SHA-256".into());
+    }
+    let message = signed_message(&update.name, update.size, &update.sha256);
+    if !keys.iter().any(|key| {
+        UnparsedPublicKey::new(&ED25519, key)
+            .verify(message.as_bytes(), &update.signature)
+            .is_ok()
+    }) {
+        return Err("update: the download is not signed by the release key".into());
     }
     Ok(())
 }
@@ -495,6 +543,17 @@ mod tests {
         ]}"#;
 
     const SHA: &str = "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08";
+    /// Any 64 bytes, base64: what the index needs to carry a signature.
+    const SIG: &str = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA==";
+
+    /// A throwaway signing key and its public half.
+    fn test_key() -> (ring::signature::Ed25519KeyPair, [u8; 32]) {
+        use ring::signature::KeyPair as _;
+        let pkcs8 = ring::signature::Ed25519KeyPair::generate_pkcs8(&ring::rand::SystemRandom::new()).unwrap();
+        let pair = ring::signature::Ed25519KeyPair::from_pkcs8(pkcs8.as_ref()).unwrap();
+        let public = <[u8; 32]>::try_from(pair.public_key().as_ref()).unwrap();
+        (pair, public)
+    }
 
     fn with_installer(file: &str) -> Latest {
         parse_latest(format!(r#"{{"version":"0.3.0","files":[{file}]}}"#).as_bytes()).unwrap()
@@ -542,12 +601,12 @@ mod tests {
     fn the_installer_needs_its_name_size_and_hash() {
         let good = format!(
             r#"{{"platform":"windows-x86_64","name":"washoi-0.3.0-windows-x86_64-setup.exe",
-               "url":"https://washoi.net/client/0.3.0/washoi-0.3.0-windows-x86_64-setup.exe","size":4,"sha256":"{}"}}"#,
+               "url":"https://washoi.net/client/0.3.0/washoi-0.3.0-windows-x86_64-setup.exe","size":4,"sha256":"{}","sig":"{SIG}"}}"#,
             SHA.to_uppercase()
         );
         let latest = with_installer(&format!(
             r#"{{"platform":"windows-x86_64","name":"washoi-0.3.0-windows-x86_64.zip",
-               "url":"https://washoi.net/client/0.3.0/washoi-0.3.0-windows-x86_64.zip","size":4,"sha256":"{SHA}"}},{good}"#
+               "url":"https://washoi.net/client/0.3.0/washoi-0.3.0-windows-x86_64.zip","size":4,"sha256":"{SHA}","sig":"{SIG}"}},{good}"#
         ));
         let found = installer(&latest, "0.2.0", "windows", "x86_64", "-setup.exe").unwrap();
         assert_eq!(
@@ -563,6 +622,14 @@ mod tests {
             good.replace(r#""size":4"#, r#""size":0"#),
             good.replace(&SHA.to_uppercase(), "00"),
             good.replace("https://washoi.net/", "https://evil.example/"),
+            good.replace(&format!(r#","sig":"{SIG}""#), ""),
+            good.replace(SIG, "AAAA"),
+            // An older version's package, or another file at its address.
+            good.replace(
+                "washoi-0.3.0-windows-x86_64-setup.exe\",",
+                "washoi-0.2.5-windows-x86_64-setup.exe\",",
+            ),
+            good.replace("0.3.0/washoi-0.3.0-windows", "0.3.0/old-washoi-0.3.0-windows"),
         ] {
             assert_eq!(
                 installer(&with_installer(&broken), "0.2.0", "windows", "x86_64", "-setup.exe"),
@@ -576,7 +643,7 @@ mod tests {
     fn each_target_takes_its_own_package() {
         let file = |platform: &str, name: &str| {
             format!(
-                r#"{{"platform":"{platform}","name":"{name}","url":"https://washoi.net/client/0.3.0/{name}","size":4,"sha256":"{SHA}"}}"#
+                r#"{{"platform":"{platform}","name":"{name}","url":"https://washoi.net/client/0.3.0/{name}","size":4,"sha256":"{SHA}","sig":"{SIG}"}}"#
             )
         };
         let latest = with_installer(
@@ -602,16 +669,50 @@ mod tests {
     }
 
     #[test]
-    fn the_download_must_match_the_index() {
-        let update = Installer {
+    fn the_download_must_match_the_index_and_its_signature() {
+        let (pair, public) = test_key();
+        let (_, other) = test_key();
+        let name = "washoi-0.3.0-windows-x86_64-setup.exe";
+        let sign = |message: &str| <[u8; 64]>::try_from(pair.sign(message.as_bytes()).as_ref()).unwrap();
+        let mut update = Installer {
             version: "0.3.0".into(),
             url: String::new(),
             size: 4,
             sha256: SHA.into(),
+            name: name.into(),
+            signature: sign(&signed_message(name, 4, SHA)),
         };
-        assert!(verify(b"test", &update).is_ok());
-        assert!(verify(b"tess", &update).is_err());
-        assert!(verify(b"tests", &update).is_err());
+        assert!(verify(b"test", &update, &[public]).is_ok());
+        assert!(verify(b"test", &update, &[other, public]).is_ok());
+        assert!(verify(b"tess", &update, &[public]).is_err());
+        assert!(verify(b"tests", &update, &[public]).is_err());
+        assert!(verify(b"test", &update, &[other]).is_err());
+        assert!(verify(b"test", &update, &[]).is_err());
+        // A signature on an older package's name does not carry over.
+        update.signature = sign(&signed_message("washoi-0.2.5-windows-x86_64-setup.exe", 4, SHA));
+        assert!(verify(b"test", &update, &[public]).is_err());
+    }
+
+    #[test]
+    fn a_release_key_is_built_in() {
+        assert!(!UPDATE_KEYS.is_empty());
+        assert!(
+            UPDATE_KEYS.iter().all(|key| key != &[0; 32]),
+            "UPDATE_KEY is still the placeholder"
+        );
+        let written = base64::engine::general_purpose::STANDARD
+            .decode("myfRIxIWo37fdl4SZ9Qt8FPaP+2J3pOXwUp+lvR7sjs=")
+            .unwrap();
+        assert_eq!(written, UPDATE_KEY);
+    }
+
+    #[test]
+    fn the_signed_message_is_what_the_release_workflow_signs() {
+        // .github/workflows/release.yml: printf 'washoi-update-v1\n%s\n%s\n%s\n'
+        assert_eq!(
+            signed_message("washoi-1.0.0-linux-x86_64.AppImage", 12, "ab"),
+            "washoi-update-v1\nwashoi-1.0.0-linux-x86_64.AppImage\n12\nab\n"
+        );
     }
 
     #[test]

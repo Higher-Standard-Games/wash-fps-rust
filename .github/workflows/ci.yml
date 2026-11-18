@@ -22,6 +22,9 @@ jobs:
       # cpal's ALSA backend (RUST.md 22.7) links libasound.
       - run: sudo apt-get update && sudo apt-get install -y libasound2-dev libudev-dev
       - uses: Swatinem/rust-cache@v2
+      # The release builds with --locked: a Cargo.lock that names a local
+      # engine path instead of the pinned revision fails here, not at a tag.
+      - run: cargo fetch --locked
       - run: cargo fmt --all --check
       - run: cargo clippy --all-targets
       - run: cargo test

@@ -215,6 +215,30 @@ jobs:
           path: dist
           pattern: washoi-*
           merge-multiple: true
+      # The game updates itself only to a package this key signed
+      # (src/update_check.rs, UPDATE_KEYS): each package gets <name>.sig, the
+      # raw Ed25519 signature on update_check::signed_message, which the
+      # site's deploy puts in latest.json. Without the secret the release
+      # stops here, since no installed game would take it.
+      - name: Sign the packages for the self-update
+        env:
+          UPDATE_SIGNING_KEY: ${{ secrets.UPDATE_SIGNING_KEY }}
+        run: |
+          if [ -z "$UPDATE_SIGNING_KEY" ]; then
+            echo "::error::a release needs the secret UPDATE_SIGNING_KEY (an Ed25519 PEM key; docs/research/RUST.md, \"Beta13 papercuts, second round\")"
+            exit 1
+          fi
+          umask 077
+          printf '%s\n' "$UPDATE_SIGNING_KEY" > "$RUNNER_TEMP/update.pem"
+          for file in dist/washoi-*; do
+            name=$(basename "$file")
+            size=$(stat -c %s "$file")
+            sha=$(sha256sum "$file" | cut -d' ' -f1)
+            printf 'washoi-update-v1\n%s\n%s\n%s\n' "$name" "$size" "$sha" > "$RUNNER_TEMP/message"
+            openssl pkeyutl -sign -inkey "$RUNNER_TEMP/update.pem" -rawin -in "$RUNNER_TEMP/message" -out "$file.sig"
+            openssl pkeyutl -verify -inkey "$RUNNER_TEMP/update.pem" -rawin -in "$RUNNER_TEMP/message" -sigfile "$file.sig"
+          done
+          rm -f "$RUNNER_TEMP/update.pem"
       - uses: softprops/action-gh-release@v3
         with:
           draft: true

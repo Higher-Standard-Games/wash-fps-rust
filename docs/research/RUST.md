@@ -2731,6 +2731,45 @@ whole areas rather than single items. 0.2.0 closes them in two steps.
 
 ## 24. Progress log
 
+### Beta13 papercuts, second round (November 18, 2026)
+
+The four proposals in `v1.0.0-beta13-papercuts.md`, built:
+
+**Signed updates.** The game updates itself only to a package that the
+release workflow signed (`update_check::UPDATE_KEYS`). The `release` job
+signs every package with the secret `UPDATE_SIGNING_KEY`, an Ed25519 PEM key,
+over `update_check::signed_message`: `washoi-update-v1`, the package's
+name (and so its version), its size and its SHA-256, one per line. It
+attaches the raw 64 bytes as `<name>.sig`. wash-fps' `client-release.sh`
+copies each signature into `latest.json` as `sig` (base64). The client
+checks the size, the hash and then the signature with ring. It also checks
+that the package's name starts with the index's version and is the file at
+its address, so a signed older package cannot be offered as a newer one.
+An entry without `sig` is not a self-update; the menu still offers the
+download page. A release without the secret fails at signing, since no
+installed game would take it. To replace the key, add the new public key
+to `UPDATE_KEYS` one release before signing with it. Unit tests sign with
+a throwaway key; openssl's signatures were checked to verify with ring.
+
+**`r_frame_latency`** (1 to 3, default 2) is the swapchain's
+`desired_maximum_frame_latency`. 1 shows each frame about one frame
+sooner, at some throughput on a busy GPU. A screen's window reads it when
+it opens; a match applies a change at once. The bench keeps the default.
+
+**Levelshots and demo downloads off the game thread.** `Levelshot::start`
+reads the cache, fetches, decodes and saves on a thread of its own and
+hands back the image. A 2560x1440 levelshot took about 40 ms to decode on
+the game thread, a dropped frame or two for each map card; starting one now
+takes 0.05 ms. `DemoDownload` checks a saved recording, fetches it, checks
+what arrived and saves it on its thread too, with progress over a channel.
+
+**WebSocket cap** (shagger): both client sockets accept at most 4 MiB per
+message and frame (`network::client::tls::MAX_MESSAGE_BYTES`), not 64 MiB.
+
+Also: CI's `check` job runs `cargo fetch --locked`, as the release does.
+main's `Cargo.lock` had been committed naming a local shagger path, which
+CI's unlocked build accepts but the release's `--locked` build refuses.
+
 ### Staging catch-up: the campaign's story and finale (November 17, 2026)
 
 Ported from SHAG staging 6fa6c61 (fps 8c9f6fe):

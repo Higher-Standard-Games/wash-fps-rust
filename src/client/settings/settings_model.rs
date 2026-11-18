@@ -1221,6 +1221,14 @@ pub fn register_client_cvars(cvars: &mut Cvars) {
         1,
         "Start the game in borderless fullscreen (Alt+Enter switches and is remembered)",
     );
+    // Native only: the swapchain's frame queue (`window::frame_latency`).
+    cvars.register(
+        "r_frame_latency",
+        2,
+        CvarOptions::describe("Frames the GPU may queue before showing them (1 = lowest input latency, 2 = smoothest)")
+            .range(1.0, 3.0)
+            .kind(CvarType::Int),
+    );
     // SHAG core/FpsDisplaySettings.ts.
     int_flag(cvars, "show_fps", 1, "Show the FPS counter");
     // SHAG network/client/NetGraph.ts.

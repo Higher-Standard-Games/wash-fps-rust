@@ -3,9 +3,11 @@
 //! `DemoService.demoBaseUrl` and the file it lands in.
 
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, mpsc};
 use std::time::Duration;
 
-use shagger::network::client::http_fetch::{FetchError, FetchEvent, HttpFetch};
+use shagger::network::client::http_fetch::{FetchError, fetch_at_most};
 use shagger::shared::demo::demo_reader::DemoReader;
 
 /// `DEMO_DOWNLOAD_IDLE_MS`: file transfers need a longer deadline than the
@@ -80,12 +82,21 @@ pub enum DemoDownloadState {
     Failed(String),
 }
 
-/// `downloadDemo` for one recording, saved into the cache.
+/// `downloadDemo` for one recording, saved into the cache. Checking a saved
+/// copy, the transfer, the check of what arrived and the save all run on a
+/// thread of their own: a recording is megabytes, and reading it on the game
+/// thread held up the menu's frame.
 #[derive(Debug)]
 pub struct DemoDownload {
     pub filename: String,
-    fetch: Option<HttpFetch>,
+    worker: Option<Worker>,
     pub state: DemoDownloadState,
+}
+
+#[derive(Debug)]
+struct Worker {
+    states: mpsc::Receiver<DemoDownloadState>,
+    cancel: Arc<AtomicBool>,
 }
 
 /// Whether `bytes` open as a demo: its header and index read.
@@ -97,36 +108,32 @@ impl DemoDownload {
     /// Starts fetching `filename` from `base`, or finds it already saved.
     #[must_use]
     pub fn start(base: &str, filename: &str) -> Self {
-        let Some(name) = safe_name(filename) else {
-            return Self {
-                filename: filename.to_owned(),
-                fetch: None,
-                state: DemoDownloadState::Failed("That recording's name is not a demo file.".to_owned()),
-            };
+        let failed = |why: &str| Self {
+            filename: filename.to_owned(),
+            worker: None,
+            state: DemoDownloadState::Failed(why.to_owned()),
         };
-        // A saved copy is used only if it reads as a demo; a damaged one
-        // goes, and the recording is fetched again.
-        if let Some(path) = demo_cache_dir().map(|d| d.join(name))
-            && path.is_file()
-            && (std::fs::read(&path).is_ok_and(|b| reads_as_demo(&b)) || {
-                let _ = std::fs::remove_file(&path);
-                false
-            })
-        {
-            return Self {
-                filename: filename.to_owned(),
-                fetch: None,
-                state: DemoDownloadState::Ready(path),
-            };
+        let Some(name) = safe_name(filename) else {
+            return failed("That recording's name is not a demo file.");
+        };
+        let (send, states) = mpsc::channel();
+        let cancel = Arc::new(AtomicBool::new(false));
+        let url = format!("{base}/{name}");
+        let (name, stop) = (name.to_owned(), cancel.clone());
+        let spawned = std::thread::Builder::new()
+            .name("demo download".to_owned())
+            .spawn(move || {
+                let state = download(&url, &name, &stop, &mut |received, total| {
+                    let _ = send.send(DemoDownloadState::Loading { received, total });
+                });
+                let _ = send.send(state);
+            });
+        if spawned.is_err() {
+            return failed("Could not start the download.");
         }
         Self {
             filename: filename.to_owned(),
-            fetch: Some(HttpFetch::start_at_most(
-                &format!("{base}/{name}"),
-                DEMO_DOWNLOAD_IDLE,
-                DEMO_DOWNLOAD_TOTAL,
-                Some(MAX_DEMO_BYTES),
-            )),
+            worker: Some(Worker { states, cancel }),
             state: DemoDownloadState::Loading {
                 received: 0,
                 total: None,
@@ -136,49 +143,81 @@ impl DemoDownload {
 
     /// Takes what the transfer reported since the last frame.
     pub fn poll(&mut self) {
-        let Some(fetch) = &self.fetch else { return };
-        while let Some(event) = fetch.poll() {
-            match event {
-                FetchEvent::Progress { received, total } => {
-                    self.state = DemoDownloadState::Loading { received, total };
-                }
-                FetchEvent::Done(bytes) => {
-                    self.fetch = None;
-                    // An error page sent as 200, or a cut-short body, is not
-                    // kept: it would fail every later Play.
-                    if !reads_as_demo(&bytes) {
-                        self.state = DemoDownloadState::Failed("The recording arrived damaged. Try again.".to_owned());
+        let Some(worker) = &self.worker else { return };
+        loop {
+            match worker.states.try_recv() {
+                Ok(state) => {
+                    let done = !matches!(state, DemoDownloadState::Loading { .. });
+                    self.state = state;
+                    if done {
+                        self.worker = None;
                         return;
                     }
-                    self.state = match self.save(&bytes) {
-                        Ok(path) => DemoDownloadState::Ready(path),
-                        Err(e) => DemoDownloadState::Failed(format!("Could not save the recording: {e}")),
-                    };
-                    return;
                 }
-                FetchEvent::Failed(error) => {
-                    self.fetch = None;
-                    self.state = DemoDownloadState::Failed(download_message(&error));
+                Err(mpsc::TryRecvError::Empty) => return,
+                Err(mpsc::TryRecvError::Disconnected) => {
+                    self.worker = None;
+                    self.state = DemoDownloadState::Failed("The download stopped.".to_owned());
                     return;
                 }
             }
         }
     }
 
-    fn save(&self, bytes: &[u8]) -> std::io::Result<PathBuf> {
-        let dir = demo_cache_dir().ok_or_else(|| std::io::Error::other("no config folder"))?;
-        std::fs::create_dir_all(&dir)?;
-        let path = dir.join(&self.filename);
-        shagger::core::atomic_file::write_atomic(&path, bytes)?;
-        Ok(path)
-    }
-
     /// `demoLoadCancelled`.
     pub fn cancel(&mut self) {
-        if let Some(fetch) = self.fetch.take() {
-            fetch.cancel();
+        if let Some(worker) = self.worker.take() {
+            worker.cancel.store(true, Ordering::Relaxed);
         }
         self.state = DemoDownloadState::Failed(download_message(&FetchError::Cancelled));
+    }
+}
+
+/// The download thread: a saved copy that reads as a demo, or the recording
+/// fetched, checked and saved.
+fn download(
+    url: &str,
+    name: &str,
+    cancel: &AtomicBool,
+    progress: &mut dyn FnMut(u64, Option<u64>),
+) -> DemoDownloadState {
+    // A saved copy is used only if it reads as a demo; a damaged one goes,
+    // and the recording is fetched again.
+    let saved = demo_cache_dir().map(|d| d.join(name));
+    if let Some(path) = &saved
+        && path.is_file()
+    {
+        if std::fs::read(path).is_ok_and(|b| reads_as_demo(&b)) {
+            return DemoDownloadState::Ready(path.clone());
+        }
+        let _ = std::fs::remove_file(path);
+    }
+    let bytes = match fetch_at_most(
+        url,
+        DEMO_DOWNLOAD_IDLE,
+        DEMO_DOWNLOAD_TOTAL,
+        Some(MAX_DEMO_BYTES),
+        cancel,
+        progress,
+    ) {
+        Ok(bytes) => bytes,
+        Err(error) => return DemoDownloadState::Failed(download_message(&error)),
+    };
+    // An error page sent as 200, or a cut-short body, is not kept: it would
+    // fail every later Play.
+    if !reads_as_demo(&bytes) {
+        return DemoDownloadState::Failed("The recording arrived damaged. Try again.".to_owned());
+    }
+    let Some(path) = saved else {
+        return DemoDownloadState::Failed("Could not save the recording: no config folder".to_owned());
+    };
+    let saved = path
+        .parent()
+        .map_or(Ok(()), std::fs::create_dir_all)
+        .and_then(|()| shagger::core::atomic_file::write_atomic(&path, &bytes));
+    match saved {
+        Ok(()) => DemoDownloadState::Ready(path),
+        Err(e) => DemoDownloadState::Failed(format!("Could not save the recording: {e}")),
     }
 }
 

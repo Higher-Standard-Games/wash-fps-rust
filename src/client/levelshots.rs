@@ -5,10 +5,11 @@
 
 use std::collections::HashMap;
 use std::path::PathBuf;
-use std::sync::Arc;
+use std::sync::atomic::AtomicBool;
+use std::sync::{Arc, mpsc};
 use std::time::Duration;
 
-use shagger::network::client::http_fetch::{FetchEvent, HttpFetch};
+use shagger::network::client::http_fetch::fetch_at_most;
 use shagger::ui::egui_layer::egui;
 
 const LEVELSHOT_IDLE: Duration = Duration::from_secs(5);
@@ -50,10 +51,12 @@ pub fn decode_levelshot(bytes: &[u8]) -> Option<egui::ColorImage> {
     Some(egui::ColorImage::from_rgba_unmultiplied(size, image.as_raw()))
 }
 
-/// The levelshot: from the cache, or fetched and then kept.
+/// The levelshot: from the cache, or fetched and then kept. Reading,
+/// fetching and decoding run on a thread of their own, so a menu that asks
+/// for many maps at once does not hold up a frame.
 pub enum Levelshot {
     None,
-    Fetching(String, HttpFetch),
+    Loading(mpsc::Receiver<Option<egui::ColorImage>>),
     Ready(Arc<egui::ColorImage>),
 }
 
@@ -65,51 +68,57 @@ impl Levelshot {
         if !safe_map(map) {
             return Self::None;
         }
-        if let Some(image) = levelshot_cache(map)
-            .and_then(|p| std::fs::read(p).ok())
-            .and_then(|b| decode_levelshot(&b))
-        {
-            return Self::Ready(Arc::new(image));
-        }
-        match base {
-            Some(base) => Self::Fetching(
-                map.to_owned(),
-                HttpFetch::start_at_most(
-                    &format!("{base}/{map}.jpg"),
-                    LEVELSHOT_IDLE,
-                    LEVELSHOT_TOTAL,
-                    Some(MAX_LEVELSHOT),
-                ),
-            ),
-            None => Self::None,
+        let map = map.to_owned();
+        let url = base.map(|base| format!("{base}/{map}.jpg"));
+        let (send, receive) = mpsc::channel();
+        let spawned = std::thread::Builder::new()
+            .name(format!("levelshot {map}"))
+            .spawn(move || {
+                let _ = send.send(load(&map, url.as_deref()));
+            });
+        match spawned {
+            Ok(_) => Self::Loading(receive),
+            Err(_) => Self::None,
         }
     }
 
     pub fn poll(&mut self) {
-        let Self::Fetching(map, fetch) = self else { return };
-        while let Some(event) = fetch.poll() {
-            match event {
-                FetchEvent::Progress { .. } => {}
-                FetchEvent::Done(bytes) => {
-                    let Some(image) = decode_levelshot(&bytes) else {
-                        *self = Self::None;
-                        return;
-                    };
-                    if let Some(path) = levelshot_cache(map) {
-                        let _ = path.parent().map(std::fs::create_dir_all);
-                        let _ = std::fs::write(path, &bytes);
-                    }
-                    *self = Self::Ready(Arc::new(image));
-                    return;
-                }
-                // A map with no levelshot keeps the stage's own gradient.
-                FetchEvent::Failed(_) => {
-                    *self = Self::None;
-                    return;
-                }
-            }
-        }
+        let Self::Loading(receive) = self else { return };
+        *self = match receive.try_recv() {
+            Ok(Some(image)) => Self::Ready(Arc::new(image)),
+            // A map with no levelshot keeps the stage's own gradient.
+            Ok(None) | Err(mpsc::TryRecvError::Disconnected) => Self::None,
+            Err(mpsc::TryRecvError::Empty) => return,
+        };
     }
+}
+
+/// The levelshot thread: the cached file, or the site's, kept once it decodes.
+fn load(map: &str, url: Option<&str>) -> Option<egui::ColorImage> {
+    let cache = levelshot_cache(map);
+    if let Some(image) = cache
+        .as_ref()
+        .and_then(|p| std::fs::read(p).ok())
+        .and_then(|b| decode_levelshot(&b))
+    {
+        return Some(image);
+    }
+    let never = AtomicBool::new(false);
+    let bytes = fetch_at_most(
+        url?,
+        LEVELSHOT_IDLE,
+        LEVELSHOT_TOTAL,
+        Some(MAX_LEVELSHOT),
+        &never,
+        &mut |_, _| {},
+    )
+    .ok()?;
+    let image = decode_levelshot(&bytes)?;
+    if let Some(path) = cache {
+        let _ = path.parent().map(std::fs::create_dir_all);
+        let _ = shagger::core::atomic_file::write_atomic(&path, &bytes);
+    }
+    Some(image)
 }
 
 /// Every map's levelshot the lobby has asked for, as textures.

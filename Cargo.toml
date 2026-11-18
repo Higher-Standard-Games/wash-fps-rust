@@ -14,7 +14,7 @@ repository = "https://github.com/Higher-Standard-Games/wash-fps-rust"
 #   [patch."https://github.com/Higher-Standard-Games/shagger"]
 #   shagger = { path = "../shagger/crates/shagger" }
 #   shagger_shared = { path = "../shagger/crates/shagger_shared" }
-shagger = { git = "https://github.com/Higher-Standard-Games/shagger", rev = "e3d60e47fa2032f550a4362aeb35cd2caa5fc10b" }
+shagger = { git = "https://github.com/Higher-Standard-Games/shagger", rev = "3aa8f5ed2e00dbd47b50ec271c143509fba67b06" }
 
 # The window and its events for `washoi view` (RUST.md 12): winit 0.30, the
 # release wgpu 30 and egui 0.37 work with. Without winit's drawn Wayland
@@ -28,6 +28,10 @@ serde = "1"
 serde_json = "1"
 # The self-update's check of the downloaded installer (update_check).
 sha2 = "0.10"
+# The release workflow's Ed25519 signature on each package
+# (update_check::signed_message); ring and base64 already come with rustls.
+ring = "0.17"
+base64 = "0.23"
 # The lobby chat's times on the player's clock (`clockTime`), from the
 # system's time zone, in safe Rust.
 jiff = "0.2"
