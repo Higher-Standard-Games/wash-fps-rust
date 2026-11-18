@@ -26,6 +26,9 @@ use shagger::ui::egui_layer::egui;
 use egui::{Color32, FontFamily, FontId, Painter, Pos2, Rect, Shape, Stroke, pos2, vec2};
 
 use super::campaign_story::{CampaignCard, FINALE_CARD, campaign_story};
+use crate::client::campaign_board_pane::{
+    CampaignBoard, CampaignBoardPane, CampaignBoardState, board_panel, read_board,
+};
 use crate::client::washoi_style::display_family;
 
 /// `GAMETYPE_NAMES`: the game modes by their full names.
@@ -309,6 +312,10 @@ pub enum CampaignAction {
     Start(CampaignMissionInfo),
     /// `readCard`: read a comic card panel by panel, starting nothing.
     Read(CampaignCard, &'static str),
+    /// `openBoard`: the Leaderboard key, pressed with the board closed; the
+    /// panel asks the lobby and answers with `board_loading` or
+    /// `board_failed`.
+    OpenBoard,
 }
 
 /// `CampaignView`.
@@ -333,6 +340,16 @@ pub struct CampaignView {
     /// The finale as a finished campaign shows it, scrolled into view: for
     /// screenshots (`--page campaign/complete`).
     preview_finale: bool,
+    /// The campaign's leaderboard, in place of the operations while it is
+    /// open.
+    board_open: bool,
+    board: Option<CampaignBoardState>,
+    /// The request the board waits for, and when it went: a late answer for
+    /// an earlier opening is dropped.
+    board_request: Option<(String, std::time::Instant)>,
+    board_pane: CampaignBoardPane,
+    /// The account on this computer, for "You" on the boards.
+    you: Option<String>,
 }
 
 impl CampaignView {
@@ -361,14 +378,70 @@ impl CampaignView {
         reason.clone_into(&mut self.reason);
     }
 
-    /// `progressHint`: "2 / 8 cleared", for the rail key.
+    /// The account on this computer, for "You" on the boards.
+    pub fn set_account(&mut self, id: Option<String>) {
+        self.you = id;
+    }
+
+    /// `openBoard`'s request went out as `request`.
+    pub fn board_loading(&mut self, request: String) {
+        self.board_open = true;
+        self.board = Some(CampaignBoardState::Loading);
+        self.board_request = Some((request, std::time::Instant::now()));
+    }
+
+    /// `openBoard` could not ask: the lobby is offline or runs no campaign.
+    pub fn board_failed(&mut self, reason: &str) {
+        self.board_open = true;
+        self.board = Some(CampaignBoardState::Failed(reason.to_owned()));
+        self.board_request = None;
+    }
+
+    /// `closeBoard`: back to the operations.
+    pub fn close_board(&mut self) {
+        self.board_open = false;
+        self.board_request = None;
+    }
+
     #[must_use]
-    pub fn progress_hint(&self) -> String {
-        let length = self.state.as_ref().map_or(0, |s| s.length);
-        if length == 0 {
-            return "Story".into();
+    pub fn board_open(&self) -> bool {
+        self.board_open
+    }
+
+    /// The lobby's `campaign:board` or `campaign:board:error`.
+    pub fn on_board_message(&mut self, kind: &str, message: &serde_json::Value) {
+        let Some((request, _)) = &self.board_request else {
+            return;
+        };
+        if message.get("requestId").and_then(serde_json::Value::as_str) != Some(request.as_str()) {
+            return;
         }
-        format!("{} / {length} cleared", self.cleared_count())
+        self.board_request = None;
+        self.board = Some(match (kind, read_board(message)) {
+            ("campaign:board", Some(board)) => CampaignBoardState::Ready(board),
+            ("campaign:board", None) => CampaignBoardState::Failed("Campaign board: unreadable answer".into()),
+            _ => {
+                let reason = message
+                    .get("reason")
+                    .and_then(serde_json::Value::as_str)
+                    .unwrap_or("unavailable");
+                CampaignBoardState::Failed(format!("Campaign board: {reason}"))
+            }
+        });
+    }
+
+    /// The lobby went away while the board waited.
+    pub fn board_disconnected(&mut self) {
+        if self.board_request.take().is_some() {
+            self.board = Some(CampaignBoardState::Failed("Lobby disconnected".into()));
+        }
+    }
+
+    /// For screenshots: the board open, as if the lobby had answered.
+    pub fn seed_board(&mut self, board: CampaignBoard) {
+        self.board_open = true;
+        self.board_request = None;
+        self.board = Some(CampaignBoardState::Ready(board));
     }
 
     /// `showCurrent`: bring the mission to play next into view.
@@ -515,6 +588,16 @@ impl CampaignView {
             (content.width()).min(size * 0.6 * 72.0 + 36.0),
         );
         let mut top = box_.bottom() + 18.0;
+        if let Some(a) = self.board_key(ui, content, box_.bottom()) {
+            return Some(a);
+        }
+        if self.board_open {
+            self.board_ui(
+                ui,
+                Rect::from_min_max(pos2(content.left(), box_.bottom() + 22.0), content.max),
+            );
+            return None;
+        }
         if !self.startable && !self.reason.is_empty() {
             let notice = text(&painter, &self.reason, 14.0, body(), gold(), 0.0);
             let h = notice.size().y;
@@ -526,6 +609,141 @@ impl CampaignView {
             pos2(content.right() + 30.0, content.bottom()),
         );
         self.list(ui, list, time)
+    }
+
+    /// `.campaign__board-key`: the Leaderboard key at the head's far end,
+    /// its foot level with the opening's; gold lined like the rail's
+    /// Campaign key, pressed in while the board is open.
+    fn board_key(&mut self, ui: &mut egui::Ui, content: Rect, bottom: f32) -> Option<CampaignAction> {
+        let painter = ui.painter().clone();
+        let size = (screen_w(ui) * 0.011).clamp(15.0, 21.0);
+        let label = "LEADERBOARD";
+        let galley = text(&painter, label, size, display_family(), ink(), size * 0.07);
+        let h = (size * 3.0).max(52.0);
+        let w = 32.0 + galley.size().x + 40.0;
+        let rect = Rect::from_min_size(pos2(content.right() - 18.0 - w, bottom - h), vec2(w, h));
+        let face = |top: f32, mid: f32, bottom: f32| KeyLook {
+            face: vec![
+                (0.0, hsl(52.0, 100.0, top)),
+                (0.45, hsl(46.0, 100.0, mid)),
+                (1.0, hsl(40.0, 98.0, bottom)),
+            ],
+            ..KeyLook::gold()
+        };
+        let mut key =
+            RaisedKey::new("campaign-board-key", rect, face(66.0, 57.0, 47.0)).hover(face(74.0, 64.0, 54.0), -0.35);
+        if self.board_open {
+            key = key.rest_press(0.62).hover(face(74.0, 64.0, 54.0), 0.62);
+        }
+        let face = key.show(ui);
+        // Scanlines over the gold, then the italic label on its pink shadow.
+        let clip = painter.with_clip_rect(face.rect.intersect(painter.clip_rect()));
+        let mut y = face.rect.top();
+        while y < face.rect.bottom() {
+            clip.rect_filled(
+                Rect::from_min_max(pos2(face.rect.left(), y), pos2(face.rect.right(), y + 2.0)),
+                0.0,
+                hsla(40.0, 100.0, 30.0, 0.14),
+            );
+            y += 5.0;
+        }
+        let italic = |color: Color32| {
+            let mut job = egui::text::LayoutJob::default();
+            job.append(
+                label,
+                0.0,
+                egui::TextFormat {
+                    font_id: FontId::new(size, display_family()),
+                    color,
+                    italics: true,
+                    extra_letter_spacing: size * 0.07,
+                    ..Default::default()
+                },
+            );
+            painter.layout_job(job)
+        };
+        let shadow = hsla(322.0, 95.0, 40.0, 0.7);
+        let g = italic(face.text);
+        let at = pos2(face.rect.left() + 32.0, face.rect.center().y - g.size().y / 2.0);
+        painter.galley(at + vec2(0.06 * size, 0.07 * size), italic(shadow), shadow);
+        painter.galley(at, g, face.text);
+        if face.clicked {
+            if self.board_open {
+                self.close_board();
+            } else {
+                return Some(CampaignAction::OpenBoard);
+            }
+        }
+        None
+    }
+
+    /// `.campaign__board`: the leaderboard in the operations' place, a
+    /// close key in its corner; Escape closes it too. It scrolls.
+    fn board_ui(&mut self, ui: &mut egui::Ui, rect: Rect) {
+        // `requestCampaignBoard`'s ten seconds.
+        if let Some((_, sent)) = &self.board_request {
+            if sent.elapsed() > std::time::Duration::from_secs(10) {
+                self.board_request = None;
+                self.board = Some(CampaignBoardState::Failed("Campaign board request timed out".into()));
+            } else {
+                ui.ctx().request_repaint_after(std::time::Duration::from_millis(250));
+            }
+        }
+        if ui.input(|i| i.key_pressed(egui::Key::Escape)) {
+            self.close_board();
+            return;
+        }
+        board_panel(ui.painter(), rect);
+        let inner = rect.shrink2(vec2(26.0, 0.0));
+        let inner = Rect::from_min_max(
+            pos2(inner.left(), rect.top() + 26.0),
+            pos2(inner.right(), rect.bottom() - 24.0),
+        );
+        let state = self.board.clone().unwrap_or(CampaignBoardState::Loading);
+        let you = self.you.clone();
+        ui.scope_builder(egui::UiBuilder::new().max_rect(inner), |ui| {
+            egui::ScrollArea::vertical()
+                .id_salt("campaign-board")
+                .auto_shrink([false, false])
+                .show(ui, |ui| {
+                    let origin = ui.cursor().min;
+                    let at = Rect::from_min_size(origin, vec2(inner.width() - 14.0, inner.height()));
+                    let h = self.board_pane.paint(ui.painter(), at, &state, you.as_deref());
+                    ui.allocate_rect(Rect::from_min_size(origin, vec2(at.width(), h)), egui::Sense::hover());
+                });
+        });
+        // `campaign__board-close`: gold, pink when pointed at.
+        let close = Rect::from_min_size(pos2(rect.right() - 34.0 - 54.0, rect.top() + 14.0), vec2(54.0, 54.0));
+        let response = ui.interact(close, egui::Id::unique("campaign-board-close"), egui::Sense::click());
+        let lit = response.hovered();
+        let painter = ui.painter();
+        let slant = |r: Rect| {
+            vec![
+                pos2(r.left() + 10.0, r.top()),
+                r.right_top(),
+                pos2(r.right() - 10.0, r.bottom()),
+                r.left_bottom(),
+            ]
+        };
+        painter.add(Shape::convex_polygon(
+            slant(close.translate(vec2(4.0, 5.0))),
+            hsl(250.0, 50.0, 3.0),
+            Stroke::NONE,
+        ));
+        painter.add(Shape::convex_polygon(
+            slant(close),
+            if lit { pink() } else { gold() },
+            Stroke::NONE,
+        ));
+        let fg = if lit { cream(1.0) } else { ink() };
+        let g = text(painter, "×", 34.0, display_family(), fg, 0.0);
+        painter.galley(close.center() - g.size() / 2.0, g, fg);
+        if lit {
+            ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
+        }
+        if response.clicked() {
+            self.close_board();
+        }
     }
 
     /// `.campaign__banner`: the squad on their street across the top,
@@ -1407,7 +1625,7 @@ impl PlateLook {
 }
 
 /// The stamped plate itself over `rect`, with its printed shadow.
-fn plate_behind(painter: &Painter, rect: Rect, look: PlateLook) {
+pub fn plate_behind(painter: &Painter, rect: Rect, look: PlateLook) {
     let skew = (6f32).to_radians().tan();
     let shape = |r: Rect| -> Vec<Pos2> {
         [(0.02, 0.06), (0.98, 0.0), (1.0, 0.84), (0.55, 1.0), (0.0, 0.9)]
@@ -1614,14 +1832,6 @@ mod tests {
         let s = progress(3, &["b"]);
         assert_eq!(mission_status(1, Some(&s)), MissionStatus::Current);
         assert_eq!(mission_status(3, Some(&s)), MissionStatus::Open);
-    }
-
-    #[test]
-    fn the_rail_key_counts_clears() {
-        let mut view = CampaignView::default();
-        assert_eq!(view.progress_hint(), "Story");
-        view.set_state(Some(progress(2, &["a"])));
-        assert_eq!(view.progress_hint(), "1 / 8 cleared");
     }
 
     #[test]

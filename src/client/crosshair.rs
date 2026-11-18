@@ -34,7 +34,7 @@ pub fn register_crosshair_cvars(cvars: &mut Cvars) {
     );
     cvars.register(
         "cg_crosshairColor",
-        "00FF00",
+        "F4F7FF",
         string("Crosshair color (hex RGB without #)"),
     );
     cvars.register(
@@ -89,7 +89,7 @@ fn settings() -> Settings {
         Settings {
             enabled: or("cg_crosshair", 1.0) > 0.0,
             size: or("cg_crosshairSize", 32.0),
-            color: text("cg_crosshairColor", "00FF00"),
+            color: text("cg_crosshairColor", "F4F7FF"),
             alpha: or("cg_crosshairAlpha", 0.9) as f32,
             spread: or("cg_crosshairSpread", 1.0) > 0.0,
             hit_color: text("cg_crosshairDmgColor", "FF0000"),

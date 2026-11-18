@@ -113,7 +113,7 @@ pub fn register_player_model_visual_cvars(cvars: &mut Cvars) {
     cvars.register("cl_player_outline_proxy", 0, proxy);
     cvars.register(
         "cl_player_outline_size",
-        25,
+        19,
         int("Third-person player model outline size, 0-100.", 100.0),
     );
     cvars.register(
@@ -171,7 +171,7 @@ pub fn get_player_model_visual_style(slot: PlayerTeamSlot, model_scale: f32) -> 
         let lime = TEAM_COLORS.iter().find(|c| c.id == "lime").unwrap_or(&TEAM_COLORS[0]);
         return with_cvars(|c| {
             let number = |name: &str, d: f64| if c.exists(name) { c.get_number(name) } else { d };
-            let size = CAMPAIGN_TEAMMATE_OUTLINE_SIZE.max(number("cl_player_outline_size", 25.0)) as f32;
+            let size = CAMPAIGN_TEAMMATE_OUTLINE_SIZE.max(number("cl_player_outline_size", 19.0)) as f32;
             PlayerModelVisualStyle {
                 tint_color: Some(parse_rgb_cvar(lime.fill, player_model_visual_default(slot))),
                 fullbright_enabled: number("cl_player_fullbright", 0.0) != 0.0,
@@ -191,7 +191,7 @@ pub fn get_player_model_visual_style(slot: PlayerTeamSlot, model_scale: f32) -> 
             }
         };
         let number = |name: &str, d: f64| if c.exists(name) { c.get_number(name) } else { d };
-        let outline_size = number("cl_player_outline_size", 25.0).max(0.0) as f32;
+        let outline_size = number("cl_player_outline_size", 19.0).max(0.0) as f32;
         PlayerModelVisualStyle {
             tint_color: (number("cl_player_tint", 0.0) != 0.0)
                 .then(|| parse_rgb_cvar(&text(team_color_cvar(slot)), player_model_visual_default(slot))),

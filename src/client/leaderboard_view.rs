@@ -2,8 +2,9 @@
 //! `NewUiApi.ts`'s `getLeaderboard` checks.
 //!
 //! The leaderboard: a podium and the rest of the top ten for the last 30
-//! days or all time, or the whole top 100 with a search; your own rank in
-//! every mode in the rail. Every row comes from the lobby's ranking query.
+//! days or all time, or the whole top 100 with a search. It opens on All,
+//! each player at their best mode's rating with that mode named in its
+//! colour. Every row comes from the lobby's ranking query.
 //! Nothing is shown the lobby does not know: it keeps wins, losses and
 //! draws, so there is no K/D.
 
@@ -21,9 +22,7 @@ use shagger::ui::egui_layer::egui;
 
 use egui::{Color32, FontId, Painter, Rect, Shape, Stroke, pos2, vec2};
 
-use crate::client::lobby_page_parts::{
-    ModeChip, RailKey, board_keys, flat_key, mode_keys, page_head, rail_label, rule, status,
-};
+use crate::client::lobby_page_parts::{ModeChip, board_keys, flat_key, mode_keys, page_head, status};
 use crate::client::lobby_panel::{GAME_MODES, GameMode};
 use crate::client::settings::settings_fields::{body, cut_panel, gold_text, line};
 use crate::client::washoi_style::display_family;
@@ -36,6 +35,26 @@ const TIMEOUT: Duration = Duration::from_secs(10);
 
 const UNAVAILABLE: &str = "Rankings are unavailable on this lobby server.";
 const OFFLINE: &str = "The lobby server is offline. Rankings come back with it.";
+
+/// `ALL_MODE`: every mode at once, each player at their best mode's rating,
+/// that mode named on the row.
+const ALL_MODE: GameMode = GameMode {
+    id: "all",
+    title: "All",
+    subtitle: "",
+    hook: "",
+    accent: [
+        (276.0, 90.0, 64.0),
+        (278.0, 95.0, 80.0),
+        (268.0, 75.0, 54.0),
+        (262.0, 70.0, 36.0),
+        (256.0, 70.0, 22.0),
+    ],
+    mark: (276.0, 90.0, 72.0),
+};
+
+/// The boards' modes: All, then the game's.
+const MODES: [GameMode; 5] = [ALL_MODE, GAME_MODES[0], GAME_MODES[1], GAME_MODES[2], GAME_MODES[3]];
 
 /// A row of the board (`LeaderboardEntry`, as `getLeaderboard` lets it through).
 #[derive(Debug, Clone, PartialEq)]
@@ -51,19 +70,13 @@ pub struct Entry {
     pub provisional: bool,
     pub rated_matches: u32,
     pub bot: bool,
+    /// On the All board: the mode whose rating this is, the player's best.
+    pub gametype: Option<String>,
 }
 
 impl Entry {
     fn played(&self) -> u32 {
         self.wins + self.losses + self.draws
-    }
-
-    fn rating_text(&self) -> String {
-        format!(
-            "{}{}",
-            self.rating,
-            if self.provisional { " · Provisional" } else { "" }
-        )
     }
 }
 
@@ -94,6 +107,7 @@ fn read_entry(v: &Value) -> Option<Entry> {
         provisional: v.get("provisional").and_then(Value::as_bool)?,
         rated_matches: rated as u32,
         bot: v.get("bot").and_then(Value::as_bool).unwrap_or(false),
+        gametype: text("gametype"),
     })
 }
 
@@ -171,10 +185,10 @@ enum Tab {
 }
 
 /// `TABS`.
-const TABS: [(Tab, &str, &str); 3] = [
-    (Tab::Month, "Last 30 days", "Rolling · never resets"),
-    (Tab::All, "All time", "Since launch"),
-    (Tab::List, "Top 100", "The full list"),
+const TABS: [(Tab, &str); 3] = [
+    (Tab::Month, "Last 30 days"),
+    (Tab::All, "All time"),
+    (Tab::List, "Top 100"),
 ];
 
 #[derive(Debug, Clone)]
@@ -241,7 +255,6 @@ pub struct LeaderboardView {
     list_period: Period,
     query: String,
     boards: HashMap<(usize, Period), Loaded>,
-    ranks: HashMap<(usize, Period), Loaded>,
     connected: bool,
     supported: bool,
     account_id: Option<String>,
@@ -265,7 +278,6 @@ impl LeaderboardView {
             list_period: Period::Month,
             query: String::new(),
             boards: HashMap::new(),
-            ranks: HashMap::new(),
             connected: false,
             supported: false,
             account_id: None,
@@ -287,7 +299,6 @@ impl LeaderboardView {
     /// `clear`.
     pub fn clear(&mut self) {
         self.boards.clear();
-        self.ranks.clear();
     }
 
     /// `refresh`: the page came into view; ask again.
@@ -314,7 +325,7 @@ impl LeaderboardView {
         }
     }
 
-    /// `load`: the board and ranks missing from the selected ranking's cache.
+    /// `load`: the board missing from the selected ranking's cache.
     fn load(&mut self, client: &mut LobbyClient) {
         if self.availability().is_err() {
             return;
@@ -322,7 +333,7 @@ impl LeaderboardView {
         let period = self.period();
         let key = (self.mode, period);
         if !self.boards.contains_key(&key) {
-            let request = client.request_leaderboard(GAME_MODES[self.mode].id, period.id(), 0, 100, None);
+            let request = client.request_leaderboard(MODES[self.mode].id, period.id(), 0, 100, None);
             self.boards.insert(
                 key,
                 Loaded::Loading {
@@ -330,20 +341,6 @@ impl LeaderboardView {
                     sent: Instant::now(),
                 },
             );
-        }
-        for (i, mode) in GAME_MODES.iter().enumerate() {
-            let key = (i, period);
-            // A full board already carries your row.
-            if !self.ranks.contains_key(&key) && !self.boards.contains_key(&key) {
-                let request = client.request_leaderboard(mode.id, period.id(), 0, 1, None);
-                self.ranks.insert(
-                    key,
-                    Loaded::Loading {
-                        request,
-                        sent: Instant::now(),
-                    },
-                );
-            }
         }
     }
 
@@ -360,7 +357,7 @@ impl LeaderboardView {
             )),
             _ => return,
         };
-        for loaded in self.boards.values_mut().chain(self.ranks.values_mut()) {
+        for loaded in self.boards.values_mut() {
             if matches!(loaded, Loaded::Loading { request, .. } if request == id) {
                 *loaded = answer;
                 return;
@@ -379,7 +376,7 @@ impl LeaderboardView {
 
     /// For screenshots: a page as if the lobby had sent it.
     pub fn seed(&mut self, mode: &str, period: &str, page: Page) {
-        let Some(m) = GAME_MODES.iter().position(|g| g.id == mode) else {
+        let Some(m) = MODES.iter().position(|g| g.id == mode) else {
             return;
         };
         let period = if period == "all" { Period::All } else { Period::Month };
@@ -390,7 +387,7 @@ impl LeaderboardView {
     }
 
     fn time_out(&mut self) {
-        for loaded in self.boards.values_mut().chain(self.ranks.values_mut()) {
+        for loaded in self.boards.values_mut() {
             if matches!(loaded, Loaded::Loading { sent, .. } if sent.elapsed() > TIMEOUT) {
                 *loaded = Loaded::Failed("Leaderboard request timed out".into());
             }
@@ -402,34 +399,43 @@ impl LeaderboardView {
         self.load(client);
     }
 
-    /// Your row in a mode and period, from a full board or a rank-only reply.
-    fn yours(&self, mode: usize, period: Period) -> (Option<&Loaded>, Option<&Entry>) {
-        let key = (mode, period);
-        let loaded = self.boards.get(&key).or_else(|| self.ranks.get(&key));
-        let you = match loaded {
+    /// Your row in a mode and period, from its board.
+    fn yours(&self, mode: usize, period: Period) -> Option<&Entry> {
+        match self.boards.get(&(mode, period)) {
             Some(Loaded::Ready(page)) => page
                 .local_player_entry
                 .as_ref()
                 .filter(|e| self.account_id.as_deref() == Some(e.player_id.as_str())),
             _ => None,
-        };
-        (loaded, you)
+        }
+    }
+
+    /// `bestMode`: on the All board, the mode a row's rating comes from, as
+    /// its title and its colour.
+    fn best_mode(&self, e: &Entry) -> Option<(String, Color32)> {
+        if MODES[self.mode].id != "all" {
+            return None;
+        }
+        let id = e.gametype.as_deref()?;
+        Some(match GAME_MODES.iter().find(|m| m.id == id) {
+            Some(m) => (m.title.to_owned(), hsl(m.mark.0, m.mark.1, m.mark.2)),
+            None => (id.to_uppercase(), self.mode().accent().face),
+        })
     }
 
     /// The mode shown, whose colours the page takes.
     #[must_use]
     pub fn mode(&self) -> &'static GameMode {
-        &GAME_MODES[self.mode]
+        &MODES[self.mode]
     }
 
     /// The stage: head, boards, rule, status and the podium or the list.
     pub fn ui(&mut self, ui: &mut egui::Ui, rect: Rect, client: &mut LobbyClient) {
         self.time_out();
         let painter = ui.painter().clone();
-        let mode = *self.mode();
         let tab = TABS.iter().find(|t| t.0 == self.tab).unwrap_or(&TABS[0]);
         let head = page_head(&painter, rect.left(), rect.top(), tab.1);
-        let chips: Vec<ModeChip<'_>> = GAME_MODES
+        let chips: Vec<ModeChip<'_>> = MODES
             .iter()
             .map(|m| ModeChip {
                 id: m.id,
@@ -450,7 +456,7 @@ impl LeaderboardView {
             self.set_mode(m, client);
         }
         let mut y = keys_bottom.max(head.bottom()) + 18.0;
-        let boards: Vec<(&str, &str)> = TABS.iter().map(|t| (t.1, t.2)).collect();
+        let boards: Vec<(&str, &str)> = TABS.iter().map(|t| (t.1, "")).collect();
         let open = TABS.iter().position(|t| t.0 == self.tab).unwrap_or(0);
         let (picked, bottom) = board_keys(ui, "lb-board", rect.left(), y, rect.width(), &boards, open);
         if let Some(i) = picked {
@@ -468,49 +474,23 @@ impl LeaderboardView {
             (Ok(()), Some(Loaded::Ready(page))) => Some(page.clone()),
             _ => None,
         };
-        let ranked = page
-            .as_ref()
-            .filter(|p| p.total > 0)
-            .map(|p| format!(" · {} ranked", p.total));
-        y = rule(
-            &painter,
-            rect.left(),
-            y,
-            &format!(
-                "Career skill rating · provisional ratings include uncertainty{}",
-                ranked.unwrap_or_default()
-            ),
-        ) + 18.0;
-        let mut message = match (&availability, &loaded, &page) {
+        // How many are ranked on this board, on the campaign's gold plate.
+        if let Some(total) = page.as_ref().map(|p| p.total).filter(|&t| t > 0) {
+            let words = if total == 1 { "ranked player" } else { "ranked players" };
+            y = count_plate(&painter, rect.left(), y, total, words) + 18.0;
+        }
+        let message = match (&availability, &loaded, &page) {
             (Err(why), _, _) => (*why).to_owned(),
             (_, Some(Loaded::Failed(why)), _) => why.clone(),
             (_, _, None) => "Loading rankings…".to_owned(),
-            (_, _, Some(p)) if p.total == 0 => format!(
-                "No ranked {} matches {}.",
-                mode.title,
-                if period == Period::Month {
-                    "in the last 30 days"
-                } else {
-                    "yet"
-                }
-            ),
             _ => String::new(),
         };
-        if let Some(p) = page.as_ref().filter(|p| p.excluded > 0) {
-            if !message.is_empty() {
-                message.push(' ');
-            }
-            message.push_str(&format!(
-                "{} of your matches did not qualify for skill rating.",
-                p.excluded
-            ));
-        }
         if !message.is_empty() {
             y = status(&painter, rect.left(), y, rect.width(), &message) + 18.0;
         }
 
         let entries = page.as_ref().map(|p| p.entries.clone()).unwrap_or_default();
-        let you = page.as_ref().and(self.yours(self.mode, period).1.cloned());
+        let you = page.as_ref().and(self.yours(self.mode, period).cloned());
         let pane = Rect::from_min_max(pos2(rect.left(), y), rect.max);
         if self.tab == Tab::List {
             self.list(
@@ -584,7 +564,7 @@ impl LeaderboardView {
                 (_, false) => 158.0,
                 (_, true) => 128.0,
             };
-            (content + pad).max(min)
+            (content + pad + 1.0 * lines.len() as f32).max(min)
         };
         let tallest = order
             .iter()
@@ -607,15 +587,14 @@ impl LeaderboardView {
         let ink_c = ink();
         let mut lines = Vec::new();
         let is_you = self.account_id.as_deref() == Some(e.player_id.as_str());
-        if e.rank == 1 {
-            let tag = if self.tab == Tab::Month { "Leading" } else { "Champion" };
-            lines.push(Line::tag(painter, tag, false));
-        }
         if is_you {
-            lines.push(Line::tag(painter, "You", false));
+            lines.push(Line::tag(painter, "You", ink(), gold_text()));
+        }
+        if let Some((title, mark)) = self.best_mode(e) {
+            lines.push(Line::tag(painter, &title, mark, ink()));
         }
         if e.bot {
-            lines.push(Line::tag(painter, "Bot", true));
+            lines.push(Line::tag(painter, "Bot", hsl(186.0, 90.0, 46.0), ink()));
         }
         let name_size = if tight { 17.0 } else { clamp_css(20.0, vw * 0.017, 30.0) };
         let name = elide(painter, &e.name, name_size, display_family(), text_w);
@@ -627,27 +606,66 @@ impl LeaderboardView {
             ink_c,
             0.02,
         )));
-        let wins_size = if tight { 22.0 } else { clamp_css(24.0, vw * 0.02, 34.0) };
-        let rating = line(painter, &e.rating.to_string(), wins_size, display_family(), ink_c, 0.0);
-        let small = line(painter, "RATING", 14.0, body(), ink_c.gamma_multiply(0.7), 0.14);
-        lines.push(Line {
-            height: rating.size().y,
-            kind: LineKind::Rating(rating, small),
-        });
-        let count = e.played();
-        let meta = format!(
-            "{}{} rated · {count} {} · {} W / {} L / {} D",
-            if e.provisional { "Provisional · " } else { "" },
-            e.rated_matches,
-            if count == 1 { "match" } else { "matches" },
-            e.wins,
-            e.losses,
-            e.draws
+        // The rating, large; a provisional one is drawn fainter rather than labelled.
+        let rating_size = if tight { 26.0 } else { clamp_css(30.0, vw * 0.026, 44.0) };
+        let rating_c = if e.provisional {
+            ink_c.gamma_multiply(0.55)
+        } else {
+            ink_c
+        };
+        let rating = line(
+            painter,
+            &e.rating.to_string(),
+            rating_size,
+            display_family(),
+            rating_c,
+            0.0,
         );
-        let meta_c = hsla(250.0, 45.0, 8.0, 0.66);
-        let size = if tight { 12.0 } else { 14.0 };
-        let g = spaced_wrap(painter, &meta, size, meta_c, 0.06, text_w);
+        lines.push(Line::text(rating));
+        // Matches played and the counts, over a bar of wins against draws and losses.
+        let count = e.played();
+        let mut size = if tight { 14.0 } else { 16.0 };
+        let record = |size: f32| {
+            let mut job = egui::text::LayoutJob::default();
+            let format = |color: Color32| egui::TextFormat {
+                font_id: FontId::new(size, body()),
+                color,
+                extra_letter_spacing: size * 0.04,
+                ..Default::default()
+            };
+            job.append(
+                &format!("{count} {}", if count == 1 { "match" } else { "matches" }),
+                0.0,
+                format(ink_c),
+            );
+            let draws = if e.draws > 0 {
+                format!(" · {} D", e.draws)
+            } else {
+                String::new()
+            };
+            job.append(
+                &format!(" · {} W · {} L{draws}", e.wins, e.losses),
+                0.0,
+                format(hsla(250.0, 45.0, 8.0, 0.75)),
+            );
+            painter.layout_job(job)
+        };
+        // One line: a long record is set smaller rather than wrapped.
+        let mut g = record(size);
+        if g.size().x > text_w && text_w > 0.0 {
+            size = (size * text_w / g.size().x).max(10.0);
+            g = record(size);
+        }
         lines.push(Line::text(g));
+        lines.push(Line {
+            height: 9.0,
+            kind: LineKind::Bar {
+                width: text_w.clamp(40.0, 240.0),
+                wins: e.wins,
+                draws: e.draws,
+                losses: e.losses,
+            },
+        });
         lines
     }
 
@@ -716,12 +734,12 @@ impl LeaderboardView {
         let rank_w = rank.size().x;
         painter.galley(pos2(r.left() + pad_l, r.center().y - rank.size().y / 2.0), rank, ink());
         let x = r.left() + pad_l + rank_w + if tight { 12.0 } else { 20.0 };
-        let total: f32 = lines.iter().map(|l| l.height).sum::<f32>() + 4.0 * (lines.len() as f32 - 1.0);
+        let total: f32 = lines.iter().map(|l| l.height).sum::<f32>() + 5.0 * (lines.len() as f32 - 1.0);
         let _ = short;
         let mut y = r.center().y - total / 2.0;
         for l in lines {
             l.paint(painter, pos2(x, y));
-            y += l.height + 4.0;
+            y += l.height + 5.0;
         }
     }
 
@@ -928,6 +946,9 @@ impl LeaderboardView {
             painter.galley(b.center() - g.size() / 2.0, g, ink());
             *x = b.right() + 8.0;
         };
+        if let Some((title, mark)) = self.best_mode(e) {
+            badge(&mut x, &title, mark);
+        }
         if e.bot {
             badge(&mut x, "Bot", hsl(186.0, 90.0, 46.0));
         }
@@ -1049,78 +1070,6 @@ impl LeaderboardView {
         let board = Rect::from_min_max(pos2(pane.left(), top + 46.0 + 18.0), pane.max);
         self.board(ui, board, &shown, pin, true, "lb-list");
     }
-
-    /// `renderRail`: your rank in each mode, in the rail's middle.
-    pub fn rail(&mut self, ui: &mut egui::Ui, mid: Rect, rail_w: f32, client: &mut LobbyClient) {
-        self.time_out();
-        let painter = ui.painter().clone();
-        let period = self.period();
-        let top = rail_label(&painter, mid, rail_w, "Your ranks", period.name());
-        let list = Rect::from_min_max(
-            pos2(mid.left() + 22.0, top + 8.0),
-            pos2(
-                mid.left() + rail_w - shagger::ui::components::lobby_twin::RAIL_SKEW - 26.0,
-                mid.bottom(),
-            ),
-        );
-        if let Err(why) = self.availability() {
-            let sub = hsla(250.0, 45.0, 8.0, 0.62);
-            let g = crate::client::settings::settings_fields::wrapped(
-                &painter,
-                why,
-                FontId::new(15.0, body()),
-                sub,
-                list.width().min(240.0),
-            );
-            painter.galley(list.min, g, sub);
-            return;
-        }
-        let screen = ui.ctx().content_rect();
-        let key_h = if screen.height() <= 960.0 { 40.0 } else { 46.0 };
-        let show_record = screen.width() > 1200.0;
-        let mut picked = None;
-        ui.scope_builder(egui::UiBuilder::new().max_rect(list), |ui| {
-            egui::ScrollArea::vertical()
-                .id_salt("lb-ranks")
-                .auto_shrink([false, false])
-                .show(ui, |ui| {
-                    ui.spacing_mut().item_spacing.y = 0.0;
-                    for (i, mode) in GAME_MODES.iter().enumerate() {
-                        let (loaded, you) = self.yours(i, period);
-                        let standing = match (loaded, you) {
-                            (None | Some(Loaded::Loading { .. }), _) => "…".to_owned(),
-                            (_, Some(y)) => format!("#{}", y.rank),
-                            _ => "—".to_owned(),
-                        };
-                        let record = match (loaded, you) {
-                            (Some(Loaded::Failed(_)), _) => "Unavailable".to_owned(),
-                            (_, Some(y)) => y.rating_text(),
-                            (Some(Loaded::Ready(_)), None) => "Unranked".to_owned(),
-                            _ => String::new(),
-                        };
-                        let (slot, _) =
-                            ui.allocate_exact_size(vec2(list.width() - 4.0, key_h + 9.6), egui::Sense::hover());
-                        let rect = Rect::from_min_size(slot.min, vec2(slot.width() - 4.0, key_h));
-                        let face = RailKey {
-                            id: ("lb-rank", mode.id),
-                            mark: hsl(mode.mark.0, mode.mark.1, mode.mark.2),
-                            name: mode.title,
-                            detail: if show_record { &record } else { "" },
-                            right: &standing,
-                            pressed: i == self.mode,
-                            name_width: 76.0,
-                        }
-                        .show(ui, rect);
-                        if face.clicked {
-                            picked = Some(i);
-                        }
-                    }
-                });
-        });
-        if let Some(m) = picked {
-            self.set_mode(m, client);
-        }
-    }
 }
 
 fn rank_size(rank: u32, vw: f32, tight: bool) -> f32 {
@@ -1136,32 +1085,6 @@ fn rank_size(rank: u32, vw: f32, tight: bool) -> f32 {
 fn lerp(a: Color32, b: Color32, t: f32) -> Color32 {
     let m = |x: u8, y: u8| (f32::from(x) * (1.0 - t) + f32::from(y) * t) as u8;
     Color32::from_rgb(m(a.r(), b.r()), m(a.g(), b.g()), m(a.b(), b.b()))
-}
-
-/// Body text with letter spacing, wrapped at `width` on spaces.
-fn spaced_wrap(
-    painter: &Painter,
-    s: &str,
-    size: f32,
-    color: Color32,
-    em: f32,
-    width: f32,
-) -> std::sync::Arc<egui::Galley> {
-    let font = FontId::new(size, body());
-    let mut job = egui::text::LayoutJob::default();
-    job.append(
-        s,
-        0.0,
-        egui::TextFormat {
-            font_id: font,
-            color,
-            extra_letter_spacing: size * em,
-            line_height: Some(size * 1.2),
-            ..Default::default()
-        },
-    );
-    job.wrap.max_width = width.max(1.0);
-    painter.layout_job(job)
 }
 
 /// The grid of `lb-row`: rank, who, then four numbers at the right.
@@ -1200,9 +1123,16 @@ impl Columns {
 }
 
 enum LineKind {
-    Tag(std::sync::Arc<egui::Galley>, bool),
+    /// A tag: its words, its background and its ink.
+    Tag(std::sync::Arc<egui::Galley>, Color32, Color32),
     Text(std::sync::Arc<egui::Galley>),
-    Rating(std::sync::Arc<egui::Galley>, std::sync::Arc<egui::Galley>),
+    /// `lb-plinth__bar`: wins against draws and losses.
+    Bar {
+        width: f32,
+        wins: u32,
+        draws: u32,
+        losses: u32,
+    },
 }
 
 /// One line of a plinth's face, measured.
@@ -1212,12 +1142,11 @@ struct Line {
 }
 
 impl Line {
-    fn tag(painter: &Painter, s: &str, bot: bool) -> Self {
-        let c = if bot { ink() } else { gold_text() };
-        let g = line(painter, &s.to_uppercase(), 10.0, display_family(), c, 0.16);
+    fn tag(painter: &Painter, s: &str, bg: Color32, fg: Color32) -> Self {
+        let g = line(painter, &s.to_uppercase(), 10.0, display_family(), fg, 0.16);
         Self {
             height: g.size().y + 8.0,
-            kind: LineKind::Tag(g, bot),
+            kind: LineKind::Tag(g, bg, fg),
         }
     }
 
@@ -1230,10 +1159,9 @@ impl Line {
 
     fn paint(&self, painter: &Painter, at: egui::Pos2) {
         match &self.kind {
-            LineKind::Tag(g, bot) => {
+            LineKind::Tag(g, bg, fg) => {
                 let r = Rect::from_min_size(at, vec2(g.size().x + 18.0, self.height));
                 let c = r.width() * 0.08;
-                let bg = if *bot { hsl(186.0, 90.0, 46.0) } else { ink() };
                 painter.add(Shape::convex_polygon(
                     vec![
                         pos2(r.left() + c, r.top()),
@@ -1241,21 +1169,82 @@ impl Line {
                         pos2(r.right() - c, r.bottom()),
                         r.left_bottom(),
                     ],
-                    bg,
+                    *bg,
                     Stroke::NONE,
                 ));
-                let fg = if *bot { ink() } else { gold_text() };
-                painter.galley(r.center() - g.size() / 2.0, g.clone(), fg);
+                painter.galley(r.center() - g.size() / 2.0, g.clone(), *fg);
             }
             LineKind::Text(g) => painter.galley(at, g.clone(), ink()),
-            LineKind::Rating(big, small) => {
-                painter.galley(at, big.clone(), ink());
-                let x = at.x + big.size().x + 6.0;
-                let y = at.y + big.size().y - small.size().y - 1.0;
-                painter.galley(pos2(x, y), small.clone(), ink());
+            LineKind::Bar {
+                width,
+                wins,
+                draws,
+                losses,
+            } => {
+                let r = Rect::from_min_size(at, vec2(*width, self.height));
+                let skew = |r: Rect| {
+                    vec![
+                        pos2(r.left() + 4.0, r.top()),
+                        r.right_top(),
+                        pos2(r.right() - 4.0, r.bottom()),
+                        r.left_bottom(),
+                    ]
+                };
+                painter.add(Shape::convex_polygon(
+                    skew(r),
+                    hsla(250.0, 45.0, 8.0, 0.18),
+                    Stroke::NONE,
+                ));
+                let total = (wins + draws + losses) as f32;
+                if total <= 0.0 {
+                    return;
+                }
+                let parts = [
+                    (*wins, hsl(140.0, 70.0, 30.0)),
+                    (*draws, hsla(250.0, 45.0, 8.0, 0.4)),
+                    (*losses, hsl(350.0, 75.0, 45.0)),
+                ];
+                let shown = parts.iter().filter(|(n, _)| *n > 0).count() as f32;
+                let room = r.width() - 2.0 * (shown - 1.0).max(0.0);
+                let clip = painter.with_clip_rect(r.intersect(painter.clip_rect()));
+                let mut x = r.left();
+                for (n, color) in parts {
+                    if n == 0 {
+                        continue;
+                    }
+                    let w = room * n as f32 / total;
+                    let part = Rect::from_min_size(pos2(x, r.top()), vec2(w, r.height()));
+                    clip.add(Shape::convex_polygon(skew(part), color, Stroke::NONE));
+                    x += w + 2.0;
+                }
             }
         }
     }
+}
+
+/// `lb-count campaign-plate`: the count of ranked players on the campaign's
+/// gold plate, its number large. Returns its bottom.
+fn count_plate(painter: &Painter, left: f32, top: f32, total: u32, words: &str) -> f32 {
+    let number = line(painter, &total.to_string(), 26.0, display_family(), ink(), 0.02);
+    let words = line(painter, &words.to_uppercase(), 15.0, display_family(), ink(), 0.14);
+    let (pad_l, pad_r, pad_t, pad_b) = (32.0, 40.0, 14.0, 16.0);
+    let w = pad_l + number.size().x + 12.0 + words.size().x + pad_r;
+    let h = pad_t + number.size().y + pad_b;
+    let r = Rect::from_min_size(pos2(left, top + 4.0), vec2(w, h));
+    crate::client::campaign::campaign_view::plate_behind(
+        painter,
+        r,
+        crate::client::campaign::campaign_view::PlateLook::Gold,
+    );
+    let base = r.top() + pad_t + number.size().y;
+    let nw = number.size().x;
+    painter.galley(pos2(r.left() + pad_l, r.top() + pad_t), number, ink());
+    painter.galley(
+        pos2(r.left() + pad_l + nw + 12.0, base - words.size().y - 1.0),
+        words,
+        ink(),
+    );
+    r.bottom() + 8.0
 }
 
 #[cfg(test)]
@@ -1276,6 +1265,7 @@ mod tests {
             provisional: false,
             rated_matches: 1,
             bot: false,
+            gametype: None,
         }
     }
 
@@ -1343,5 +1333,18 @@ mod tests {
         assert!(matches!(view.boards[&(0, Period::Month)], Loaded::Loading { .. }));
         view.on_message("leaderboard:error", &json!({"requestId":"a","reason":"rate_limited"}));
         assert!(matches!(&view.boards[&(0, Period::Month)], Loaded::Failed(why) if why == "Leaderboard: rate_limited"));
+    }
+
+    #[test]
+    fn all_comes_first_and_names_each_rows_mode() {
+        let mut view = LeaderboardView::new();
+        assert_eq!(view.mode().id, "all");
+        let mut e = entry(1, 1.0);
+        e.gametype = Some(GAME_MODES[1].id.to_owned());
+        let (title, _) = view.best_mode(&e).unwrap();
+        assert_eq!(title, GAME_MODES[1].title);
+        // A board of one mode names none.
+        view.mode = 1;
+        assert!(view.best_mode(&e).is_none());
     }
 }

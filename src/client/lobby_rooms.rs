@@ -28,16 +28,6 @@ pub fn sort_rooms(matches: &[LiveMatchInfo]) -> Vec<LiveMatchInfo> {
     sorted
 }
 
-/// `roomCountLabel`: "1 of 3 open", or "none".
-#[must_use]
-pub fn room_count_label(matches: &[LiveMatchInfo]) -> String {
-    if matches.is_empty() {
-        return "none".into();
-    }
-    let open = matches.iter().filter(|m| is_joinable(m)).count();
-    format!("{open} of {} open", matches.len())
-}
-
 /// `RoomAction`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RoomAction {
@@ -178,8 +168,6 @@ mod tests {
         ];
         let ids: Vec<_> = sort_rooms(&rooms).into_iter().map(|r| r.id).collect();
         assert_eq!(ids, ["nearly", "roomy", "full", "playing"]);
-        assert_eq!(room_count_label(&rooms), "2 of 4 open");
-        assert_eq!(room_count_label(&[]), "none");
     }
 
     #[test]

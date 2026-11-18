@@ -614,7 +614,6 @@ fn main() {
             } else {
                 // In the window, behind the loading screen, as the game does.
                 let handoff = (mode != "demo").then(|| match_loading_screen::Handoff {
-                    server_url: url,
                     spectator: mode == "watch",
                 });
                 let lobby = region(&o).0;
@@ -761,10 +760,7 @@ fn lobby_mode(lobby: &str, o: &Options) -> i32 {
                     let watch = Some((c.server_url.clone(), c.name.clone(), c.admission_ticket.clone()));
                     let mut v = view_options(o, c.server_url.clone(), None, watch, c.play);
                     v.team.clone_from(&c.team);
-                    let handoff = match_loading_screen::Handoff {
-                        server_url: c.server_url.clone(),
-                        spectator: !c.play,
-                    };
+                    let handoff = match_loading_screen::Handoff { spectator: !c.play };
                     (v, Some(handoff))
                 };
                 let Some(started) = load_and_start(v, handoff, Some(lobby)) else {
@@ -802,11 +798,8 @@ fn load_and_start(
 
 /// `washoi lobby ... --window`: the match from the lobby's handoff, behind
 /// the loading screen, as the game starts one.
-fn windowed(v: view::ViewOptions, server_url: &str, play: bool, lobby: &str) -> i32 {
-    let handoff = match_loading_screen::Handoff {
-        server_url: server_url.to_owned(),
-        spectator: !play,
-    };
+fn windowed(v: view::ViewOptions, play: bool, lobby: &str) -> i32 {
+    let handoff = match_loading_screen::Handoff { spectator: !play };
     match load_and_start(v, Some(handoff), Some(lobby)) {
         None => 0,
         Some(Ok(code)) => code,
@@ -1021,7 +1014,7 @@ fn lobby(url: &str, o: &Options) -> i32 {
                         if o.window {
                             let watch = Some((server.clone(), name.clone(), None));
                             let v = view_options(o, server.clone(), None, watch, false);
-                            return windowed(v, &server, false, url);
+                            return windowed(v, false, url);
                         }
                         return play_match(&server, &name, None, o.seconds.unwrap_or(15.0), false, &data_dir(o));
                     }
@@ -1087,7 +1080,7 @@ fn lobby(url: &str, o: &Options) -> i32 {
                     // Into the window, playing (or watching, for a spectator's seat).
                     let watch = Some((server_url.clone(), name.clone(), admission_ticket));
                     let v = view_options(o, server_url.clone(), None, watch, true);
-                    return windowed(v, &server_url, true, url);
+                    return windowed(v, true, url);
                 }
                 return play_match(
                     &server_url,

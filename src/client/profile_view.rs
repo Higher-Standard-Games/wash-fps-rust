@@ -210,42 +210,146 @@ fn plural(n: u64, one: &str, many: &str) -> String {
     format!("{n} {}", if n == 1 { one } else { many })
 }
 
-/// `profile-stats__detail`: the gameplay totals under a mode's line.
+/// `playTime`: active time as hours and minutes, "2h 14m", "54m".
 #[must_use]
-pub fn stats_detail(summary: &Summary, snd: bool) -> String {
-    match &summary.totals {
-        Some(t) => {
-            let mut out = format!(
-                "{} frags · {} deaths · {} enemy damage · {} min active",
-                js_number(t.frags),
-                js_number(t.deaths),
-                js_number(js_round(t.damage_given)),
-                js_number(js_round(t.active_time_ms / 60000.0)),
-            );
-            if snd {
-                out += &format!(" · {} plants · {} defuses", js_number(t.plants), js_number(t.defuses));
-            }
-            if summary.stats_matches < summary.matches {
-                out += &format!(
-                    " · stats available for {}/{} matches",
-                    summary.stats_matches, summary.matches
-                );
-            }
-            out
-        }
-        None if summary.matches > 0 => "Gameplay totals unavailable for these results.".into(),
-        None => "No completed matches counted yet.".into(),
+pub fn play_time(ms: f64) -> String {
+    let minutes = js_round(ms / 60000.0) as i64;
+    let hours = minutes / 60;
+    if hours > 0 {
+        format!("{hours}h {}m", minutes % 60)
+    } else {
+        format!("{minutes}m")
     }
 }
 
-/// `profile-record__row`.
-#[derive(Debug, Clone, PartialEq)]
-struct RecordRow {
+/// `toLocaleString("en-US")` of a whole number: thousands with commas.
+fn grouped(v: f64) -> String {
+    let whole = js_number(v);
+    if v.fract() != 0.0 || v.abs() < 1000.0 {
+        return whole;
+    }
+    let (sign, digits) = whole.strip_prefix('-').map_or(("", whole.as_str()), |d| ("-", d));
+    let mut out = String::new();
+    for (i, c) in digits.chars().enumerate() {
+        if i > 0 && (digits.len() - i) % 3 == 0 {
+            out.push(',');
+        }
+        out.push(c);
+    }
+    format!("{sign}{out}")
+}
+
+/// A mode's gameplay totals as big numbers with their words, and the note
+/// under them: why there are none, or how many matches they cover.
+#[must_use]
+pub fn stats_cells(summary: &Summary, snd: bool) -> (Vec<(String, String)>, String) {
+    let Some(t) = &summary.totals else {
+        let note = if summary.matches > 0 {
+            "Gameplay totals unavailable for these results."
+        } else {
+            "No completed matches counted yet."
+        };
+        return (Vec::new(), note.into());
+    };
+    let mut stats = vec![
+        (grouped(t.frags), "frags".to_owned()),
+        (grouped(t.deaths), "deaths".to_owned()),
+        (grouped(js_round(t.damage_given)), "damage".to_owned()),
+        (play_time(t.active_time_ms), "played".to_owned()),
+    ];
+    if snd {
+        stats.push((grouped(t.plants), "plants".to_owned()));
+        stats.push((grouped(t.defuses), "defuses".to_owned()));
+    }
+    let note = if summary.stats_matches < summary.matches {
+        format!("Totals from {} of {} matches.", summary.stats_matches, summary.matches)
+    } else {
+        String::new()
+    };
+    (stats, note)
+}
+
+/// `RecordCardFacts`: one mode's record.
+#[derive(Debug, Clone, PartialEq, Default)]
+struct RecordCard {
+    mode_id: String,
     mode: String,
-    rank: String,
-    rating: String,
-    cells: [String; 3],
-    detail: Option<String>,
+    rank: Option<u64>,
+    /// Value and provisional.
+    rating: Option<(i64, bool)>,
+    wins: u64,
+    losses: u64,
+    draws: u64,
+    stats: Vec<(String, String)>,
+    note: String,
+}
+
+impl RecordCard {
+    /// `profile-card__rating`'s words after the number.
+    fn rating_text(&self) -> String {
+        match self.rating {
+            None => "Not rated".into(),
+            Some((_, provisional)) => format!(" rating{}", if provisional { " · provisional" } else { "" }),
+        }
+    }
+
+    /// `profile-card__counts`.
+    fn counts(&self) -> String {
+        let mut out = format!(
+            "{} · {}",
+            plural(self.wins, "win", "wins"),
+            plural(self.losses, "loss", "losses")
+        );
+        if self.draws > 0 {
+            out += &format!(" · {}", plural(self.draws, "draw", "draws"));
+        }
+        out
+    }
+}
+
+/// The record's line over the cards: a sentence, or the totals on plates
+/// with a note after them.
+#[derive(Debug, Clone, PartialEq, Default)]
+struct RecordStatus {
+    text: String,
+    totals: Vec<(String, String)>,
+    note: String,
+}
+
+impl RecordStatus {
+    fn text(words: &str) -> Self {
+        Self {
+            text: words.to_owned(),
+            ..Self::default()
+        }
+    }
+
+    /// `recordTotals`.
+    fn totals(parts: Vec<(String, String)>, note: String) -> Self {
+        Self {
+            text: String::new(),
+            totals: parts,
+            note,
+        }
+    }
+
+    /// What it says, as one sentence (the browser's `aria-label`).
+    #[cfg(test)]
+    fn sentence(&self) -> String {
+        if self.totals.is_empty() {
+            return self.text.clone();
+        }
+        let mut out = self
+            .totals
+            .iter()
+            .map(|(v, w)| format!("{v} {w}"))
+            .collect::<Vec<_>>()
+            .join(" · ");
+        if !self.note.is_empty() {
+            out += &format!(" · {}", self.note);
+        }
+        out
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -293,8 +397,8 @@ pub struct ProfileView {
     /// The lobby offers `playerStats`, and ranks (`leaderboard`, `skillRatings`).
     stats: bool,
     ranks: bool,
-    record_status: String,
-    record_rows: Vec<RecordRow>,
+    record_status: RecordStatus,
+    record_rows: Vec<RecordCard>,
     asking: Option<Asking>,
 }
 
@@ -326,7 +430,7 @@ impl ProfileView {
             focus: None,
             stats: false,
             ranks: false,
-            record_status: String::new(),
+            record_status: RecordStatus::default(),
             record_rows: Vec::new(),
             asking: None,
         }
@@ -556,7 +660,7 @@ impl ProfileView {
         self.asking = None;
         let refuse = |view: &mut Self, why: &str| {
             view.record_rows.clear();
-            why.clone_into(&mut view.record_status);
+            view.record_status = RecordStatus::text(why);
         };
         if !account.connected {
             return refuse(self, "Connect to the lobby to see your record.");
@@ -568,7 +672,7 @@ impl ProfileView {
             return refuse(self, "This lobby is not advertising any mode.");
         }
         if self.record_rows.is_empty() {
-            "Reading the rankings…".clone_into(&mut self.record_status);
+            self.record_status = RecordStatus::text("Reading the rankings…");
         }
         let modes: Vec<(String, String)> = account.modes.iter().map(|m| (m.id.clone(), m.name.clone())).collect();
         let requests = modes
@@ -600,7 +704,7 @@ impl ProfileView {
 
     fn stats_record(&mut self, asking: &Asking) {
         self.record_rows.clear();
-        let (mut matches, mut excluded, mut failure) = (0, 0, String::new());
+        let (mut matches, mut failure) = (0, String::new());
         for ((id, name), answer) in asking.modes.iter().zip(&asking.answers) {
             let Some(Answer::Stats(answer)) = answer else { continue };
             let summary = match answer {
@@ -613,45 +717,34 @@ impl ProfileView {
                 }
             };
             matches += summary.matches;
-            excluded += summary.excluded;
             if summary.matches == 0 && summary.excluded == 0 && summary.rating.is_none() {
                 continue;
             }
-            self.record_rows.push(RecordRow {
+            let (stats, note) = stats_cells(summary, id == "snd");
+            self.record_rows.push(RecordCard {
+                mode_id: id.clone(),
                 mode: name.clone(),
-                rank: summary
-                    .rating
-                    .map_or_else(|| "—".into(), |(_, rank, _)| format!("#{rank}")),
-                rating: summary.rating.map_or_else(
-                    || "Not rated".into(),
-                    |(value, _, p)| format!("{value}{}", if p { " (P)" } else { "" }),
-                ),
-                cells: [
-                    format!("{} W", summary.wins),
-                    format!("{} L", summary.losses),
-                    format!("{} D", summary.draws),
-                ],
-                detail: Some(stats_detail(summary, id == "snd")),
+                rank: summary.rating.map(|(_, rank, _)| rank),
+                rating: summary.rating.map(|(value, _, p)| (value, p)),
+                wins: summary.wins,
+                losses: summary.losses,
+                draws: summary.draws,
+                stats,
+                note,
             });
         }
-        self.record_status = plural(matches, "match", "matches");
-        if excluded > 0 {
-            self.record_status += &format!(" · {excluded} not rated");
-        }
-        if !failure.is_empty() {
-            self.record_status += &format!(" · {failure}");
-        }
+        let word = if matches == 1 { "match" } else { "matches" };
+        self.record_status = RecordStatus::totals(vec![(matches.to_string(), word.to_owned())], failure);
     }
 
     fn board_record(&mut self, asking: &Asking) {
         let mut standings = Vec::new();
-        let (mut refusal, mut excluded) = (String::new(), 0);
-        for ((_, name), answer) in asking.modes.iter().zip(&asking.answers) {
+        let mut refusal = String::new();
+        for ((id, name), answer) in asking.modes.iter().zip(&asking.answers) {
             match answer {
                 Some(Answer::Board(Ok(page))) => {
-                    excluded += page.excluded;
                     if let Some(row) = &page.local_player_entry {
-                        standings.push((name.clone(), row.clone()));
+                        standings.push((id.clone(), name.clone(), row.clone()));
                     }
                 }
                 Some(Answer::Board(Err(why))) if refusal.is_empty() => refusal.clone_from(why),
@@ -660,46 +753,40 @@ impl ProfileView {
         }
         self.record_rows.clear();
         if standings.is_empty() {
-            self.record_status = if !refusal.is_empty() {
-                refusal
-            } else if excluded > 0 {
-                format!(
-                    "{} did not qualify for skill rating.",
-                    plural(u64::from(excluded), "match", "matches")
-                )
+            self.record_status = RecordStatus::text(if refusal.is_empty() {
+                "No ranked match yet. Finish an eligible match to get a provisional rating."
             } else {
-                "No ranked match yet. Finish an eligible match to get a provisional rating.".into()
-            };
+                &refusal
+            });
             return;
         }
-        let played: u32 = standings.iter().map(|(_, r)| r.wins + r.losses + r.draws).sum();
+        let played: u32 = standings.iter().map(|(_, _, r)| r.wins + r.losses + r.draws).sum();
         let best = standings
             .iter()
-            .reduce(|top, one| if one.1.rank < top.1.rank { one } else { top })
+            .reduce(|top, one| if one.2.rank < top.2.rank { one } else { top })
             .expect("a standing");
-        self.record_status = format!(
-            "{} · best #{} in {}{}",
-            plural(u64::from(played), "match", "matches"),
-            best.1.rank,
-            best.0,
-            if excluded > 0 {
-                format!(" · {excluded} not rated")
-            } else {
-                String::new()
-            }
+        self.record_status = RecordStatus::totals(
+            vec![
+                (
+                    played.to_string(),
+                    if played == 1 { "match" } else { "matches" }.to_owned(),
+                ),
+                (format!("#{}", best.2.rank), format!("in {}", best.1)),
+            ],
+            String::new(),
         );
-        standings.sort_by_key(|(_, r)| r.rank);
-        for (name, row) in standings {
-            self.record_rows.push(RecordRow {
+        standings.sort_by_key(|(_, _, r)| r.rank);
+        for (id, name, row) in standings {
+            self.record_rows.push(RecordCard {
+                mode_id: id,
                 mode: name,
-                rank: format!("#{}", row.rank),
-                rating: format!("{}{}", row.rating, if row.provisional { " (P)" } else { "" }),
-                cells: [
-                    format!("{} W", row.wins),
-                    format!("{} L", row.losses),
-                    format!("{} D", row.draws),
-                ],
-                detail: None,
+                rank: Some(u64::from(row.rank)),
+                rating: Some((i64::from(row.rating), row.provisional)),
+                wins: u64::from(row.wins),
+                losses: u64::from(row.losses),
+                draws: u64::from(row.draws),
+                stats: Vec::new(),
+                note: String::new(),
             });
         }
     }
@@ -903,7 +990,7 @@ impl ProfileView {
             let layout = self
                 .frame
                 .paint(ui, screen, time, account.name, true, accent, |ui, stage| {
-                    paint_record(ui.painter(), stage, status, rows);
+                    paint_record(ui, stage, status, rows);
                 });
             ui.set_opacity(ui.opacity() * layout.inner_alpha);
             // The panel's screens scroll when taller than the window.
@@ -985,7 +1072,6 @@ impl ProfileView {
                     y,
                     width,
                     short,
-                    "Change your name",
                     "Who are you?",
                     &[("Everyone sees it: in rooms, chat and the rankings.", false)],
                 ) + g;
@@ -1011,7 +1097,7 @@ impl ProfileView {
                 }
                 y = r.bottom + g;
                 let ready = self.rename_ready(account);
-                let (go, bottom) = go_key(ui, "rename", left, y, short, "Save", "Yours alone", true, !ready);
+                let (go, bottom) = go_key(ui, "rename", left, y, short, "Save", true, !ready);
                 if go || r.submitted {
                     self.rename(account, client);
                 }
@@ -1037,7 +1123,6 @@ impl ProfileView {
                     y,
                     width,
                     short,
-                    "Play as someone else",
                     "Paste a key",
                     &[(
                         "This computer forgets its own key when it switches, so save that key first.",
@@ -1065,17 +1150,7 @@ impl ProfileView {
                 }
                 y = r.bottom + g;
                 let ready = self.switch_ready(account);
-                let (go, bottom) = go_key(
-                    ui,
-                    "switch",
-                    left,
-                    y,
-                    short,
-                    "Use it",
-                    "One key, one player",
-                    true,
-                    !ready,
-                );
+                let (go, bottom) = go_key(ui, "switch", left, y, short, "Use it", true, !ready);
                 if (go || r.submitted) && ready {
                     *action = self.switch(account);
                 }
@@ -1105,7 +1180,6 @@ impl ProfileView {
                     y,
                     width,
                     short,
-                    "Delete account",
                     "Delete this player?",
                     &[(&lead, false)],
                 ) + g;
@@ -1146,17 +1220,7 @@ impl ProfileView {
                 }
                 y = r.bottom + g;
                 let ready = self.delete_ready(account);
-                let (go, bottom) = go_key(
-                    ui,
-                    "delete",
-                    left,
-                    y,
-                    short,
-                    "Delete for good",
-                    "Can't be undone",
-                    false,
-                    !ready,
-                );
+                let (go, bottom) = go_key(ui, "delete", left, y, short, "Delete for good", false, !ready);
                 if go || r.submitted {
                     self.delete(account, client);
                 }
@@ -1199,16 +1263,7 @@ impl ProfileView {
         ];
         let unnamed = [("Paste it on any computer to play as this player.", false)];
         let lead: &[(&str, bool)] = if account.name.is_empty() { &unnamed } else { &named };
-        let mut y = screen_head(
-            &painter,
-            left,
-            top,
-            width,
-            short,
-            "Keep your name",
-            "Your player key",
-            lead,
-        ) + g;
+        let mut y = screen_head(&painter, left, top, width, short, "Your player key", lead) + g;
         if let Some(key) = account.key {
             let (reveal, bottom) = self.key_plate(ui, left, y, width, short, account.name, key);
             if reveal {
@@ -1284,7 +1339,7 @@ impl ProfileView {
             painter.galley(pos2(left, y), g2, Color32::WHITE);
             y += h + g;
         }
-        let (done, bottom) = go_key(ui, "done", left, y, short, "Done", "Back to the lobby", false, false);
+        let (done, bottom) = go_key(ui, "done", left, y, short, "Done", false, false);
         if done {
             self.close();
         }
@@ -1447,39 +1502,252 @@ impl ProfileView {
     }
 }
 
-/// `profile-record` on the stage: the head, the status and a line per mode.
-fn paint_record(painter: &Painter, stage: Rect, status: &str, rows: &[RecordRow]) {
+/// `profile-card`'s `--mode-accent`.
+fn mode_accent(id: &str) -> Color32 {
+    match id {
+        "duel" => hsl(182.0, 95.0, 52.0),
+        "amphi" => hsl(100.0, 85.0, 52.0),
+        "ffa" => hsl(46.0, 100.0, 57.0),
+        "snd" => hsl(322.0, 95.0, 62.0),
+        _ => hsl(276.0, 90.0, 64.0),
+    }
+}
+
+/// `profile-card__stats`: `repeat(auto-fit, minmax(78px, 1fr))`, 10 by 12.
+fn stats_columns(width: f32, count: usize) -> usize {
+    (((width + 12.0) / (78.0 + 12.0)).floor() as usize).clamp(1, count.max(1))
+}
+
+const STAT_H: f32 = 22.0 + 2.0 + 17.0;
+
+/// A card's height at `width` (its padding included).
+fn card_height(painter: &Painter, card: &RecordCard, width: f32) -> f32 {
+    let inner = width - 40.0 - 5.0;
+    let mut h = 16.0 + 30.0 + 12.0 + 24.0 + 12.0 + 16.0;
+    if !card.stats.is_empty() {
+        let rows = card.stats.len().div_ceil(stats_columns(inner, card.stats.len())) as f32;
+        h += 12.0 + 2.0 + 12.0 + rows * STAT_H + (rows - 1.0) * 10.0;
+    }
+    if !card.note.is_empty() {
+        h += 12.0 + note_galley(painter, &card.note, inner).size().y;
+    }
+    h + 18.0
+}
+
+fn note_galley(painter: &Painter, note: &str, width: f32) -> std::sync::Arc<egui::Galley> {
+    let mut job = egui::text::LayoutJob::simple(
+        note.to_owned(),
+        egui::FontId::proportional(15.0),
+        hsla(45.0, 100.0, 95.0, 0.65),
+        width.max(1.0),
+    );
+    job.wrap.break_anywhere = false;
+    painter.layout_job(job)
+}
+
+/// `recordCard`: one mode's record, a dark card edged in the mode's colour.
+fn paint_card(painter: &Painter, r: Rect, card: &RecordCard) {
+    let accent = mode_accent(&card.mode_id);
+    let cut = 18.0;
+    let outline = [
+        r.left_top(),
+        pos2(r.right() - cut, r.top()),
+        pos2(r.right(), r.top() + cut),
+        r.right_bottom(),
+        r.left_bottom(),
+    ];
+    shagger::ui::components::lobby_twin::gradient_polygon_x(
+        painter,
+        &outline,
+        &[(0.0, hsla(250.0, 45.0, 9.0, 0.88)), (1.0, hsla(250.0, 45.0, 6.0, 0.72))],
+    );
+    painter.rect_filled(Rect::from_min_size(r.min, vec2(5.0, r.height())), 0.0, accent);
+    let left = r.left() + 5.0 + 20.0;
+    let right = r.right() - 20.0;
+    let width = right - left;
+    let mut y = r.top() + 16.0;
+    // The head: the mode and its rank, on one baseline.
+    let rank = card.rank.map(|n| {
+        text(
+            painter,
+            &format!("#{n}"),
+            30.0,
+            display_family(),
+            hsl(45.0, 100.0, 60.0),
+            0.0,
+        )
+    });
+    let rank_w = rank.as_ref().map_or(0.0, |g| g.size().x + 16.0);
+    let name = shagger::ui::components::lobby_twin::elide(
+        painter,
+        &card.mode.to_uppercase(),
+        24.0,
+        display_family(),
+        width - rank_w,
+    );
+    let name = text(painter, &name, 24.0, display_family(), cream(), 24.0 * 0.04);
+    let base = y + 30.0;
+    painter.galley(pos2(left, base - name.size().y - 1.0), name, Color32::WHITE);
+    if let Some(g) = rank {
+        painter.galley(pos2(right - g.size().x, base - g.size().y), g, Color32::WHITE);
+    }
+    y = base + 12.0;
+    // The rating: its number in the mode's colour, then what it is.
+    let dim = hsla(45.0, 100.0, 95.0, 0.7);
+    let mut x = left;
+    if let Some((value, _)) = card.rating {
+        let g = text(painter, &value.to_string(), 22.0, display_family(), accent, 0.0);
+        let w = g.size().x;
+        painter.galley(pos2(x, y + 24.0 - g.size().y), g, Color32::WHITE);
+        x += w;
+    }
+    let g = text(painter, &card.rating_text(), 17.0, body(), dim, 0.0);
+    painter.galley(pos2(x, y + 24.0 - g.size().y), g, Color32::WHITE);
+    y += 24.0 + 12.0;
+    // The record: one bar of wins against draws and losses, its counts beside it.
+    let counts = text(painter, &card.counts(), 16.0, body(), cream(), 0.0);
+    let bar = Rect::from_min_max(
+        pos2(left, y + 3.0),
+        pos2((right - counts.size().x - 14.0).max(left + 80.0), y + 13.0),
+    );
+    painter.galley(
+        pos2(right - counts.size().x, y + 8.0 - counts.size().y / 2.0),
+        counts,
+        Color32::WHITE,
+    );
+    let skew = |b: Rect| {
+        vec![
+            pos2(b.left() + 4.0, b.top()),
+            b.right_top(),
+            pos2(b.right() - 4.0, b.bottom()),
+            b.left_bottom(),
+        ]
+    };
+    painter.add(Shape::convex_polygon(
+        skew(bar),
+        hsla(250.0, 30.0, 30.0, 0.5),
+        Stroke::NONE,
+    ));
+    let parts = [
+        (card.wins, hsl(100.0, 80.0, 52.0)),
+        (card.draws, hsla(45.0, 30.0, 80.0, 0.55)),
+        (card.losses, hsl(350.0, 85.0, 58.0)),
+    ];
+    let total = (card.wins + card.draws + card.losses) as f32;
+    if total > 0.0 {
+        let shown = parts.iter().filter(|(n, _)| *n > 0).count() as f32;
+        let room = bar.width() - 2.0 * (shown - 1.0);
+        let clip = painter.with_clip_rect(bar.intersect(painter.clip_rect()));
+        let mut px = bar.left();
+        for (n, color) in parts {
+            if n == 0 {
+                continue;
+            }
+            let w = room * n as f32 / total;
+            let part = Rect::from_min_size(pos2(px, bar.top()), vec2(w, bar.height()));
+            clip.add(Shape::convex_polygon(skew(part), color, Stroke::NONE));
+            px += w + 2.0;
+        }
+    }
+    y += 16.0;
+    // The totals: big numbers, each with its word.
+    if !card.stats.is_empty() {
+        y += 12.0 + 2.0;
+        painter.hline(left..=right, y, Stroke::new(1.0, hsla(276.0, 90.0, 64.0, 0.22)));
+        y += 12.0;
+        let columns = stats_columns(width, card.stats.len());
+        let cell_w = (width - 12.0 * (columns as f32 - 1.0)) / columns as f32;
+        for (i, (value, what)) in card.stats.iter().enumerate() {
+            let cx = left + (i % columns) as f32 * (cell_w + 12.0);
+            let cy = y + (i / columns) as f32 * (STAT_H + 10.0);
+            let g = text(painter, value, 20.0, display_family(), cream(), 0.0);
+            painter.galley(pos2(cx, cy), g, Color32::WHITE);
+            let g = text(painter, what, 15.0, body(), hsla(45.0, 100.0, 95.0, 0.65), 0.0);
+            painter.galley(pos2(cx, cy + 24.0), g, Color32::WHITE);
+        }
+        let rows = card.stats.len().div_ceil(columns) as f32;
+        y += rows * STAT_H + (rows - 1.0) * 10.0;
+    }
+    if !card.note.is_empty() {
+        y += 12.0;
+        painter.galley(pos2(left, y), note_galley(painter, &card.note, width), Color32::WHITE);
+    }
+}
+
+/// `recordTotals`: the totals over the cards, each on a plate in the
+/// campaign's style, the first gold and the rest dark, each number large;
+/// a note after them as text. Returns the bottom.
+fn paint_totals(painter: &Painter, left: f32, top: f32, width: f32, status: &RecordStatus) -> f32 {
+    use crate::client::campaign::campaign_view::{PlateLook, plate_behind};
+    let mut x = left;
+    let mut y = top;
+    let mut line_h: f32 = 0.0;
+    for (i, (value, word)) in status.totals.iter().enumerate() {
+        let look = if i == 0 { PlateLook::Gold } else { PlateLook::Dark };
+        let ink = if i == 0 { hsl(250.0, 45.0, 7.0) } else { cream() };
+        let number = text(painter, value, 26.0, display_family(), ink, 26.0 * 0.02);
+        let label = text(painter, &word.to_uppercase(), 14.0, display_family(), ink, 14.0 * 0.12);
+        let w = 20.0 + number.size().x + 10.0 + label.size().x + 26.0;
+        let h = 10.0 + number.size().y + 12.0;
+        if x > left && x + w > left + width {
+            x = left;
+            y += line_h + 14.0;
+            line_h = 0.0;
+        }
+        let r = Rect::from_min_size(pos2(x, y), vec2(w, h));
+        plate_behind(painter, r, look);
+        let base = r.top() + 10.0 + number.size().y;
+        let nw = number.size().x;
+        painter.galley(pos2(r.left() + 20.0, r.top() + 10.0), number, Color32::WHITE);
+        painter.galley(
+            pos2(r.left() + 20.0 + nw + 10.0, base - label.size().y - 2.0),
+            label,
+            Color32::WHITE,
+        );
+        x = r.right() + 22.0;
+        line_h = line_h.max(h);
+    }
+    if !status.note.is_empty() {
+        let g = text(painter, &status.note, 16.0, body(), hsla(45.0, 100.0, 95.0, 0.7), 0.0);
+        if x > left && x + g.size().x > left + width {
+            x = left;
+            y += line_h + 14.0;
+            line_h = 0.0;
+        }
+        painter.galley(
+            pos2(x, y + (line_h - g.size().y).max(0.0) / 2.0),
+            g.clone(),
+            Color32::WHITE,
+        );
+        line_h = line_h.max(g.size().y);
+    }
+    y + line_h
+}
+
+/// `profile-record` on the stage: the head, the totals and a card per mode;
+/// the cards scroll when the stage is short.
+fn paint_record(ui: &mut egui::Ui, stage: Rect, status: &RecordStatus, cards: &[RecordCard]) {
+    let painter = ui.painter().clone();
     let left = stage.left() + RAIL_SKEW + 56.0;
     let width = (stage.right() - 56.0 - left).min(660.0) - 8.0;
     if width < 120.0 {
         return;
     }
     let mut y = stage.top() + 64.0;
-    let title = text(painter, "YOUR RECORD", 15.0, display_family(), cream(), 15.0 * 0.16);
-    let hint = text(
-        painter,
-        "CAREER SKILL",
-        12.0,
-        body(),
-        hsla(45.0, 100.0, 95.0, 0.45),
-        12.0 * 0.14,
-    );
+    let title = text(&painter, "YOUR RECORD", 15.0, display_family(), cream(), 15.0 * 0.16);
     let th = title.size().y;
     painter.galley(pos2(left, y), title, Color32::WHITE);
-    painter.galley(
-        pos2(left + width - hint.size().x, y + th - hint.size().y),
-        hint,
-        Color32::WHITE,
-    );
     y += th + 12.0;
     painter.line_segment(
         [pos2(left, y), pos2(left + width, y)],
         Stroke::new(1.5, hsla(276.0, 90.0, 64.0, 0.35)),
     );
-    y += 12.0;
-    if !status.is_empty() {
+    y += 16.0;
+    if !status.totals.is_empty() {
+        y = paint_totals(&painter, left, y, width, status) + 18.0;
+    } else if !status.text.is_empty() {
         let mut job = egui::text::LayoutJob::simple(
-            status.to_owned(),
+            status.text.clone(),
             egui::FontId::proportional(16.0),
             hsla(45.0, 100.0, 95.0, 0.7),
             width,
@@ -1488,63 +1756,34 @@ fn paint_record(painter: &Painter, stage: Rect, status: &str, rows: &[RecordRow]
         let g = painter.layout_job(job);
         let h = g.size().y;
         painter.galley(pos2(left, y), g, Color32::WHITE);
-        y += h + 12.0;
+        y += h + 18.0;
     }
-    // `grid-template-columns: minmax(72px, 1fr) 54px 92px repeat(3, minmax(32px, 48px))`;
-    // at 520px or less, `minmax(0, 1fr) 54px minmax(88px, 1fr)` over two lines.
-    let narrow = width <= 520.0;
-    let columns: Vec<f32> = if narrow {
-        let rest = (width - 24.0 - 54.0 - 16.0).max(0.0);
-        let one = (rest / 2.0).max(88.0).min(rest - 0.0);
-        vec![rest - one, 54.0, one]
-    } else {
-        let fixed = 54.0 + 92.0 + 3.0 * 48.0 + 5.0 * 8.0;
-        vec![(width - 24.0 - fixed).max(72.0), 54.0, 92.0, 48.0, 48.0, 48.0]
-    };
-    let row_h = if narrow { 66.0 } else { 40.0 };
-    for (i, row) in rows.iter().enumerate() {
-        let r = Rect::from_min_size(pos2(left, y), vec2(width, row_h));
-        painter.rect_filled(r, 0.0, hsla(250.0, 45.0, 7.0, 0.7));
-        let cells: [(&str, f32, egui::FontFamily, Color32, f32); 6] = [
-            (&row.mode.to_uppercase(), 15.0, body(), cream(), 0.08),
-            (&row.rank, 17.0, display_family(), hsl(45.0, 100.0, 60.0), 0.0),
-            (&row.rating, 15.0, body(), cream(), 0.0),
-            (&row.cells[0], 15.0, body(), cream(), 0.0),
-            (&row.cells[1], 15.0, body(), cream(), 0.0),
-            (&row.cells[2], 15.0, body(), cream(), 0.0),
-        ];
-        let per_line = columns.len();
-        for (n, (s, size, family, color, em)) in cells.into_iter().enumerate() {
-            let col = n % per_line;
-            let line = (n / per_line) as f32;
-            let x = left + 12.0 + columns[..col].iter().sum::<f32>() + col as f32 * 8.0;
-            let mid = if narrow {
-                r.top() + 7.0 + 11.0 + line * 32.0
-            } else {
-                r.center().y
-            };
-            let s = shagger::ui::components::lobby_twin::elide(painter, s, size, family.clone(), columns[col]);
-            let g = text(painter, &s, size, family, color, size * em);
-            painter.galley(pos2(x, mid - g.size().y / 2.0), g, Color32::WHITE);
-        }
-        let last = i + 1 == rows.len() && row.detail.is_none();
-        if !last {
-            painter.line_segment(
-                [pos2(r.left(), r.bottom() - 0.5), pos2(r.right(), r.bottom() - 0.5)],
-                Stroke::new(1.0, hsla(182.0, 65.0, 48.0, 0.28)),
-            );
-        }
-        y = r.bottom();
-        if let Some(detail) = &row.detail {
-            let mut job =
-                egui::text::LayoutJob::simple(detail.clone(), egui::FontId::proportional(14.0), cream(), width - 24.0);
-            job.wrap.break_anywhere = false;
-            let g = painter.layout_job(job);
-            let h = g.size().y;
-            painter.galley(pos2(left + 12.0, y + 6.0), g, Color32::WHITE);
-            y += 6.0 + h + 12.0;
-        }
+    if cards.is_empty() {
+        return;
     }
+    let area = Rect::from_min_max(pos2(left, y), pos2(left + width + 14.0, stage.bottom() - 24.0));
+    ui.scope_builder(egui::UiBuilder::new().max_rect(area), |ui| {
+        egui::ScrollArea::vertical()
+            .id_salt("profile-record")
+            .auto_shrink([false, false])
+            .show(ui, |ui| {
+                let origin = ui.cursor().min;
+                let mut cy = origin.y;
+                for card in cards {
+                    let h = card_height(ui.painter(), card, width);
+                    paint_card(
+                        ui.painter(),
+                        Rect::from_min_size(pos2(origin.x, cy), vec2(width, h)),
+                        card,
+                    );
+                    cy += h + 14.0;
+                }
+                ui.allocate_rect(
+                    Rect::from_min_max(origin, pos2(origin.x + width, cy - 14.0)),
+                    egui::Sense::hover(),
+                );
+            });
+    });
 }
 
 /// The Downloads folder, or the config folder without one.
@@ -1613,11 +1852,6 @@ mod tests {
     fn a_summary_is_checked_as_get_player_stats_checks_it() {
         let s = read_stats(&summary(whole()), "snd").expect("a summary");
         assert_eq!(s.rating, Some((1234, 7, true)));
-        assert_eq!(
-            stats_detail(&s, true),
-            "21 frags · 9 deaths · 2051 enemy damage · 26 min active · 2 plants · 1 defuses · \
-             stats available for 2/3 matches"
-        );
         assert!(read_stats(&summary(whole()), "duel").is_err());
         let mut uneven = whole();
         uneven["wins"] = json!(5);
@@ -1668,7 +1902,7 @@ mod tests {
         let mut view = ProfileView::new();
         view.open(Screen::Key, &account, &mut client);
         view.bind(false, true, &account, &mut client);
-        assert_eq!(view.record_status, "Reading the rankings…");
+        assert_eq!(view.record_status.sentence(), "Reading the rankings…");
         let requests = view.asking.as_ref().expect("asking").requests.clone();
         for (request, rank) in requests.iter().zip([5, 2]) {
             let page = json!({ "type": "leaderboard:page", "requestId": request, "scope": "overall",
@@ -1676,10 +1910,35 @@ mod tests {
                 "localPlayerEntry": entry(rank, 3) });
             view.on_message("leaderboard:page", &page, &account);
         }
-        assert_eq!(view.record_status, "8 matches · best #2 in FFA");
+        assert_eq!(view.record_status.sentence(), "8 matches · #2 in FFA");
         let order: Vec<&str> = view.record_rows.iter().map(|r| r.mode.as_str()).collect();
         assert_eq!(order, ["FFA", "Duel"]);
-        assert_eq!(view.record_rows[0].rating, "1100");
+        assert_eq!(view.record_rows[0].rating, Some((1100, false)));
+        assert_eq!(view.record_rows[0].rating_text(), " rating");
+        assert_eq!(view.record_rows[0].counts(), "3 wins · 1 loss");
+    }
+
+    #[test]
+    fn a_cards_totals_read_as_the_browser_writes_them() {
+        assert_eq!(play_time(54.0 * 60000.0), "54m");
+        assert_eq!(play_time(134.4 * 60000.0), "2h 14m");
+        assert_eq!(grouped(1234567.0), "1,234,567");
+        assert_eq!(grouped(999.0), "999");
+        let summary = read_stats(&summary(whole()), "snd").expect("a summary");
+        let (stats, note) = stats_cells(&summary, true);
+        let words: Vec<String> = stats.iter().map(|(v, w)| format!("{v} {w}")).collect();
+        assert_eq!(
+            words,
+            [
+                "21 frags",
+                "9 deaths",
+                "2,051 damage",
+                "26m played",
+                "2 plants",
+                "1 defuses"
+            ]
+        );
+        assert_eq!(note, "Totals from 2 of 3 matches.");
     }
 
     #[test]

@@ -922,7 +922,7 @@ pub fn reset_side_colors(cvars: &mut Cvars) {
     }
 }
 
-/// `OUTLINE_CHOICES`: Thin is the game's default size, Bold twice it.
+/// `OUTLINE_CHOICES`: Thin is the game's default size, Bold a third thicker.
 pub const OUTLINE_CHOICES: [CvarChoice; 3] = [
     CvarChoice {
         id: "off",
@@ -932,12 +932,12 @@ pub const OUTLINE_CHOICES: [CvarChoice; 3] = [
     CvarChoice {
         id: "thin",
         label: "Thin",
-        values: &[("cl_player_outline", 1.0), ("cl_player_outline_size", 25.0)],
+        values: &[("cl_player_outline", 1.0), ("cl_player_outline_size", 19.0)],
     },
     CvarChoice {
         id: "bold",
         label: "Bold",
-        values: &[("cl_player_outline", 1.0), ("cl_player_outline_size", 50.0)],
+        values: &[("cl_player_outline", 1.0), ("cl_player_outline_size", 25.0)],
     },
 ];
 
@@ -977,10 +977,10 @@ pub const BOOST_CHOICES: [CvarChoice; 4] = [
 
 /// `CROSSHAIR_COLORS`: the game's defaults (green, red on a hit) among them.
 pub const CROSSHAIR_COLORS: [(&str, &str); 6] = [
+    ("F4F7FF", "White"),
     ("00FF00", "Green"),
     ("00E7FF", "Cyan"),
     ("FFB400", "Amber"),
-    ("F4F7FF", "White"),
     ("FF4FD8", "Magenta"),
     ("FF3355", "Red"),
 ];

@@ -210,7 +210,6 @@ impl IdentityFrame {
             hsla(54.0, 100.0, 78.0, 0.55),
             &shape,
         );
-        kanji(&painter, panel, w);
         gradient_polygon(
             &painter,
             &[
@@ -284,42 +283,10 @@ pub fn glow(painter: &Painter, centre: Pos2, radius: egui::Vec2, color: Color32,
     painter.add(mesh);
 }
 
-/// `welcome__kanji`: 名 faint in the panel's lower right, drawn in strokes
-/// (the game's faces have no kanji).
-fn kanji(painter: &Painter, panel: Rect, screen_w: f32) {
-    let size = clamp_css(220.0, screen_w * 0.24, 420.0);
-    let origin = pos2(
-        panel.right() - panel.width() * 0.14 - size * 0.98,
-        panel.bottom() - panel.height() * 0.06 - size * 0.9,
-    );
-    let at = |x: f32, y: f32| origin + vec2(x * size, y * size);
-    // `hsla(30, 90%, 22%, 0.09)` laid on the gold where each stroke is, so
-    // strokes that cross don't darken twice.
-    let ink_on_gold = |y: f32| {
-        let t = ((y - panel.top()) / panel.height()).clamp(0.0, 1.0);
-        let gold = hsl(46.0, 100.0, 57.0).lerp_to_gamma(hsl(41.0, 96.0, 48.0), t);
-        gold.lerp_to_gamma(hsl(30.0, 90.0, 22.0), 0.09)
-    };
-    // 夕 over 口: the sweep, the fold, the dot, then the box on its legs.
-    let strokes: [&[(f32, f32)]; 6] = [
-        &[(0.45, 0.02), (0.03, 0.73)],
-        &[(0.29, 0.17), (0.84, 0.17), (0.38, 0.58)],
-        &[(0.22, 0.25), (0.56, 0.44)],
-        &[(0.375, 0.58), (0.375, 0.99)],
-        &[(0.375, 0.58), (0.84, 0.58), (0.84, 0.99)],
-        &[(0.375, 0.9), (0.84, 0.9)],
-    ];
-    for points in strokes {
-        let line: Vec<Pos2> = points.iter().map(|&(x, y)| at(x, y)).collect();
-        let mid = line.iter().map(|p| p.y).sum::<f32>() / line.len() as f32;
-        painter.add(Shape::line(line, Stroke::new(size * 0.078, ink_on_gold(mid))));
-    }
-}
-
 /// A run of the lead: plain, or bold (`<b>`, in full ink).
 pub type Lead<'a> = &'a [(&'a str, bool)];
 
-/// `identityScreen`: a kicker over a big title, and a line under it.
+/// `identityScreen`: a big title, and a line under it.
 /// Returns the bottom of the last part.
 #[allow(clippy::too_many_arguments)]
 pub fn screen_head(
@@ -328,17 +295,12 @@ pub fn screen_head(
     top: f32,
     width: f32,
     short: bool,
-    kicker: &str,
     title: &str,
     lead: Lead<'_>,
 ) -> f32 {
     let gap = gap(short);
     let screen_w = painter.ctx().content_rect().width();
-    let k = text(painter, &kicker.to_uppercase(), 13.0, body(), ink(0.62), 13.0 * 0.32);
     let mut y = top;
-    let kh = k.size().y;
-    painter.galley(pos2(left, y), k, Color32::WHITE);
-    y += kh + gap;
     let size = if short {
         clamp_css(32.0, screen_w * 0.032, 52.0)
     } else {
@@ -532,7 +494,6 @@ pub fn go_key(
     top: f32,
     short: bool,
     label: &str,
-    hint: &str,
     arrow: bool,
     disabled: bool,
 ) -> (bool, f32) {
@@ -543,15 +504,7 @@ pub fn go_key(
     };
     let l = label_galley(&painter, label, 32.0, 0.12, Color32::WHITE);
     let arrow_w = if arrow { 32.0 * 0.12 + 30.0 } else { 0.0 };
-    let hint_g = text(
-        &painter,
-        &hint.to_uppercase(),
-        13.0,
-        body(),
-        Color32::WHITE,
-        13.0 * 0.12,
-    );
-    let w = (l.size().x + arrow_w).max(hint_g.size().x) + 96.0;
+    let w = l.size().x + arrow_w + 96.0;
     let h = if short { 74.0 } else { 92.0 };
     // `.welcome__go { margin-top: 8px }`.
     let rect = Rect::from_min_size(pos2(left, top + 8.0), vec2(w.max(260.0), h));
@@ -559,15 +512,13 @@ pub fn go_key(
         .disabled(disabled)
         .show(ui);
     // `:disabled`: the face stays; the lettering goes to a third.
-    let (text_c, sub_c) = if disabled {
-        (look.text.gamma_multiply(0.35), look.sub.gamma_multiply(0.35))
+    let text_c = if disabled {
+        look.text.gamma_multiply(0.35)
     } else {
-        (face.text, face.sub)
+        face.text
     };
     let l = label_galley(&painter, label, 32.0, 0.12, text_c);
-    let hint_g = text(&painter, &hint.to_uppercase(), 13.0, body(), sub_c, 13.0 * 0.12);
-    let total = l.size().y + 8.0 + hint_g.size().y;
-    let top_y = face.rect.center().y - total / 2.0;
+    let top_y = face.rect.center().y - l.size().y / 2.0;
     let line_w = l.size().x + arrow_w;
     let lx = face.rect.center().x - line_w / 2.0;
     let lh = l.size().y;
@@ -584,21 +535,15 @@ pub fn go_key(
             s,
         ));
     }
-    painter.galley(
-        pos2(face.rect.center().x - hint_g.size().x / 2.0, top_y + lh + 8.0),
-        hint_g,
-        sub_c,
-    );
     (face.clicked, rect.bottom() + look.depth)
 }
 
-/// The width [`go_key`] takes for `label` and `hint`.
+/// The width [`go_key`] takes for `label`.
 #[must_use]
-pub fn go_key_width(painter: &Painter, label: &str, hint: &str, arrow: bool) -> f32 {
+pub fn go_key_width(painter: &Painter, label: &str, arrow: bool) -> f32 {
     let l = label_galley(painter, label, 32.0, 0.12, Color32::WHITE);
     let arrow_w = if arrow { 32.0 * 0.12 + 30.0 } else { 0.0 };
-    let hint_g = text(painter, &hint.to_uppercase(), 13.0, body(), Color32::WHITE, 13.0 * 0.12);
-    ((l.size().x + arrow_w).max(hint_g.size().x) + 96.0).max(260.0)
+    (l.size().x + arrow_w + 96.0).max(260.0)
 }
 
 /// `welcome__note`: a short line beside the go key, 15px uppercase.

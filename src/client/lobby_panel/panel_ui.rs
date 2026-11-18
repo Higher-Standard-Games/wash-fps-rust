@@ -249,18 +249,25 @@ impl LobbyPanel {
         };
         let label_size = clamp_css(15.0, l.w * 0.011, 21.0);
         let nav_w = l.rail_right - l.rail_left;
-        let play_hint = if self.room.is_some() { "In a room" } else { "4 modes" };
-        let campaign_hint = self.campaign.progress_hint();
-        let keys: [(&str, &str, Option<Tab>); 5] = [
-            ("Quick play", "FFA vs bots", None),
-            ("Play", play_hint, Some(Tab::Play)),
-            ("Campaign", &campaign_hint, Some(Tab::Campaign)),
-            ("Leaderboard", "Top players", Some(Tab::Leaderboard)),
-            ("Demos", "Replays", Some(Tab::Demos)),
+        // In a room, Play online reads Lobby and leads back to it, cyan with
+        // a radar sweeping on it while the room waits.
+        let in_room = self.room.is_some();
+        let play_label = if in_room { "Lobby" } else { "Play online" };
+        // Campaign follows Quick play, in the campaign's own purple.
+        let keys: [(&str, Option<Tab>); 5] = [
+            ("Quick play", None),
+            ("Campaign", Some(Tab::Campaign)),
+            (play_label, Some(Tab::Play)),
+            ("Leaderboard", Some(Tab::Leaderboard)),
+            ("Demos", Some(Tab::Demos)),
         ];
-        for (label, hint, tab) in keys {
+        let time = ui.input(|i| i.time);
+        for (label, tab) in keys {
             let rect = Rect::from_min_size(pos2(l.rail_left, y), vec2(nav_w, key_h));
             let gold = KeyLook::gold().flat();
+            let current = tab.is_some_and(|t| self.tab == t);
+            let campaign = tab == Some(Tab::Campaign);
+            let lobby = tab == Some(Tab::Play) && in_room && !current;
             let key = match tab {
                 // Quick play: pink, so a new player finds the way into a match.
                 None => {
@@ -286,17 +293,89 @@ impl LobbyPanel {
                         .hover(lit, -0.35)
                         .disabled(!self.quick_play_enabled())
                 }
+                // The campaign's dark plate, purple, cream italic type on a
+                // pink shadow; open, the deep plate, gold on deep purple.
+                Some(_) if campaign => {
+                    let plate = KeyLook {
+                        face: vec![
+                            (0.0, hsl(278.0, 56.0, 30.0)),
+                            (0.48, hsl(270.0, 54.0, 22.0)),
+                            (1.0, hsl(262.0, 52.0, 16.0)),
+                        ],
+                        side: [hsl(266.0, 50.0, 12.0), hsl(260.0, 50.0, 6.0)],
+                        text: cream(),
+                        shadow: hsla(262.0, 60.0, 8.0, 0.45),
+                        ..gold.clone()
+                    };
+                    let lit = KeyLook {
+                        face: vec![
+                            (0.0, hsl(280.0, 60.0, 40.0)),
+                            (0.48, hsl(272.0, 56.0, 30.0)),
+                            (1.0, hsl(264.0, 54.0, 22.0)),
+                        ],
+                        ..plate.clone()
+                    };
+                    let deep = KeyLook {
+                        face: vec![
+                            (0.0, hsl(284.0, 72.0, 30.0)),
+                            (0.45, hsl(274.0, 74.0, 20.0)),
+                            (1.0, hsl(264.0, 78.0, 12.0)),
+                        ],
+                        text: hsl(46.0, 100.0, 57.0),
+                        ..plate.clone()
+                    };
+                    if current {
+                        RaisedKey::new(label, rect, deep.clone()).hover(deep, 0.0).current(true)
+                    } else {
+                        RaisedKey::new(label, rect, plate).hover(lit, -0.35)
+                    }
+                }
+                // Back to the room: cyan, one click from the seat it kept.
+                Some(_) if lobby => {
+                    let cyan = KeyLook {
+                        face: vec![
+                            (0.0, hsl(182.0, 100.0, 74.0)),
+                            (0.55, hsl(182.0, 95.0, 55.0)),
+                            (1.0, hsl(188.0, 90.0, 42.0)),
+                        ],
+                        side: [hsl(192.0, 85.0, 28.0), hsl(198.0, 80.0, 17.0)],
+                        text: hsl(250.0, 45.0, 8.0),
+                        ..gold.clone()
+                    };
+                    let lit = KeyLook {
+                        face: vec![
+                            (0.0, hsl(182.0, 100.0, 82.0)),
+                            (0.55, hsl(182.0, 100.0, 64.0)),
+                            (1.0, hsl(188.0, 90.0, 50.0)),
+                        ],
+                        ..cyan.clone()
+                    };
+                    RaisedKey::new(label, rect, cyan).hover(lit, -0.35)
+                }
                 // The rail keeps its gold under the pointer; only the lift says so.
-                Some(tab) => RaisedKey::new(label, rect, gold.clone())
+                Some(_) => RaisedKey::new(label, rect, gold.clone())
                     .hover(gold, -0.35)
-                    .current(self.tab == tab),
+                    .current(current),
             };
             let face = key.show(ui);
-            let hint = if l.narrow { "" } else { hint };
-            KeyText::new(label, hint, display_family(), body())
-                .size(label_size, 13.0)
-                .pad(28.0, 24.0)
-                .paint(&painter, &face);
+            if campaign {
+                if !current {
+                    rail_scanlines(&painter, face.rect, 0.03);
+                }
+                campaign_key_label(&painter, &face, label, label_size, 28.0);
+            } else {
+                KeyText::new(label, "", display_family(), body())
+                    .size(label_size, 13.0)
+                    .pad(28.0, 24.0)
+                    .paint(&painter, &face);
+            }
+            if lobby {
+                key_radar(
+                    &painter,
+                    pos2(face.rect.right() - 24.0 - 17.0, face.rect.center().y),
+                    time,
+                );
+            }
             if face.clicked {
                 match tab {
                     None => self.start_quick_play(),
@@ -357,10 +436,6 @@ impl LobbyPanel {
         // list gives way to the room's chat.
         if self.tab == Tab::Settings {
             self.settings_nav(ui, l, mid);
-        } else if self.tab == Tab::Leaderboard {
-            self.leaderboard.rail(ui, mid, l.rail_w, &mut self.client);
-        } else if self.tab == Tab::Demos {
-            self.demos.rail(ui, mid, l.rail_w, &mut self.client);
         } else if self.room_chat.is_some() {
             self.room_chat_panel(ui, l, mid);
         } else if mid.height() > 40.0 {
@@ -393,31 +468,15 @@ impl LobbyPanel {
         let width = r.right() - 16.0 - text_left;
         let display = display_family();
         let name = if self.name.is_empty() { "Player" } else { &self.name };
-        let name = elide(painter, name, 14.0, display.clone(), width);
-        let name = line(painter, &name, 14.0, display, cream(), 0.05);
-        let meta = line(
-            painter,
-            self.player_meta(),
-            12.0,
-            body(),
-            hsla(45.0, 100.0, 95.0, 0.55),
-            0.08,
-        );
-        let total = name.size().y + 3.0 + meta.size().y;
-        let y = r.center().y - total / 2.0;
-        let name_h = name.size().y;
-        painter.galley(pos2(text_left, y), name, cream());
-        painter.galley(pos2(text_left, y + name_h + 3.0), meta, cream());
+        let name = elide(painter, name, 18.0, display.clone(), width);
+        let name = line(painter, &name, 18.0, display, cream(), 0.05);
+        painter.galley(pos2(text_left, r.center().y - name.size().y / 2.0), name, cream());
     }
 
     /// `.lobby__rail .fps-set-pages`: the settings' page keys in the rail.
     pub(super) fn settings_nav(&mut self, ui: &mut egui::Ui, l: &Layout, mid: Rect) {
-        let painter = ui.painter().clone();
-        let sub = hsla(250.0, 45.0, 8.0, 0.62);
-        let heading = line(&painter, "SETTINGS", 11.0, body(), sub, 0.26);
-        painter.galley(pos2(mid.left() + 24.0, mid.top() + 6.0), heading, sub);
         let list = Rect::from_min_max(
-            pos2(mid.left() + 22.0, mid.top() + 6.0 + 11.0 + 14.0),
+            pos2(mid.left() + 22.0, mid.top() + 6.0),
             pos2(mid.left() + l.rail_w - RAIL_SKEW - 12.0 - 14.0, mid.bottom()),
         );
         let key_h = if l.h <= 900.0 { 44.0 } else { 58.0 };
@@ -447,28 +506,18 @@ impl LobbyPanel {
     pub(super) fn rooms(&mut self, ui: &mut egui::Ui, l: &Layout, mid: Rect) {
         let painter = ui.painter().clone();
         let sub = hsla(250.0, 45.0, 8.0, 0.62);
-        let label_y = mid.top() + 6.0;
-        let heading = line(&painter, "ROOMS", 11.0, body(), sub, 0.26);
-        painter.galley(pos2(mid.left() + 24.0, label_y), heading, sub);
         let matches = sort_rooms(&self.live_matches);
-        let count = line(
-            &painter,
-            &room_count_label(&matches).to_uppercase(),
-            11.0,
-            body(),
-            sub,
-            0.26,
-        );
-        let count_x = mid.left() + l.rail_w - RAIL_SKEW - 26.0 - count.size().x;
-        painter.galley(pos2(count_x, label_y), count, sub);
         let list = Rect::from_min_max(
-            pos2(mid.left() + 22.0, label_y + 11.0 + 12.0),
+            pos2(mid.left() + 22.0, mid.top() + 6.0),
             pos2(mid.left() + l.rail_w - RAIL_SKEW - 12.0, mid.bottom()),
         );
         if matches.is_empty() {
-            let empty = if self.connected {
-                "No rooms yet. Pick a mode to start one."
-            } else if self.lobby_full {
+            // No rooms: the list stays empty, and says so only when the
+            // lobby cannot be reached.
+            if self.connected {
+                return;
+            }
+            let empty = if self.lobby_full {
                 "Servers are full."
             } else {
                 "Lobby server offline."
@@ -555,6 +604,18 @@ impl LobbyPanel {
                 // `readCard`: the card panel by panel, starting nothing.
                 Some(CampaignAction::Read(card, title)) if self.cutscene.is_none() => {
                     self.cutscene = Some(CampaignCutscene::new(Some(card), title));
+                }
+                // `openBoard`: read fresh from the lobby, or say why it cannot be.
+                Some(CampaignAction::OpenBoard) => {
+                    if !self.connected {
+                        self.campaign
+                            .board_failed("The lobby server is offline. The campaign boards come back with it.");
+                    } else if !self.campaign_supported {
+                        self.campaign.board_failed("This lobby server runs no campaign.");
+                    } else {
+                        let request = self.client.request_campaign_board();
+                        self.campaign.board_loading(request);
+                    }
                 }
                 _ => {}
             }
@@ -919,19 +980,17 @@ impl LobbyPanel {
 
     /// `lobby-chat`: the lobby's chat beside the mode.
     pub(super) fn chat_panel(&mut self, ui: &mut egui::Ui, r: Rect) {
-        let count = if self.connected {
-            format!("{} ONLINE", self.online.len())
-        } else {
-            "OFFLINE".into()
-        };
         let send = chat_box(
             ui,
             r,
             ChatBox {
                 id: "lobby-chat",
                 title: "LOBBY",
-                count: &count,
-                dot: true,
+                count: "",
+                pips: Some(online_pips(
+                    if self.connected { self.online.len() } else { 0 },
+                    self.lobby_capacity,
+                )),
                 lines: &self.chat,
                 draft: &mut self.chat_draft,
                 placeholder: if self.connected {
@@ -975,7 +1034,7 @@ impl LobbyPanel {
                 id: "room-chat",
                 title: "ROOM CHAT",
                 count: &count,
-                dot: false,
+                pips: None,
                 lines: &chat.lines,
                 draft: &mut chat.draft,
                 placeholder,
@@ -996,8 +1055,8 @@ pub(super) struct ChatBox<'a> {
     pub(super) id: &'static str,
     pub(super) title: &'a str,
     pub(super) count: &'a str,
-    /// The pink online dot beside the count.
-    pub(super) dot: bool,
+    /// How full the lobby is: this many of [`ONLINE_PIPS`] lit, in place of a count.
+    pub(super) pips: Option<usize>,
     pub(super) lines: &'a VecDeque<ChatLine>,
     pub(super) draft: &'a mut String,
     pub(super) placeholder: &'a str,
@@ -1046,10 +1105,31 @@ pub(super) fn chat_box(ui: &mut egui::Ui, r: Rect, c: ChatBox<'_>) -> bool {
     let cx = inner.right() - count.size().x;
     let cy = inner.top() + head_h / 2.0;
     painter.galley(pos2(cx, cy - count.size().y / 2.0), count, cream());
-    if c.dot {
+    if let Some(lit) = c.pips {
+        // Four slanted pips, as the video settings show cost.
+        let (w, h, gap) = (18.0, 9.0, 3.0);
+        let total = ONLINE_PIPS as f32 * w + (ONLINE_PIPS as f32 - 1.0) * gap;
         let pink = hsl(322.0, 100.0, 58.0);
-        painter.circle_filled(pos2(cx - 12.0, cy), 7.0, pink.gamma_multiply(0.18));
-        painter.circle_filled(pos2(cx - 12.0, cy), 4.0, pink);
+        for i in 0..ONLINE_PIPS {
+            let x = inner.right() - total + i as f32 * (w + gap);
+            let r = Rect::from_min_size(pos2(x, cy - h / 2.0), vec2(w, h));
+            let pts = vec![
+                pos2(r.left() + w * 0.25, r.top()),
+                r.right_top(),
+                pos2(r.right() - w * 0.25, r.bottom()),
+                r.left_bottom(),
+            ];
+            if i < lit {
+                painter.add(Shape::convex_polygon(
+                    pts.iter().map(|p| *p + (*p - r.center()) * 0.4).collect(),
+                    pink.gamma_multiply(0.2),
+                    Stroke::NONE,
+                ));
+                painter.add(Shape::convex_polygon(pts, pink, Stroke::NONE));
+            } else {
+                painter.add(Shape::convex_polygon(pts, hsla(45.0, 100.0, 95.0, 0.14), Stroke::NONE));
+            }
+        }
     }
     let head_bottom = inner.top() + head_h + 12.0;
     painter.hline(inner.x_range(), head_bottom, rule);
@@ -1350,4 +1430,99 @@ pub(super) fn chat_row(ui: &mut egui::Ui, chat: &ChatLine, mine: &str, width: f3
         ));
     }
     painter.galley(pos2(x, y), body_text, color);
+}
+
+/// Pips in the chat's online meter (`ONLINE_PIPS`).
+pub(super) const ONLINE_PIPS: usize = 4;
+
+/// `refreshPlayerList`: how many of the pips are lit for `online` players
+/// against the lobby's cap; one as soon as anyone is.
+pub(super) fn online_pips(online: usize, capacity: usize) -> usize {
+    if online == 0 {
+        return 0;
+    }
+    let share = (online as f64 / capacity.max(1) as f64 * ONLINE_PIPS as f64).ceil() as usize;
+    share.clamp(1, ONLINE_PIPS)
+}
+
+/// The scanlines of the campaign's purple plates, across a key's face.
+pub(super) fn rail_scanlines(painter: &Painter, face: Rect, cut: f32) {
+    let inset = face.width() * cut;
+    let clip = painter.with_clip_rect(face.shrink2(vec2(inset, 0.0)).intersect(painter.clip_rect()));
+    let mut y = face.top();
+    while y < face.bottom() {
+        clip.rect_filled(
+            Rect::from_min_max(pos2(face.left(), y), pos2(face.right(), y + 2.0)),
+            0.0,
+            hsla(276.0, 70.0, 70.0, 0.08),
+        );
+        y += 5.0;
+    }
+}
+
+/// The Campaign key's label: italic, on a pink shadow.
+pub(super) fn campaign_key_label(painter: &Painter, face: &KeyFace, label: &str, size: f32, pad: f32) {
+    let galley = |color: Color32| {
+        let mut job = egui::text::LayoutJob::default();
+        job.append(
+            &label.to_uppercase(),
+            0.0,
+            egui::TextFormat {
+                font_id: FontId::new(size, display_family()),
+                color,
+                italics: true,
+                extra_letter_spacing: size * 0.07,
+                ..Default::default()
+            },
+        );
+        painter.layout_job(job)
+    };
+    let shadow_color = hsla(322.0, 95.0, 40.0, 0.7);
+    let g = galley(face.text);
+    let at = pos2(face.rect.left() + pad, face.rect.center().y - g.size().y / 2.0);
+    painter.galley(at + vec2(0.06 * size, 0.07 * size), galley(shadow_color), shadow_color);
+    painter.galley(at, g, face.text);
+}
+
+/// `lobby__key-radar`: the room's search radar, small, in the Lobby key's
+/// cyan: a sweep, two rings, a blip and a core. It always sweeps.
+pub(super) fn key_radar(painter: &Painter, centre: Pos2, time: f64) {
+    let r = 17.0;
+    let cyan = hsl(182.0, 95.0, 55.0);
+    painter.circle_filled(centre, r, hsl(250.0, 44.0, 7.0));
+    // The sweep: a quarter-and-a-bit wedge fading in behind its edge.
+    let turn = ((time / 2.2).fract() as f32) * std::f32::consts::TAU;
+    let steps = 24;
+    for i in 0..steps {
+        let t0 = i as f32 / steps as f32;
+        let t1 = (i + 1) as f32 / steps as f32;
+        // `conic-gradient(transparent 0 70%, cyan 100%)`, measured back from the edge.
+        let a0 = turn - std::f32::consts::TAU * 0.3 * (1.0 - t0);
+        let a1 = turn - std::f32::consts::TAU * 0.3 * (1.0 - t1);
+        // CSS turns start at the top, clockwise.
+        let at = |a: f32| centre + vec2(a.sin(), -a.cos()) * r;
+        painter.add(Shape::convex_polygon(
+            vec![centre, at(a0), at(a1)],
+            cyan.gamma_multiply(0.9 * t1),
+            Stroke::NONE,
+        ));
+    }
+    painter.circle_stroke(centre, r - 6.0, Stroke::new(1.0, cyan.gamma_multiply(0.4)));
+    painter.circle_stroke(centre, r - 12.0, Stroke::new(1.0, cyan.gamma_multiply(0.4)));
+    // The blip, lit as the sweep passes it (34% to 80% of a turn).
+    let phase = (time / 2.2).fract();
+    let blip = if (0.3..0.34).contains(&phase) {
+        ((phase - 0.3) / 0.04) as f32
+    } else if (0.34..0.8).contains(&phase) {
+        1.0 - ((phase - 0.34) / 0.46) as f32
+    } else {
+        0.0
+    };
+    if blip > 0.0 {
+        let at = centre + vec2(6.0, -8.0);
+        painter.circle_filled(at, 4.0, cyan.gamma_multiply(0.3 * blip));
+        painter.circle_filled(at, 2.0, hsl(182.0, 100.0, 80.0).gamma_multiply(blip));
+    }
+    painter.circle_filled(centre, 3.0, cyan);
+    painter.circle_stroke(centre, r, Stroke::new(1.5, cyan.gamma_multiply(0.6)));
 }

@@ -1,5 +1,5 @@
 #!/bin/sh
-# wash-fps is the master copy of the documents the lobby shows (TERMS.md,
+# wash-fps is the master copy of the documents the lobby shows (TERMS.md, PRIVACY.md,
 # CREDITS.md); assets/docs/ holds copies, built into the client.
 #
 #   tools/sync_docs.sh [WASH_FPS_DIR]          copy them over
@@ -8,7 +8,7 @@
 # WASH_FPS_DIR defaults to ../wash-fps. CI runs --check against wash-fps main.
 set -eu
 
-DOCS="TERMS.md CREDITS.md"
+DOCS="TERMS.md PRIVACY.md CREDITS.md"
 check=false
 if [ "${1:-}" = "--check" ]; then
   check=true

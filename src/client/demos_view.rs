@@ -23,9 +23,7 @@ use egui::{Color32, FontId, Painter, Pos2, Rect, Shape, Stroke, pos2, vec2};
 
 use crate::client::demo_download::{DemoDownload, DemoDownloadState};
 use crate::client::levelshots::Levelshots;
-use crate::client::lobby_page_parts::{
-    ModeChip, RailKey, board_keys, flat_key, mode_keys, page_head, rail_label, rule,
-};
+use crate::client::lobby_page_parts::{ModeChip, board_keys, mode_keys, page_head};
 use crate::client::lobby_panel::{GAME_MODES, GameMode};
 use crate::client::settings::settings_fields::{body, gold_text, line, wrapped};
 use crate::client::washoi_style::display_family;
@@ -163,11 +161,6 @@ impl DemoInfo {
             .unwrap_or(&self.map)
             .to_owned()
     }
-
-    fn size_text(&self) -> String {
-        let mb = js_round(self.size_mb * 10.0) / 10.0;
-        format!("{mb} MB")
-    }
 }
 
 /// What the Demos page hands the window: a recording, downloaded.
@@ -217,10 +210,10 @@ enum Tab {
 }
 
 /// `TABS`.
-const TABS: [(Tab, &str, &str); 3] = [
-    (Tab::Featured, "Featured", "This week's best"),
-    (Tab::Latest, "Latest", "Every recorded match"),
-    (Tab::Yours, "Yours", "Matches you played"),
+const TABS: [(Tab, &str); 3] = [
+    (Tab::Featured, "Featured"),
+    (Tab::Latest, "Latest"),
+    (Tab::Yours, "Yours"),
 ];
 
 #[derive(Debug, Clone)]
@@ -325,7 +318,6 @@ fn chip(painter: &Painter, at: Pos2, s: &str, size: f32, fg: Color32, bg: Color3
 pub struct DemosView {
     tab: Tab,
     mode: usize,
-    map: Option<String>,
     query: String,
     page: usize,
     archive: Vec<DemoInfo>,
@@ -338,7 +330,6 @@ pub struct DemosView {
     featured_supported: bool,
     featured: Featured,
     hero_file: Option<String>,
-    reel_minutes: u32,
     transfer: Option<Transfer>,
     /// The reel menu, for this demo, under the key at this rect.
     reel_menu: Option<(DemoInfo, Rect, f64)>,
@@ -353,7 +344,6 @@ impl DemosView {
         Self {
             tab: Tab::Featured,
             mode: 0,
-            map: None,
             query: String::new(),
             page: 1,
             archive: Vec::new(),
@@ -366,7 +356,6 @@ impl DemosView {
             featured_supported: false,
             featured: Featured::Idle,
             hero_file: None,
-            reel_minutes: 2,
             transfer: None,
             reel_menu: None,
             reel_on_next: false,
@@ -556,11 +545,7 @@ impl DemosView {
             return;
         }
         let modes = page_modes();
-        let request = client.request_featured_demos(
-            modes[self.mode].id,
-            self.map.as_deref().unwrap_or("all"),
-            FEATURED_LIMIT,
-        );
+        let request = client.request_featured_demos(modes[self.mode].id, "all", FEATURED_LIMIT);
         self.featured = Featured::Loading {
             request,
             sent: Instant::now(),
@@ -585,18 +570,6 @@ impl DemosView {
 
     fn set_mode(&mut self, mode: usize, client: &mut LobbyClient) {
         self.mode = mode;
-        if let Some(map) = &self.map
-            && !self.in_mode().iter().any(|d| &d.map == map)
-        {
-            self.map = None;
-        }
-        self.page = 1;
-        self.hero_file = None;
-        self.refetch_featured(client);
-    }
-
-    fn set_map(&mut self, map: Option<String>, client: &mut LobbyClient) {
-        self.map = map;
         self.page = 1;
         self.hero_file = None;
         self.refetch_featured(client);
@@ -640,7 +613,6 @@ impl DemosView {
         let mut list: Vec<DemoInfo> = self
             .in_mode()
             .into_iter()
-            .filter(|d| self.map.as_ref().is_none_or(|m| &d.map == m))
             .filter(|d| {
                 query.is_empty()
                     || format!("{} {} {}", d.map, d.map_name(), d.players.join(" "))
@@ -732,14 +704,13 @@ impl DemosView {
             self.set_mode(m, client);
         }
         let mut y = keys_bottom.max(head.bottom()) + 18.0;
-        let boards: Vec<(&str, &str)> = TABS.iter().map(|t| (t.1, t.2)).collect();
+        let boards: Vec<(&str, &str)> = TABS.iter().map(|t| (t.1, "")).collect();
         let open = TABS.iter().position(|t| t.0 == self.tab).unwrap_or(0);
         let (picked, bottom) = board_keys(ui, "dm-board", rect.left(), y, rect.width(), &boards, open);
         if let Some(i) = picked {
             self.set_tab(TABS[i].0, client);
         }
-        y = bottom + 18.0 - 10.6;
-        y = rule(&painter, rect.left(), y, &self.rule_text()) + 18.0;
+        y = bottom + 18.0 - 10.6 + 8.0;
         if self.transfer.is_some() {
             y = self.transfer_bar(ui, Rect::from_min_size(pos2(rect.left(), y), vec2(rect.width(), 48.0)));
             y += 18.0;
@@ -752,21 +723,6 @@ impl DemosView {
         }
         self.reel_sheet(ui);
         choice
-    }
-
-    fn rule_text(&self) -> String {
-        match (&self.tab, &self.featured) {
-            (Tab::Latest, _) => format!("Newest first · the latest {DEMO_LIST_LIMIT} recordings"),
-            (Tab::Yours, _) => "Matches you played on a verified seat, newest first".into(),
-            (_, Featured::Ready(f)) if !f.is_empty() => {
-                if f.iter().any(|(_, reason)| reason.contains("top 10")) {
-                    "This week's matches with players from the 30-day top 10".into()
-                } else {
-                    "No top-10 matches this week · the latest multiplayer matches instead".into()
-                }
-            }
-            _ => "Recordings from the last 7 days".into(),
-        }
     }
 
     /// `dm-transfer`: what is loading, or why it failed, and its key.
@@ -897,76 +853,77 @@ impl DemosView {
         bounds
     }
 
-    /// `dm-shot__flags` and `__len`: the mode, extra chips and the map
-    /// along the top, the length at the right. Returns the flags' bottom.
-    #[allow(clippy::too_many_arguments)]
-    fn flags(&self, painter: &Painter, shot: Rect, demo: &DemoInfo, hero: bool, featured: bool) -> f32 {
+    /// `dm-shot__flags`: tabs flush in the shot's top corners, as the
+    /// frame-rate counter sits in the screen's. Featured (fixed width) and
+    /// the mode from where the slab's slanted edge starts, the map name in
+    /// what is left, the length at the right. `left` is the face's top-left
+    /// corner. Returns the row's bottom.
+    fn flags(&self, painter: &Painter, shot: Rect, left: f32, demo: &DemoInfo, hero: bool, featured: bool) -> f32 {
         let mode = self.mode_of(demo);
-        let (inset, top, size, pad) = if hero {
-            (30.0, 20.0, 12.0, (14.0, 7.0))
-        } else {
-            (22.0, 14.0, 11.0, (12.0, 6.0))
-        };
+        let vw = painter.ctx().content_rect().width();
+        let (tab_h, flag_size, len_size) = if hero { (54.0, 18.0, 20.0) } else { (40.0, 15.0, 15.0) };
+        let top = shot.top();
+        // The length: ink, its left edge slanted, flush right.
         let len = line(
             painter,
             &clock(demo.duration_ms),
-            if hero { 15.0 } else { 13.0 },
+            len_size,
             display_family(),
             cream(),
             0.06,
         );
-        let lp = if hero { (14.0, 8.0) } else { (12.0, 6.0) };
+        let (lpl, lpr) = if hero { (30.0, 22.0) } else { (24.0, 18.0) };
         let lr = Rect::from_min_size(
-            pos2(
-                shot.right() - (if hero { 28.0 } else { 18.0 }) - len.size().x - 2.0 * lp.0,
-                shot.top() + top,
-            ),
-            vec2(len.size().x + 2.0 * lp.0, len.size().y + 2.0 * lp.1),
+            pos2(shot.right() - lpr - len.size().x - lpl, top),
+            vec2(lpl + len.size().x + lpr, tab_h),
         );
-        let c = lr.width() * 0.08;
-        painter.add(Shape::convex_polygon(
-            slant(lr, c, c),
-            hsla(250.0, 50.0, 4.0, 0.72),
-            Stroke::NONE,
-        ));
-        painter.galley(lr.center() - len.size() / 2.0, len, cream());
-        let mut x = shot.left() + inset;
-        let y = shot.top() + top;
+        painter.add(Shape::convex_polygon(slant(lr, 10.0, 0.0), ink(), Stroke::NONE));
+        painter.galley(pos2(lr.left() + lpl, lr.center().y - len.size().y / 2.0), len, cream());
+        // The tags, each tucked under the one before's slant.
         let label = if demo.players.len() > 2 {
             format!("{} · {}", mode.title, demo.players.len())
         } else {
             mode.title.to_owned()
         };
-        x += chip(painter, pos2(x, y), &label, size, ink(), mode.mark, pad) + 8.0;
-        if featured {
-            let g = line(painter, "FEATURED", size, display_family(), gold_text(), 0.12);
-            let r = Rect::from_min_size(
-                pos2(x, y),
-                vec2(g.size().x + size + 6.0 + 2.0 * pad.0, g.size().y + 2.0 * pad.1),
-            );
-            let c = r.width() * 0.08;
-            painter.add(Shape::convex_polygon(slant(r, c, c), ink(), Stroke::NONE));
-            paint_icon(
-                painter,
-                Icon::Star,
-                pos2(r.left() + pad.0 + size * 0.45, r.center().y),
-                size * 0.9,
-                gold_text(),
-            );
-            painter.galley(
-                pos2(r.left() + pad.0 + size + 6.0, r.center().y - g.size().y / 2.0),
-                g,
-                gold_text(),
-            );
-            x = r.right() + 8.0;
-        }
-        let map_size = if hero {
-            clamp_css(18.0, painter.ctx().content_rect().width() * 0.016, 28.0)
-        } else {
-            clamp_css(14.0, painter.ctx().content_rect().width() * 0.0105, 19.0)
+        let (pl, pr, pl_next) = if hero { (20.0, 30.0, 28.0) } else { (16.0, 24.0, 22.0) };
+        let mut x = left;
+        let mut first = true;
+        let mut tab = |x: &mut f32, words: &str, star: bool, fg: Color32, bg: Color32| {
+            let g = line(painter, &words.to_uppercase(), flag_size, display_family(), fg, 0.12);
+            let icon_w = if star { flag_size + 6.0 } else { 0.0 };
+            let start = if first { *x } else { *x - 6.0 };
+            let pad_l = if first { pl } else { pl_next };
+            let r = Rect::from_min_size(pos2(start, top), vec2(pad_l + icon_w + g.size().x + pr, tab_h));
+            painter.add(Shape::convex_polygon(
+                slant(r, if first { 0.0 } else { 10.0 }, 10.0),
+                bg,
+                Stroke::NONE,
+            ));
+            if star {
+                paint_icon(
+                    painter,
+                    Icon::Star,
+                    pos2(r.left() + pad_l + flag_size * 0.45, r.center().y),
+                    flag_size * 0.9,
+                    fg,
+                );
+            }
+            painter.galley(pos2(r.left() + pad_l + icon_w, r.center().y - g.size().y / 2.0), g, fg);
+            *x = r.right();
+            first = false;
         };
-        let room = lr.left() - 12.0 - (x + 4.0);
-        let chip_h = size + 2.0 * pad.1;
+        if featured {
+            tab(&mut x, "Featured", true, gold_text(), ink());
+        }
+        tab(&mut x, &label, false, ink(), mode.mark);
+        // The map name in the room left before the length.
+        let map_size = if hero {
+            clamp_css(18.0, vw * 0.015, 28.0)
+        } else {
+            clamp_css(14.0, vw * 0.0105, 19.0)
+        };
+        let pad = if hero { 16.0 } else { 12.0 };
+        let room = lr.left() - pad - (x + pad);
         if room > 30.0 {
             let shown = elide(
                 painter,
@@ -975,13 +932,13 @@ impl DemosView {
                 display_family(),
                 room,
             );
-            let shadow = line(painter, &shown, map_size, display_family(), hsl(250.0, 50.0, 3.0), 0.05);
-            let g = line(painter, &shown, map_size, display_family(), cream(), 0.05);
-            let at = pos2(x + 4.0, y + chip_h / 2.0 + 1.0 - g.size().y / 2.0);
+            let shadow = line(painter, &shown, map_size, display_family(), hsl(250.0, 50.0, 3.0), 0.02);
+            let g = line(painter, &shown, map_size, display_family(), cream(), 0.02);
+            let at = pos2(x + pad, top + tab_h / 2.0 - g.size().y / 2.0);
             painter.galley(at + vec2(2.0, 3.0), shadow, cream());
             painter.galley(at, g, cream());
         }
-        y + chip_h.max(lr.height())
+        top + tab_h
     }
 
     /// `renderFeatured`: the featured match beside the week's picks.
@@ -998,7 +955,7 @@ impl DemosView {
         let picks_r = Rect::from_min_max(pos2(hero_r.right() + gap, area.top()), area.max);
 
         let empty = if !self.connected {
-            Some("Connect to the lobby to see this week's picks.".to_owned())
+            Some("Connect to the lobby to see the picks.".to_owned())
         } else if !self.featured_supported {
             Some("Featured picks are unavailable on this lobby server. Latest has every match.".to_owned())
         } else {
@@ -1007,32 +964,48 @@ impl DemosView {
                 Featured::Ready(f) if f.is_empty() => {
                     let modes = page_modes();
                     let mode = modes[self.mode];
-                    let place = if self.map.is_some() {
-                        " on this map".to_owned()
-                    } else if mode.id != "all" {
-                        format!(" in {}", mode.title)
-                    } else {
+                    let place = if mode.id == "all" {
                         String::new()
+                    } else {
+                        format!(" in {}", mode.title)
                     };
-                    Some(format!(
-                        "No multiplayer matches{place} this week yet. Latest has every match."
-                    ))
+                    Some(format!("No multiplayer matches{place} recorded yet."))
                 }
                 Featured::Ready(_) => None,
-                _ => Some("Loading this week's picks…".to_owned()),
+                _ => Some("Loading the picks…".to_owned()),
             }
         };
         let picks: Vec<(DemoInfo, String)> = match &self.featured {
             Featured::Ready(f) => f.clone(),
             _ => Vec::new(),
         };
-        // `dm-picks__label`.
-        let label_c = hsla(45.0, 100.0, 95.0, 0.5);
-        let g = line(&painter, "THIS WEEK'S BEST", 12.0, body(), label_c, 0.18);
-        painter.galley(pos2(picks_r.left(), picks_r.top() + 2.0), g, label_c);
+        // `dm-picks__label`: how many picks, on the campaign's gold plate.
+        let mut list_top = picks_r.top();
         if !picks.is_empty() {
-            let g = line(&painter, &format!("{} PICKS", picks.len()), 12.0, body(), label_c, 0.18);
-            painter.galley(pos2(picks_r.right() - g.size().x, picks_r.top() + 2.0), g, label_c);
+            let words = if picks.len() == 1 { "PICK" } else { "PICKS" };
+            let number = line(&painter, &picks.len().to_string(), 24.0, display_family(), ink(), 0.0);
+            let label = line(&painter, words, 15.0, display_family(), ink(), 0.14);
+            let pr = Rect::from_min_size(
+                pos2(picks_r.left() + 4.0, picks_r.top() + 2.0),
+                vec2(
+                    22.0 + number.size().x + 10.0 + label.size().x + 30.0,
+                    10.0 + number.size().y + 12.0,
+                ),
+            );
+            crate::client::campaign::campaign_view::plate_behind(
+                &painter,
+                pr,
+                crate::client::campaign::campaign_view::PlateLook::Gold,
+            );
+            let base = pr.top() + 10.0 + number.size().y;
+            let nw = number.size().x;
+            painter.galley(pos2(pr.left() + 22.0, pr.top() + 10.0), number, ink());
+            painter.galley(
+                pos2(pr.left() + 22.0 + nw + 10.0, base - label.size().y - 2.0),
+                label,
+                ink(),
+            );
+            list_top = pr.bottom() + 18.0 - 14.0;
         }
         if let Some(empty) = empty {
             let face = Self::slab(&painter, hero_r, 0.011, None);
@@ -1052,7 +1025,7 @@ impl DemosView {
         self.hero(ui, hero_r, &current, shots);
 
         // `dm-picks__list`.
-        let list = Rect::from_min_max(pos2(picks_r.left(), picks_r.top() + 2.0 + 12.0 + 14.0), picks_r.max);
+        let list = Rect::from_min_max(pos2(picks_r.left(), list_top), picks_r.max);
         let mut picked = None;
         let busy = self.busy();
         ui.scope_builder(egui::UiBuilder::new().max_rect(list), |ui| {
@@ -1170,25 +1143,10 @@ impl DemosView {
         let when = jiff::Timestamp::from_millisecond(demo.date as i64)
             .map(|t| t.to_zoned(jiff::tz::TimeZone::system()))
             .map_or_else(|_| String::new(), |z| z.strftime("%a %H:%M").to_string());
-        let wg2 = line(
-            &painter,
-            &format!("{when} · {}", demo.size_text()).to_uppercase(),
-            14.0,
-            body(),
-            sub,
-            0.12,
-        );
+        let wg2 = line(&painter, &when.to_uppercase(), 14.0, body(), sub, 0.12);
         let keys_w = {
             let w = |s: &str, size: f32| line(&painter, s, size, display_family(), ink(), 0.1).size().x;
-            34.0 + w("WATCH", watch_size)
-                + watch_size * 1.3
-                + 78.0
-                + 7.8
-                + 28.0
-                + w("HIGHLIGHTS", 14.0)
-                + 68.0
-                + 18.0
-                + 3.0 * 56.0
+            34.0 + w("WATCH", watch_size) + watch_size * 1.3 + 78.0 + 7.8 + 28.0 + w("HIGHLIGHTS", 14.0) + 68.0
         };
         let right = r.right() - 28.0 - r.width() * 0.011;
         let where_w = ag.size().x.max(wg2.size().x).max(150.0);
@@ -1198,7 +1156,7 @@ impl DemosView {
             if short { 14.0 } else { 20.0 } + 62.0 + 7.8 + 10.0 + 6.0 + if wrap { where_h + 14.0 } else { 0.0 };
         let shot = Self::shot(&painter, &face, r.height() - foot_h, demo, &mode, shots);
         painter.line_segment([face[0], face[1]], Stroke::new(2.0, Color32::from_white_alpha(102)));
-        self.flags(&painter, shot, demo, true, true);
+        self.flags(&painter, shot, face[0].x, demo, true, true);
         // `dm-vs`: who played, big, across the bottom of the shot.
         let vs_left = shot.left() + 34.0;
         let vs_right = shot.right() - 38.0;
@@ -1297,12 +1255,9 @@ impl DemosView {
         if face.clicked {
             self.play(demo, None);
         }
+        // Highlights opens the reel menu, as a card's does. The browser's
+        // arrow beside it holds only Export video, which is not ported.
         let allowed = reel_lengths(demo.duration_ms);
-        let chosen = if allowed.contains(&self.reel_minutes) {
-            Some(self.reel_minutes)
-        } else {
-            allowed.last().copied()
-        };
         let hg = line(&painter, "HIGHLIGHTS", 14.0, display_family(), ink(), 0.1);
         let hr = Rect::from_min_size(
             pos2(wr.right() + 7.8 + 2.0 + 26.0, fy + 5.0),
@@ -1312,27 +1267,8 @@ impl DemosView {
             .disabled(busy || allowed.is_empty())
             .show(ui);
         icon_label(&painter, &face, Some(Icon::Bolt), "Highlights", 14.0, 0.1);
-        if face.clicked
-            && let Some(m) = chosen
-        {
-            self.play(demo, Some(m));
-        }
-        let mut lx = hr.right() + 6.0 + 12.0;
-        for minutes in REEL_MINUTES {
-            let label = format!("{minutes} min");
-            let g = line(&painter, &label.to_uppercase(), 12.0, display_family(), cream(), 0.06);
-            let kr = Rect::from_min_size(pos2(lx, fy + 5.0 + 7.0), vec2((g.size().x + 20.0).max(50.0), 38.0));
-            lx = kr.right() + 6.0;
-            if allowed.contains(&minutes) {
-                if flat_key(ui, ("dm-len", minutes), kr, &label, None, Some(minutes) == chosen, 12.0) {
-                    self.reel_minutes = minutes;
-                }
-            } else {
-                ui.scope(|ui| {
-                    ui.set_opacity(0.35);
-                    flat_key(ui, ("dm-len", minutes), kr, &label, None, false, 12.0);
-                });
-            }
+        if face.clicked {
+            self.reel_menu = Some((demo.clone(), face.rect, ui.input(|i| i.time)));
         }
         // `dm-hero__where`, at the right or under the keys.
         let top = if wrap {
@@ -1340,7 +1276,6 @@ impl DemosView {
         } else {
             fy + 31.0 - where_h / 2.0
         };
-        let _ = lx;
         let ah = ag.size().y;
         painter.galley(pos2(right - ag.size().x, top), ag, cream());
         painter.galley(pos2(right - wg2.size().x, top + ah + 9.0), wg2, sub);
@@ -1369,22 +1304,6 @@ impl DemosView {
             self.page = 1;
         }
         let sub = hsla(45.0, 100.0, 95.0, 0.55);
-        let tail = format!(
-            "{}{}",
-            if list.len() == 1 { "demo" } else { "demos" },
-            if pages > 1 {
-                format!(" · page {} of {pages}", self.page)
-            } else {
-                String::new()
-            }
-        )
-        .to_uppercase();
-        let tg = line(&painter, &tail, 13.0, body(), sub, 0.18);
-        let ng = line(&painter, &list.len().to_string(), 15.0, display_family(), cream(), 0.04);
-        let cy = field.center().y;
-        let tx = pane.right() - tg.size().x;
-        painter.galley(pos2(tx, cy - tg.size().y / 2.0), tg, sub);
-        painter.galley(pos2(tx - 4.0 - ng.size().x, cy - ng.size().y / 2.0), ng, cream());
 
         let pager_h = if pages > 1 { 44.0 + 3.6 + 22.0 } else { 0.0 };
         let grid = Rect::from_min_max(
@@ -1451,7 +1370,7 @@ impl DemosView {
         let face = Self::slab(&painter, r, 0.018, Some(&mode));
         let shot = Self::shot(&painter, &face, r.height() - foot_h, demo, &mode, shots);
         painter.line_segment([face[0], face[1]], Stroke::new(2.0, Color32::from_white_alpha(102)));
-        let flags_bottom = self.flags(&painter, shot, demo, false, false);
+        let flags_bottom = self.flags(&painter, shot, face[0].x, demo, false, false);
         // `dm-mu`: who played.
         let vw = ui.ctx().content_rect().width();
         let size = clamp_css(13.0, vw * 0.0095, 16.0);
@@ -1553,22 +1472,17 @@ impl DemosView {
         // `dm-card__where`.
         let room = r.right() - 14.0 - r.width() * 0.018 - (hr.right() + 12.0);
         if room > 30.0 {
+            // How long ago, larger; the size is not shown.
             let ago_t = elide(
                 &painter,
                 &ago(demo.date, true, now_ms()).to_uppercase(),
-                17.0,
-                body(),
+                19.0,
+                display_family(),
                 room,
             );
-            let ag = line(&painter, &ago_t, 17.0, body(), cream(), 0.08);
-            let sub = hsla(45.0, 100.0, 95.0, 0.55);
-            let size_t = elide(&painter, &demo.size_text().to_uppercase(), 13.0, body(), room);
-            let sg = line(&painter, &size_t, 13.0, body(), sub, 0.1);
+            let ag = line(&painter, &ago_t, 19.0, display_family(), cream(), 0.08);
             let right = r.right() - 14.0 - r.width() * 0.018;
-            let top = fy + 21.0 - (ag.size().y + 7.0 + sg.size().y) / 2.0;
-            let ah = ag.size().y;
-            painter.galley(pos2(right - ag.size().x, top), ag, cream());
-            painter.galley(pos2(right - sg.size().x, top + ah + 7.0), sg, sub);
+            painter.galley(pos2(right - ag.size().x, fy + 21.0 - ag.size().y / 2.0), ag, cream());
         }
     }
 
@@ -1663,7 +1577,7 @@ impl DemosView {
         };
         let screen = ui.ctx().content_rect();
         let w = 440.0_f32.min(screen.width() * 0.92);
-        let h = 18.0 + 36.0 + 6.0 + 18.0 + 16.0 + 64.0 + 16.0 + 18.0 + 20.0;
+        let h = 18.0 + 36.0 + 16.0 + 64.0 + 20.0;
         let left = (key.center().x - w / 2.0).clamp(screen.left() + 16.0, screen.right() - w - 16.0);
         let above = key.top() - h - 18.0;
         let top = if above < 12.0 { key.bottom() + 18.0 } else { above };
@@ -1724,23 +1638,7 @@ impl DemosView {
                     painter.line_segment([c - d, c + d], Stroke::new(2.4, fg));
                 }
                 close |= resp.clicked();
-                y += 36.0 + 6.0;
-                let who = if demo.players.len() == 2 {
-                    format!("{} vs {}", demo.players[0], demo.players[1])
-                } else {
-                    format!("{} players", demo.players.len())
-                };
-                let sub_c = hsla(250.0, 45.0, 8.0, 0.66);
-                let sub = elide(
-                    &painter,
-                    &format!("{who} · {}", demo.map_name()).to_uppercase(),
-                    15.0,
-                    body(),
-                    r.right() - 22.0 - x,
-                );
-                let g = line(&painter, &sub, 15.0, body(), sub_c, 0.06);
-                painter.galley(pos2(x, y), g, sub_c);
-                y += 18.0 + 16.0;
+                y += 36.0 + 16.0;
                 let allowed = reel_lengths(demo.duration_ms);
                 let ow = (r.right() - 22.0 - x - 24.0) / 3.0;
                 for (i, minutes) in REEL_MINUTES.into_iter().enumerate() {
@@ -1766,17 +1664,6 @@ impl DemosView {
                         play = Some(minutes);
                     }
                 }
-                y += 64.0 + 16.0;
-                let hint_c = hsla(250.0, 45.0, 8.0, 0.62);
-                let g = line(
-                    &painter,
-                    "KILLS, SPREES AND CLOSE CALLS, CUT TOGETHER",
-                    14.0,
-                    body(),
-                    hint_c,
-                    0.06,
-                );
-                painter.galley(pos2(x, y), g, hint_c);
             });
         // A press anywhere else closes it (`onDocumentDown`), not the one that opened it.
         let (pressed, at, now) = ui.input(|i| (i.pointer.any_pressed(), i.pointer.interact_pos(), i.time));
@@ -1788,88 +1675,6 @@ impl DemosView {
             self.play(&demo, Some(m));
         } else if close {
             self.reel_menu = None;
-        }
-    }
-
-    /// `renderMaps`: the maps with how many recordings each, in the rail.
-    pub fn rail(&mut self, ui: &mut egui::Ui, mid: Rect, rail_w: f32, client: &mut LobbyClient) {
-        let painter = ui.painter().clone();
-        let in_mode = self.in_mode();
-        let mut maps: Vec<&DemoInfo> = Vec::new();
-        for d in &in_mode {
-            if !maps.iter().any(|m| m.map == d.map) {
-                maps.push(d);
-            }
-        }
-        maps.sort_by_key(|d| d.map_name().to_lowercase());
-        let count = if maps.is_empty() {
-            String::new()
-        } else {
-            format!("{} {}", maps.len(), if maps.len() == 1 { "map" } else { "maps" })
-        };
-        let top = rail_label(&painter, mid, rail_w, "Maps", &count);
-        let list = Rect::from_min_max(
-            pos2(mid.left() + 22.0, top + 8.0),
-            pos2(
-                mid.left() + rail_w - shagger::ui::components::lobby_twin::RAIL_SKEW - 26.0,
-                mid.bottom(),
-            ),
-        );
-        if !self.connected || (!self.archive_arrived && maps.is_empty()) {
-            let why = if !self.connected {
-                "Lobby server offline."
-            } else if self.archive_failed {
-                "Archive unavailable. Use Try again."
-            } else {
-                "Loading the archive…"
-            };
-            let sub = hsla(250.0, 45.0, 8.0, 0.62);
-            let g = wrapped(&painter, why, FontId::new(15.0, body()), sub, list.width().min(240.0));
-            painter.galley(list.min, g, sub);
-            return;
-        }
-        let modes = page_modes();
-        let key_h = if ui.ctx().content_rect().height() <= 960.0 {
-            40.0
-        } else {
-            46.0
-        };
-        let mut rows: Vec<(Option<String>, String, usize, Color32)> =
-            vec![(None, "All maps".into(), in_mode.len(), modes[self.mode].mark)];
-        for d in &maps {
-            let n = in_mode.iter().filter(|o| o.map == d.map).count();
-            rows.push((Some(d.map.clone()), d.map_name().to_owned(), n, self.mode_of(d).mark));
-        }
-        let mut picked = None;
-        ui.scope_builder(egui::UiBuilder::new().max_rect(list), |ui| {
-            egui::ScrollArea::vertical()
-                .id_salt("dm-maps")
-                .auto_shrink([false, false])
-                .show(ui, |ui| {
-                    ui.spacing_mut().item_spacing.y = 0.0;
-                    for (id, label, n, mark) in &rows {
-                        let (slot, _) =
-                            ui.allocate_exact_size(vec2(list.width() - 4.0, key_h + 9.6), egui::Sense::hover());
-                        let rect = Rect::from_min_size(slot.min, vec2(slot.width() - 4.0, key_h));
-                        let face = RailKey {
-                            id: ("dm-map", id.as_deref().unwrap_or("")),
-                            mark: *mark,
-                            name: label,
-                            detail: "",
-                            right: &n.to_string(),
-                            pressed: self.map == *id,
-                            name_width: 0.0,
-                        }
-                        .show(ui, rect);
-                        if face.clicked {
-                            picked = Some(id.clone());
-                        }
-                    }
-                });
-        });
-        if let Some(id) = picked {
-            let next = if self.map == id { None } else { id };
-            self.set_map(next, client);
         }
     }
 }
@@ -1936,7 +1741,6 @@ mod tests {
         assert!(view.archive_arrived);
         assert_eq!(view.archive[0].mode(), "ffa");
         assert_eq!(view.archive[0].map_name(), "Dusk");
-        assert_eq!(view.archive[0].size_text(), "2.5 MB");
     }
 
     #[test]
@@ -1971,12 +1775,6 @@ mod tests {
             let mut output = ctx.run_ui(input, |ui| {
                 let r = Rect::from_min_max(pos2(400.0, 30.0), pos2(1550.0, 840.0));
                 assert!(view.ui(ui, r, &mut client, &mut shots).is_none());
-                view.rail(
-                    ui,
-                    Rect::from_min_max(pos2(0.0, 450.0), pos2(400.0, 740.0)),
-                    400.0,
-                    &mut client,
-                );
             });
             output.textures_delta.clear();
             assert!(output.shapes.len() > 20);
