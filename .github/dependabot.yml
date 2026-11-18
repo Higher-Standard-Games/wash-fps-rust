@@ -1,0 +1,11 @@
+# Actions are pinned to commit SHAs (docs/research/RUST.md, "Release supply
+# chain"); this proposes the new SHA when an action tags a release.
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    groups:
+      actions:
+        patterns: ["*"]
