@@ -128,6 +128,8 @@ pub struct Scoreboard {
     retry_mission: Option<String>,
     /// Where the "Retry" key was drawn.
     retry_rect: Cell<Option<[f32; 4]>>,
+    /// The mouse, in CSS pixels, for the keys' `:hover`.
+    pointer: Cell<Option<(f32, f32)>>,
     local_player_id: String,
     round: u32,
     carrier: Option<String>,
@@ -511,6 +513,21 @@ impl Scoreboard {
     #[must_use]
     pub fn return_offered(&self) -> bool {
         self.return_offered
+    }
+
+    /// The mouse moved to (`x`, `y`) CSS pixels, or left the window: the
+    /// keys light under it (`.raised-key:hover`).
+    pub fn set_pointer(&self, at: Option<(f32, f32)>) {
+        self.pointer.set(at);
+    }
+
+    /// Whether the mouse is over "Back to the lobby" or "Retry", for the
+    /// pointing hand.
+    #[must_use]
+    pub fn key_hovered(&self) -> bool {
+        self.pointer
+            .get()
+            .is_some_and(|(x, y)| self.return_hit(x, y) || self.retry_hit(x, y).is_some())
     }
 
     /// Whether a click at (`x`, `y`) CSS pixels pressed "Retry", and the
@@ -1052,36 +1069,58 @@ impl Scoreboard {
         let x = vw - 0.05 * vw - w - depth * 0.75;
         let y = vh - 0.12 * vh - raise - h - depth;
         let cut = [[0.05, 0.0], [1.0, 0.0], [0.95, 1.0], [0.0, 1.0]];
-        // The key's side, under and behind the face.
-        Slab {
-            clip: &cut,
-            background: Gradient::new(
-                180.0,
-                &[
-                    (hsla(36.0, 92.0, 40.0, 1.0), None),
-                    (hsla(28.0, 88.0, 25.0, 1.0), Some(1.0)),
+        // `.raised-key:hover`: the violet lift, the face standing 0.35 of
+        // its depth further off its side (`--key-press: -0.35`).
+        let hovered = self
+            .pointer
+            .get()
+            .is_some_and(|(px, py)| px >= x && px <= x + w + depth && py >= y && py <= y + h + depth);
+        let (face, side, shadow, press) = if hovered {
+            (
+                [
+                    (hsla(278.0, 92.0, 75.0, 1.0), None),
+                    (hsla(273.0, 80.0, 61.0, 1.0), Some(0.55)),
+                    (hsla(268.0, 72.0, 50.0, 1.0), Some(1.0)),
                 ],
-            ),
-            skew_deg: 0.0,
-            shadow: Some(([depth * 0.75 / UI_SCALE + 2.0, 5.0], hsla(250.0, 70.0, 3.0, 0.62))),
-        }
-        .draw(hud, x + depth * 0.75, y + depth, w, h);
-        Slab {
-            clip: &cut,
-            background: Gradient::new(
-                180.0,
-                &[
+                [hsla(266.0, 72.0, 34.0, 1.0), hsla(258.0, 72.0, 19.0, 1.0)],
+                hsla(268.0, 80.0, 14.0, 0.5),
+                -0.35,
+            )
+        } else {
+            (
+                [
                     (hsla(51.0, 100.0, 73.0, 1.0), None),
                     (hsla(46.0, 100.0, 57.0, 1.0), Some(0.58)),
                     (hsla(42.0, 100.0, 50.0, 1.0), Some(1.0)),
                 ],
-            ),
+                [hsla(36.0, 92.0, 40.0, 1.0), hsla(28.0, 88.0, 25.0, 1.0)],
+                hsla(250.0, 70.0, 3.0, 0.62),
+                0.0,
+            )
+        };
+        let style = if hovered {
+            tinted(style, hsla(45.0, 100.0, 96.0, 1.0))
+        } else {
+            style
+        };
+        // The key's side, under and behind the face.
+        Slab {
+            clip: &cut,
+            background: Gradient::new(180.0, &[(side[0], None), (side[1], Some(1.0))]),
+            skew_deg: 0.0,
+            shadow: Some(([depth * 0.75 / UI_SCALE + 2.0, 5.0], shadow)),
+        }
+        .draw(hud, x + depth * 0.75, y + depth, w, h);
+        let (fx, fy) = (x + depth * 0.75 * press, y + depth * press);
+        Slab {
+            clip: &cut,
+            background: Gradient::new(180.0, &face),
             skew_deg: 0.0,
             shadow: None,
         }
-        .draw(hud, x, y, w, h);
-        hud.rect(x + 0.05 * w, y, 0.95 * w, 2.0, hsla(0.0, 0.0, 100.0, 0.55));
-        hud.text(x + 46.0, y + (h + a - d) / 2.0, label, &style);
+        .draw(hud, fx, fy, w, h);
+        hud.rect(fx + 0.05 * w, fy, 0.95 * w, 2.0, hsla(0.0, 0.0, 100.0, 0.55));
+        hud.text(fx + 46.0, fy + (h + a - d) / 2.0, label, &style);
         [x, y, w + depth, h + depth]
     }
 }

@@ -136,6 +136,8 @@ struct App {
     captured: bool,
     /// The cursor, in window pixels, for the post-game's way home.
     cursor: Option<(f64, f64)>,
+    /// The pointing hand is up, over a post-game key.
+    pointing: bool,
     /// The post-game has opened up (`FPSHud`'s open-up beat).
     opened_up: bool,
     open_up_due: bool,
@@ -432,6 +434,7 @@ impl ApplicationHandler for App {
                     hud.wake();
                 }
             }
+            WindowEvent::CursorLeft { .. } => self.cursor = None,
             WindowEvent::Focused(false) => {
                 self.held.clear();
                 self.firing = false;
@@ -1024,6 +1027,7 @@ pub fn run(
         held: std::collections::HashSet::new(),
         captured: false,
         cursor: None,
+        pointing: false,
         opened_up: false,
         open_up_due: false,
         last: Instant::now(),

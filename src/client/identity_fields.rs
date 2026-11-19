@@ -206,6 +206,9 @@ pub fn show_slot(
             violet(),
         );
     }
+    if look.prefix.is_some() && slot.value != before {
+        keep_key_caret(ui.ctx(), edit_id, &mut slot.value);
+    }
     let submitted = response.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
 
     // `.identity-say`, 8 under the box.
@@ -216,6 +219,38 @@ pub fn show_slot(
         submitted,
         bottom: bottom.max(say_top + 20.0),
     }
+}
+
+/// A key slot tidied as it's typed (`wireKeySlot`), with the caret kept
+/// after the same key character: a dash put in or taken out around it must
+/// not leave the next letter landing before the last one. Pastes, dashes
+/// and spaces typed by hand all come out in groups of four.
+fn keep_key_caret(ctx: &egui::Context, edit_id: egui::Id, value: &mut String) {
+    use egui::text::{CCursor, CCursorRange};
+    let state = egui::TextEdit::load_state(ctx, edit_id);
+    let caret = state
+        .as_ref()
+        .and_then(|s| s.cursor.char_range())
+        .map_or(value.chars().count(), |r| r.primary.index.into());
+    let (tidy, at) = tidied_key(value, caret);
+    *value = tidy;
+    if let Some(mut state) = state {
+        state.cursor.set_char_range(Some(CCursorRange::one(CCursor::new(at))));
+        egui::TextEdit::store_state(ctx, edit_id, state);
+    }
+}
+
+/// The slot's text in groups of four and where the caret goes in it: after
+/// as many key characters as stood before `caret` (a char index) in `typed`.
+fn tidied_key(typed: &str, caret: usize) -> (String, usize) {
+    let head: String = typed.chars().take(caret).collect();
+    let before = key_characters(&head).chars().count();
+    let key = key_characters(typed);
+    let tidy = groups_of_four(&key).join("-");
+    let before = before.min(key.chars().count());
+    // Past `before` key characters and the dashes between them.
+    let at = if before == 0 { 0 } else { before + (before - 1) / 4 };
+    (tidy, at)
 }
 
 /// `.welcome .identity-say`: 15px uppercase, dark on the gold; a good word
@@ -301,6 +336,25 @@ mod tests {
         assert_eq!(judge_name("Ramen_3").1, "Ramen_3 is kept for bots and new players");
         assert_eq!(judge_name("Player_42").2, Tone::Bad);
         assert_eq!(judge_name("Tarmo"), (true, "Tarmo looks good".into(), Tone::Ok));
+    }
+
+    #[test]
+    fn the_caret_stays_after_what_was_typed() {
+        // A fifth letter at the end: the dash goes in before it, the caret
+        // after it, so the sixth follows the fifth.
+        assert_eq!(tidied_key("ABCDE", 5), ("ABCD-E".into(), 6));
+        assert_eq!(tidied_key("ABCD-EF", 7), ("ABCD-EF".into(), 7));
+        // A dash typed by hand at a group's end is the one already coming.
+        assert_eq!(tidied_key("ABCD-", 5), ("ABCD".into(), 4));
+        // Typed in the middle: the rest moves along, the caret with the letter.
+        assert_eq!(tidied_key("ABXCD-EFGH", 3), ("ABXC-DEFG-H".into(), 3));
+        assert_eq!(tidied_key("ABCXD-EFGH", 4), ("ABCX-DEFG-H".into(), 4));
+        // A paste lands whole, the caret at its end.
+        let pasted = "WASHOI-ABCD-EFGH-JKMN-PQRS-TVWX-YZ23";
+        let (tidy, at) = tidied_key(pasted, pasted.chars().count());
+        assert_eq!(tidy, "ABCD-EFGH-JKMN-PQRS-TVWX-YZ23");
+        assert_eq!(at, tidy.chars().count());
+        assert_eq!(tidied_key("", 0), (String::new(), 0));
     }
 
     #[test]

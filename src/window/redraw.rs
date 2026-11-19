@@ -694,6 +694,22 @@ impl App {
             if let (Some(hud), None) = (&mut s.hud, &self.reel) {
                 hud.scoreboard.held = self.held.contains(&KeyCode::Tab) || self.pad_scoreboard;
                 hud.scale = s.window.scale_factor() as f32;
+                // The keys under the board light under a free mouse.
+                let scale = hud.scale;
+                hud.scoreboard.set_pointer(
+                    self.cursor
+                        .filter(|_| !self.captured)
+                        .map(|(x, y)| (x as f32 / scale, y as f32 / scale)),
+                );
+                let pointing = hud.scoreboard.key_hovered();
+                if pointing != self.pointing {
+                    self.pointing = pointing;
+                    s.window.set_cursor(if pointing {
+                        winit::window::CursorIcon::Pointer
+                    } else {
+                        winit::window::CursorIcon::Default
+                    });
+                }
                 hud.set_markers(
                     s.renderer.bomb_site_poses(),
                     &self.camera,

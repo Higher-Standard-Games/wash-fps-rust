@@ -2922,6 +2922,11 @@ Ported from wash-fps staging 3e3980a (from 08390cb) and SHAG fc10b67:
   a Ready held while quick play adds bots, Rejoin cleared when the seat
   comes back, clipped map cards, a tally that gives way to the keys, a
   lenient `maxPlayers`, and `js_group_thousands` for the profile's totals.
+- **Final papercuts (November 19):** the post-game Back to the lobby and
+  Retry keys take the violet `:hover` lift and the pointing hand. Key slots
+  keep the caret after the same key character as dashes come and go. From
+  shagger 16a801d: egui-winit's clipboard is on (arboard, smithay-clipboard
+  on Wayland), so keys paste with Ctrl+V and Copy key works; links stay off.
 - **Later staging fix** (fps 3a06479): failed lobby requests read in words
   (`new_ui_api::request_failure`) on the leaderboard, the Profile record,
   the featured picks and the campaign boards: too many requests, no answer
