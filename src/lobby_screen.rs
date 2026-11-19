@@ -320,6 +320,9 @@ pub fn screenshot(
                 .collect()
         })
         .unwrap_or_default();
+    let campaign_board = seed
+        .get("campaignBoard")
+        .and_then(washoi::client::campaign_board_pane::read_board);
     let read = DemoInfo::read;
     let demos: Option<Vec<DemoInfo>> = seed
         .get("demos")
@@ -386,6 +389,9 @@ pub fn screenshot(
         }
         if !stats.is_empty() {
             panel.profile.seed_stats(stats.clone());
+        }
+        if let Some(board) = &campaign_board {
+            panel.campaign.seed_board(board.clone());
         }
         // Again once the lobby has said hello, which resets the pages.
         if let Some(page) = page

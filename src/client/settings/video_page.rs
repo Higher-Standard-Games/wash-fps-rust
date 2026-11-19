@@ -89,7 +89,7 @@ impl VideoPage {
         let key_w = (width - gap * (per_row as f32 - 1.0)) / per_row as f32;
         let key_h = 150.0;
         let top = ui.cursor().min;
-        for (i, (preset, text, bars)) in VIDEO_PRESETS.iter().enumerate() {
+        for (i, (preset, bars)) in VIDEO_PRESETS.iter().enumerate() {
             let (row, col) = (i / per_row, i % per_row);
             let r = Rect::from_min_size(
                 pos2(
@@ -137,11 +137,7 @@ impl VideoPage {
                 ink(),
                 0.0,
             );
-            let nh = name.size().y;
             painter.galley(pos2(f.left() + 30.0, f.top() + 18.0), name, ink());
-            let sub = hsla(250.0, 45.0, 8.0, 0.62);
-            let g = wrapped(&painter, text, egui::FontId::new(15.0, body()), sub, f.width() - 56.0);
-            painter.galley(pos2(f.left() + 30.0, f.top() + 18.0 + nh + 10.0), g, sub);
             // The meter: three slanted bars.
             for k in 0..3u8 {
                 let x = f.left() + 30.0 + f32::from(k) * 26.0;
@@ -223,9 +219,10 @@ impl VideoPage {
                 Stroke::NONE,
             ));
             let level = load_level(with_cvars(|c| section_load(c, *id)));
-            let y = f.bottom() - 14.0 - 9.0;
+            // `fps-set-sect__load`: three pips, 24 by 12, without a word.
+            let y = f.bottom() - 14.0 - 12.0;
             for k in 0..3u8 {
-                let x = f.left() + 26.0 + f32::from(k) * 21.0;
+                let x = f.left() + 26.0 + f32::from(k) * 27.0;
                 let lit = k < level.pips();
                 let fill = if open {
                     if lit { ink() } else { hsla(250.0, 45.0, 8.0, 0.16) }
@@ -236,21 +233,15 @@ impl VideoPage {
                 };
                 painter.add(Shape::convex_polygon(
                     vec![
-                        pos2(x + 4.5, y),
-                        pos2(x + 18.0, y),
-                        pos2(x + 13.5, y + 9.0),
-                        pos2(x, y + 9.0),
+                        pos2(x + 6.0, y),
+                        pos2(x + 24.0, y),
+                        pos2(x + 18.0, y + 12.0),
+                        pos2(x, y + 12.0),
                     ],
                     fill,
                     Stroke::NONE,
                 ));
             }
-            let word = line(&painter, &level.word().to_uppercase(), 12.0, body(), look.sub, 0.18);
-            painter.galley(
-                pos2(f.left() + 26.0 + 3.0 * 21.0 + 10.0, y + 4.5 - word.size().y / 2.0),
-                word,
-                look.sub,
-            );
         }
         let rows = VIDEO_SECTIONS.len().div_ceil(per_row);
         ui.allocate_rect(
@@ -272,7 +263,6 @@ impl VideoPage {
                         "Brightness",
                         "r_exposure",
                         Range::new(0.5, 2.0, 0.05, format_percent),
-                        None,
                         true,
                     )
                 },
@@ -282,7 +272,6 @@ impl VideoPage {
                         "Contrast",
                         "r_contrast",
                         Range::new(0.5, 2.0, 0.05, format_percent),
-                        None,
                         true,
                     )
                 },
@@ -292,7 +281,6 @@ impl VideoPage {
                         "Render resolution",
                         "r_renderscale",
                         Range::new(0.25, 1.0, 0.05, format_percent),
-                        Some("Below 100% the world draws at fewer pixels and looks softer; the HUD stays sharp"),
                     );
                 },
                 |_, ui| {
@@ -300,65 +288,29 @@ impl VideoPage {
                         ui,
                         Head::new("Antialiasing").cost(Some(2)).tag(Some("Restart")),
                         "r_msaa",
-                        Some("Smooth edges on geometry"),
                         true,
                     );
                 },
             ],
             VideoSection::Effects => &[
                 |_, ui| {
-                    cvar_slider(
-                        ui,
-                        "Bloom",
-                        "r_bloom",
-                        Range::new(0.0, 3.0, 0.1, plain),
-                        Some("Soft light around bright things"),
-                        true,
-                    );
+                    cvar_slider(ui, "Bloom", "r_bloom", Range::new(0.0, 3.0, 0.1, plain), true);
                 },
-                |_, ui| {
-                    on_off(
-                        ui,
-                        Head::new("Reflections").cost(Some(3)),
-                        "r_ssr",
-                        Some("Shiny floors and metal"),
-                        true,
-                    )
-                },
+                |_, ui| on_off(ui, Head::new("Reflections").cost(Some(3)), "r_ssr", true),
                 |_, ui| {
                     let current = with_cvars(|c| super::settings_model::godray_choice(c).id);
                     let labels: Vec<&str> = GODRAY_CHOICES.iter().map(|c| c.label).collect();
                     let at = GODRAY_CHOICES.iter().position(|c| c.id == current);
-                    if let Some(i) = super::settings_fields::seg(
-                        ui,
-                        Head::new("Light shafts").cost(Some(2)),
-                        &labels,
-                        at,
-                        Some("Sunbeams, on maps that have a sun"),
-                        true,
-                    ) {
+                    if let Some(i) =
+                        super::settings_fields::seg(ui, Head::new("Light shafts").cost(Some(2)), &labels, at, true)
+                    {
                         with_cvars(|c| apply_choice(c, &GODRAY_CHOICES[i]));
                     }
                 },
                 |_, ui| {
-                    on_off(
-                        ui,
-                        Head::new("Soft halos").cost(Some(1)),
-                        "r_softhalos",
-                        Some("Lamp halos fade into walls instead of ending in a line"),
-                        true,
-                    );
+                    on_off(ui, Head::new("Soft halos").cost(Some(1)), "r_softhalos", true);
                 },
-                |_, ui| {
-                    cvar_slider(
-                        ui,
-                        "Glow",
-                        "r_glow",
-                        Range::new(0.0, 2.0, 0.05, plain),
-                        Some("Signs, strips and energy shine"),
-                        true,
-                    )
-                },
+                |_, ui| cvar_slider(ui, "Glow", "r_glow", Range::new(0.0, 2.0, 0.05, plain), true),
                 |_, ui| {
                     let ssr = flag("r_ssr");
                     cvar_slider(
@@ -366,52 +318,25 @@ impl VideoPage {
                         "Reflection strength",
                         "r_ssr_strength",
                         Range::new(0.0, 2.0, 0.05, plain),
-                        None,
                         ssr,
                     );
                 },
-                |_, ui| {
-                    on_off(
-                        ui,
-                        Head::new("Comic outlines").cost(Some(1)),
-                        "r_cel_outlines",
-                        Some("Inked edges on the world"),
-                        true,
-                    )
-                },
+                |_, ui| on_off(ui, Head::new("Comic outlines").cost(Some(1)), "r_cel_outlines", true),
                 |_, ui| {
                     on_off(
                         ui,
                         Head::new("Dynamic lights").cost(Some(2)).tag(Some("Next map")),
                         "r_dynamiclight",
-                        Some("Light from shots, rockets, explosions and muzzle flashes"),
                         true,
                     );
                 },
-                |_, ui| {
-                    on_off(
-                        ui,
-                        Head::new("Gibs").cost(Some(1)),
-                        "r_gibs",
-                        Some("The shards a player breaks into"),
-                        true,
-                    )
-                },
-                |_, ui| {
-                    on_off(
-                        ui,
-                        Head::new("Wall marks").cost(Some(1)),
-                        "r_marks",
-                        Some("Holes and scorches where shots hit"),
-                        true,
-                    )
-                },
+                |_, ui| on_off(ui, Head::new("Gibs").cost(Some(1)), "r_gibs", true),
+                |_, ui| on_off(ui, Head::new("Wall marks").cost(Some(1)), "r_marks", true),
                 |_, ui| {
                     on_off(
                         ui,
                         Head::new("Teleport afterimage").cost(Some(1)),
                         "r_teleport_ghost",
-                        Some("The silhouette left where someone teleported from"),
                         true,
                     );
                 },
@@ -423,7 +348,6 @@ impl VideoPage {
                         Head::new("Water").cost(Some(2)),
                         "r_water_quality",
                         &[(1.0, "Low"), (2.0, "Medium"), (3.0, "High")],
-                        None,
                         true,
                     );
                 },
@@ -434,7 +358,6 @@ impl VideoPage {
                         Head::new("Players in water").cost(Some(1)),
                         "r_water_actors",
                         &ON_OFF,
-                        Some("Reflections of nearby players. High water only"),
                         high,
                     );
                 },
@@ -443,26 +366,16 @@ impl VideoPage {
                         ui,
                         Head::new("Glowing panel light").cost(Some(2)).tag(Some("Next map")),
                         "r_arealights",
-                        Some("Light cast from the map's glowing panels"),
                         true,
                     );
                 },
-                |_, ui| {
-                    on_off(
-                        ui,
-                        Head::new("Fog").cost(Some(1)),
-                        "r_fog",
-                        Some("The map's own haze and distance fog"),
-                        true,
-                    )
-                },
+                |_, ui| on_off(ui, Head::new("Fog").cost(Some(1)), "r_fog", true),
                 |_, ui| {
                     cvar_slider(
                         ui,
                         "Underwater wobble",
                         "r_underwater_distortion",
                         Range::new(0.0, 1.0, 0.05, format_percent),
-                        Some("How much the view warps under water"),
                         true,
                     );
                 },
@@ -474,7 +387,6 @@ impl VideoPage {
                         Head::new("Sharpness").cost(Some(1)),
                         "r_anisotropy",
                         &[(1.0, "1×"), (2.0, "2×"), (4.0, "4×"), (8.0, "8×"), (16.0, "16×")],
-                        Some("Keeps floors crisp at an angle"),
                         true,
                     );
                 },
@@ -483,7 +395,6 @@ impl VideoPage {
                         ui,
                         Head::new("Detailed surfaces").cost(Some(2)).tag(Some("Next map")),
                         "r_bsp_pbr",
-                        Some("Richer metal, stone and wear on map surfaces"),
                         true,
                     );
                 },
@@ -501,7 +412,6 @@ impl VideoPage {
                             (4.0, "Blurred"),
                             (8.0, "Flat color"),
                         ],
-                        Some("Softer or flat-color walls and floors. Lighting and transparent effects stay intact."),
                         true,
                     );
                 },
@@ -513,7 +423,6 @@ impl VideoPage {
                         "Correction strength",
                         "r_colorcorrection_strength",
                         Range::new(0.0, 1.0, 0.05, format_percent),
-                        None,
                         on,
                     );
                 },
@@ -595,14 +504,7 @@ impl VideoPage {
         let current = with_cvars(|c| c.get_number("r_colorcorrection"));
         let width = ui.available_width();
         let painter = ui.painter().clone();
-        let name = line(
-            &painter,
-            "COLOR BLINDNESS",
-            15.0,
-            body(),
-            hsla(45.0, 100.0, 95.0, 0.82),
-            0.14,
-        );
+        let name = line(&painter, "COLOR BLINDNESS", 15.0, display_family(), cream(), 0.12);
         let nh = name.size().y;
         let nw = name.size().x;
         let at = ui.cursor().min;
@@ -628,24 +530,14 @@ impl VideoPage {
                 }
             });
         }
-        ui.add_space(9.0);
-        let g = wrapped(
-            &painter,
-            "Not sure which? Try each and keep the one where colors are easiest to tell apart.",
-            egui::FontId::new(13.0, body()),
-            hsla(45.0, 100.0, 95.0, 0.45),
-            width,
-        );
-        let (r, _) = ui.allocate_exact_size(g.size(), egui::Sense::hover());
-        painter.galley(r.min, g, cream());
     }
 }
 
 /// A slider with frame-cost pips in its head.
-fn cvar_slider_cost(ui: &mut egui::Ui, name: &str, cvar: &str, range: Range, help: Option<&str>) {
+fn cvar_slider_cost(ui: &mut egui::Ui, name: &str, cvar: &str, range: Range) {
     // The slider draws the head; the pips go after its name.
     let at = ui.cursor().min;
-    cvar_slider(ui, name, cvar, range, help, true);
+    cvar_slider(ui, name, cvar, range, true);
     if with_cvars(|c| c.exists(cvar)) {
         let painter = ui.painter().clone();
         let w = line(&painter, &name.to_uppercase(), 15.0, body(), cream(), 0.14).size();
@@ -666,7 +558,7 @@ fn cost_color(level: FrameCost) -> egui::Color32 {
     }
 }
 
-/// `fps-set-video-bar`: which preset is in use, and the cost legend.
+/// `fps-set-video-bar`: which preset is in use.
 fn status_bar(ui: &mut egui::Ui) {
     let width = ui.available_width();
     let painter = ui.painter().clone();
@@ -691,34 +583,6 @@ fn status_bar(ui: &mut egui::Ui) {
     let status = painter.layout_job(job);
     let (r, _) = ui.allocate_exact_size(vec2(width, status.size().y.max(14.0)), egui::Sense::hover());
     painter.galley(r.min, status, cream());
-    // The legend, right-aligned.
-    let mut x = r.right();
-    for level in [FrameCost::High, FrameCost::Mid, FrameCost::Low] {
-        let word = line(
-            &painter,
-            &level.word().to_uppercase(),
-            12.0,
-            body(),
-            hsla(45.0, 100.0, 95.0, 0.75),
-            0.16,
-        );
-        x -= word.size().x;
-        let y = r.center().y - word.size().y / 2.0;
-        painter.galley(pos2(x, y), word, cream());
-        x -= 7.0 + 28.0;
-        cost_pips(&painter, pos2(x, r.center().y - 4.0), level.pips(), 1.0);
-        x -= 16.0;
-    }
-    let legend = line(
-        &painter,
-        "FRAME-RATE COST",
-        12.0,
-        body(),
-        hsla(45.0, 100.0, 95.0, 0.5),
-        0.16,
-    );
-    x -= legend.size().x;
-    painter.galley(pos2(x, r.center().y - legend.size().y / 2.0), legend, cream());
 }
 
 #[cfg(test)]

@@ -684,6 +684,9 @@ mod tests {
         let terms = include_str!("../../../assets/docs/TERMS.md");
         let blocks = render_markdown(terms, 2);
         assert!(blocks.len() > 10);
-        assert_eq!(last_updated(terms), "October 22, 2026");
+        assert_eq!(last_updated(terms), "November 18, 2026");
+        let privacy = include_str!("../../../assets/docs/PRIVACY.md");
+        assert!(render_markdown(privacy, 2).len() > 10);
+        assert_eq!(last_updated(privacy), last_updated(terms));
     }
 }

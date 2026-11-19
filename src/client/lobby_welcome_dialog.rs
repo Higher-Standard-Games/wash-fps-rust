@@ -27,6 +27,9 @@ use crate::simulation::movement_profile::DEFAULT_FPS_MOVEMENT_CONFIG;
 
 /// The terms, as the web build bundles them.
 pub const TERMS: &str = include_str!("../../assets/docs/TERMS.md");
+
+/// The privacy notice, shown under the terms; it changes with them.
+pub const PRIVACY: &str = include_str!("../../assets/docs/PRIVACY.md");
 /// `WELCOME_PREFERENCE`.
 pub const WELCOME_PREFERENCE: &str = "washoi.welcome.hideAutomatically";
 /// `TERMS_PREFERENCE`: holds the terms' version the player agreed to.
@@ -408,7 +411,11 @@ impl LobbyWelcomeDialog {
             hide: welcome_is_hidden(),
             save_status: String::new(),
             secondary_tip,
-            terms: render_markdown(TERMS, 2),
+            terms: {
+                let mut blocks = render_markdown(TERMS, 2);
+                blocks.extend(render_markdown(PRIVACY, 2));
+                blocks
+            },
             scroll_reset: true,
             link: None,
         }
@@ -536,8 +543,7 @@ impl LobbyWelcomeDialog {
                     pos2(inner.left(), keys_top + KEY_H / 2.0),
                     agreed,
                     "I agree to the terms of service",
-                    None,
-                    true,
+                    "",
                 ) {
                     self.set_agreed(!agreed);
                 }
@@ -556,9 +562,8 @@ impl LobbyWelcomeDialog {
                     "hide",
                     pos2(inner.left(), keys_top + KEY_H / 2.0),
                     hide,
-                    "Don't show this again",
-                    Some("Reopen this guide with ? in the lobby."),
-                    false,
+                    "Don't show this again.",
+                    " Reopen this guide with ? in the lobby.",
                 ) {
                     self.set_hidden(!hide);
                 }
@@ -733,20 +738,27 @@ impl LobbyWelcomeDialog {
 
 /// `.lobby-guide__preference`: a 24px box and its words (and a small line
 /// under them). `bold` is the agreement's weight. True when clicked.
-fn check_row(
-    ui: &mut egui::Ui,
-    id: &str,
-    at: Pos2,
-    checked: bool,
-    label: &str,
-    small: Option<&str>,
-    bold: bool,
-) -> bool {
+fn check_row(ui: &mut egui::Ui, id: &str, at: Pos2, checked: bool, label: &str, after: &str) -> bool {
     let painter = ui.painter().clone();
-    let g = text(&painter, label, 20.0, body(), ink(if bold { 1.0 } else { 0.92 }), 0.0);
-    let s = small.map(|s| text(&painter, s, 16.0, body(), ink(0.78), 0.0));
-    let text_h = g.size().y + s.as_ref().map_or(0.0, |s| s.size().y + 4.0);
-    let text_w = g.size().x.max(s.as_ref().map_or(0.0, |s| s.size().x));
+    // One line at 20px: the choice in full ink, what follows it a shade lighter.
+    let mut job = egui::text::LayoutJob::default();
+    for (run, alpha) in [(label, 1.0), (after, 0.92)] {
+        if run.is_empty() {
+            continue;
+        }
+        job.append(
+            run,
+            0.0,
+            egui::TextFormat {
+                font_id: FontId::new(20.0, body()),
+                color: ink(alpha),
+                ..Default::default()
+            },
+        );
+    }
+    let g = painter.layout_job(job);
+    let text_h = g.size().y;
+    let text_w = g.size().x;
     let b = Rect::from_min_size(pos2(at.x, at.y - 12.0), vec2(24.0, 24.0));
     let r = Rect::from_min_max(
         pos2(at.x, at.y - text_h / 2.0),
@@ -774,11 +786,7 @@ fn check_row(
     }
     let x = b.right() + 14.0;
     let gy = at.y - text_h / 2.0;
-    let gh = g.size().y;
     painter.galley(pos2(x, gy), g, Color32::WHITE);
-    if let Some(s) = s {
-        painter.galley(pos2(x, gy + gh + 4.0), s, Color32::WHITE);
-    }
     response.clicked()
 }
 
@@ -1092,7 +1100,7 @@ mod tests {
 
     #[test]
     fn the_terms_carry_their_version() {
-        assert_eq!(terms_version(), "October 22, 2026");
+        assert_eq!(terms_version(), "November 18, 2026");
     }
 
     #[test]

@@ -359,7 +359,7 @@ impl PauseMenu {
                 let stacked = w <= 1500.0;
                 let label_size = clamp(15.0, w * 0.011, 21.0);
                 let mut keys: Vec<(&str, &str, &str, PauseMenuAction)> =
-                    vec![("resume", "Resume", "Back to the fight", PauseMenuAction::Resume)];
+                    vec![("resume", "Resume", "", PauseMenuAction::Resume)];
                 // The mode's keys, right under Resume.
                 // No hint: the kit's name ran into the label on a narrow
                 // rail, and the picker shows the kit anyway.
@@ -367,7 +367,7 @@ impl PauseMenu {
                     keys.push(("loadout", "Loadout", "", PauseMenuAction::Loadout));
                 }
                 if settings {
-                    keys.push(("settings", "Settings", "Controls and video", PauseMenuAction::Settings));
+                    keys.push(("settings", "Settings", "", PauseMenuAction::Settings));
                 }
                 for (i, (id, label, hint, act)) in keys.into_iter().enumerate() {
                     // The first key is inked: what Esc most likely came for.
@@ -429,7 +429,7 @@ impl PauseMenu {
                     leave,
                     KeyKind::Leave,
                     "Leave match",
-                    "Back to the lobby",
+                    "",
                     stacked,
                     14.0,
                     focus == Some(leave_at),

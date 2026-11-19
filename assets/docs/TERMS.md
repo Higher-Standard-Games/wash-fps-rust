@@ -1,6 +1,6 @@
 # Terms of Service
 
-**Last Updated:** October 22, 2026
+**Last Updated:** November 18, 2026
 
 **The short version:** everything you do on our servers is public, your key is your account so keep it safe, matches are recorded and help train our bots, be nice, and have fun.
 
@@ -25,9 +25,10 @@ We don't ask for your email, real name, phone number, or a password.
 
 Even without an email, some of what we keep can still identify you, so here it is plainly:
 
-- **What:** your username and key, your match stats, recorded demos of your matches (including chat), and the IP address our servers see when you connect.
+- **What:** your username and a fingerprint of your key, your match stats, and recorded demos of your matches (including chat). Our servers use your IP address while you are connected, to limit abuse, and don't store it; an address we ban is kept only as a keyed hash until the ban ends.
 - **Why:** to run matches, show leaderboards and demos, keep play fair, promote the game, and train our bots (see section 5).
 - **Demos are a permanent public record.** We don't edit or remove them, and we may archive them.
+- **The details** (legal basis, how long each thing is kept, who sees it and your rights) are in our **Privacy Notice**, shown below these terms.
 
 ## 4. Stats and Leaderboards
 
@@ -76,4 +77,4 @@ To the extent the law allows, the game, servers, and stats come "as is" and "as 
 
 - **Age:** you must be at least 13 years old to play on our servers.
 - **Changes:** when these terms change, the game shows you the new version before you play again.
-- **Contact:** for questions, open an issue at [github.com/Higher-Standard-Games/wash-fps](https://github.com/Higher-Standard-Games/wash-fps/issues).
+- **Contact:** write to **washoi@higherstandardgames.com** about your account, your data, a ban or an appeal. For bugs and ideas, open an issue at [github.com/Higher-Standard-Games/wash-fps](https://github.com/Higher-Standard-Games/wash-fps/issues).

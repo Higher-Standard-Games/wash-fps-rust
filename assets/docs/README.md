@@ -1,6 +1,6 @@
 # The lobby's documents
 
-`TERMS.md` and `CREDITS.md` are copies. The master copies live in wash-fps,
+`TERMS.md`, `PRIVACY.md` and `CREDITS.md` are copies. The master copies live in wash-fps,
 at the root of that repository. Edit them there, then run
 `tools/sync_docs.sh` (it reads `../wash-fps` by default) to copy them over.
 

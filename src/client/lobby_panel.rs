@@ -58,7 +58,7 @@ use crate::client::leaderboard_view::LeaderboardView;
 use crate::client::levelshots::{Levelshots, site_base};
 use crate::client::lobby_full_notice::{NoticeKind, lobby_full_notice, offline_retry_delay_sec, retry_delay_sec};
 use crate::client::lobby_music_key::{lobby_music_key, lobby_music_muted, set_lobby_music_muted};
-use crate::client::lobby_rooms::{PlayKeysInput, RoomAction, describe_room, play_keys, room_count_label, sort_rooms};
+use crate::client::lobby_rooms::{PlayKeysInput, RoomAction, describe_room, play_keys, sort_rooms};
 use crate::client::lobby_welcome_dialog::{back_key, back_key_size, dark_key};
 use crate::client::lobby_welcome_guide::{GuideEvent, LobbyWelcomeGuide};
 use crate::client::profile_view::{Account, ProfileAction, ProfileView, Screen as ProfileScreen};
@@ -162,6 +162,8 @@ pub const QUICK_PLAY_MODE: &str = "ffa";
 pub const QUICK_PLAY_BOTS: usize = 4;
 /// Messages kept in the chat log; older ones scroll away for good.
 const CHAT_LOG_LIMIT: usize = 100;
+/// The cap the chat's online pips scale to when the lobby names none.
+const FALLBACK_LOBBY_CAPACITY: usize = 64;
 
 /// Where the lobby sent this player.
 #[derive(Debug, Clone, PartialEq)]
@@ -395,11 +397,20 @@ pub struct LobbyPanel {
     live_matches: Vec<LiveMatchInfo>,
     /// `livePlayers`, by id.
     online: Vec<String>,
+    /// The most players the lobby takes, which the chat's online pips are
+    /// scaled to (`lobbyCapacity`).
+    lobby_capacity: usize,
     chat: VecDeque<ChatLine>,
     chat_draft: String,
     pending_private_create: bool,
     /// The private room being created is quick play's.
     pending_quick_play: bool,
+    /// The room Quick play opened, while the player is in it: Quick play
+    /// leads back to it (`quickPlayLobbyId`).
+    quick_play_lobby_id: Option<String>,
+    /// A quick play room being rejoined after a reconnect: it is Quick
+    /// play's again once back (`rejoiningQuickPlay`).
+    rejoining_quick_play: Option<String>,
     queue_pending: bool,
     room: Option<MatchLobbyView>,
     /// The room's own chat, in the rail while the room is open.
@@ -510,10 +521,13 @@ impl LobbyPanel {
             private_lobby_supported: false,
             live_matches: Vec::new(),
             online: Vec::new(),
+            lobby_capacity: FALLBACK_LOBBY_CAPACITY,
             chat: VecDeque::new(),
             chat_draft: String::new(),
             pending_private_create: false,
             pending_quick_play: false,
+            quick_play_lobby_id: None,
+            rejoining_quick_play: None,
             queue_pending: false,
             room: None,
             room_chat: None,
@@ -694,14 +708,19 @@ impl LobbyPanel {
         self.room_chat = None;
         self.seat_request = None;
         if let Some(room) = self.room.take() {
+            // `roomToRejoin.quickPlay`: once back, it is Quick play's again.
+            self.rejoining_quick_play =
+                (self.quick_play_lobby_id.as_deref() == Some(room.lobby_id.as_str())).then(|| room.lobby_id.clone());
             self.room_to_rejoin = Some((room.lobby_id, self.room_invite.take(), self.account_id.clone()));
         }
+        self.quick_play_lobby_id = None;
         self.queue_pending = false;
         self.pending_private_create = false;
         self.pending_quick_play = false;
         self.private_lobby_supported = false;
         self.campaign_supported = false;
         self.fail_campaign_start("Lost the lobby server.");
+        self.campaign.board_disconnected();
         self.server_gametypes.clear();
         self.live_matches.clear();
         self.online.clear();
@@ -868,6 +887,7 @@ impl LobbyPanel {
                     self.leaderboard.refresh(&mut self.client);
                 }
                 self.campaign_supported = feature("campaign");
+                self.campaign.set_account(self.account_id.clone());
                 if let Some(id) = &self.account_id
                     && let Some(cached) = cached_campaign(id)
                 {
@@ -899,6 +919,10 @@ impl LobbyPanel {
                 self.queue_pending = false;
                 self.notice.clear();
                 self.online = w.online_players.iter().map(|p| p.id.clone()).collect();
+                self.lobby_capacity = w
+                    .max_players
+                    .filter(|&m| m > 0)
+                    .map_or(FALLBACK_LOBBY_CAPACITY, |m| m as usize);
                 self.live_matches.clone_from(&w.live_matches);
                 // Chat history, in place of whatever an earlier connection left.
                 self.chat.clear();
@@ -911,10 +935,11 @@ impl LobbyPanel {
                     });
                 }
                 // `restoreRoom`: the same account, with the room's invite.
-                if let Some((lobby_id, invite, account)) = self.room_to_rejoin.take()
-                    && account == self.account_id
-                {
-                    self.client.join_lobby(&lobby_id, invite.as_deref());
+                match self.room_to_rejoin.take() {
+                    Some((lobby_id, invite, account)) if account == self.account_id => {
+                        self.client.join_lobby(&lobby_id, invite.as_deref());
+                    }
+                    _ => self.rejoining_quick_play = None,
                 }
                 // `startSettingsSync`, beside the bindings, which `--cvars` can move.
                 let dir = shagger::input::input_system::with_input(|i| i.storage().map(Path::to_path_buf))
@@ -1065,6 +1090,7 @@ impl LobbyPanel {
                 self.profile.on_message(kind, message, &account!(self));
             }
             "demos:list_response" | "featured:page" | "featured:error" => self.demos.on_message(kind, message),
+            "campaign:board" | "campaign:board:error" => self.campaign.on_board_message(kind, message),
             // `recoverSeat`'s answer.
             "match:seat_reissued" => {
                 let Some((request, match_id)) = self.seat_request.take() else {
@@ -1165,6 +1191,8 @@ impl LobbyPanel {
         self.queue_pending = false;
         self.notice.clear();
         self.room_invite = invite;
+        let rejoined_quick_play = self.rejoining_quick_play.take().is_some_and(|r| r == id);
+        self.quick_play_lobby_id = (quick_play || rejoined_quick_play).then(|| id.to_owned());
         let fill = if quick_play { QUICK_PLAY_BOTS } else { 0 };
         let room = MatchLobbyView::new(
             lobby,
@@ -1206,6 +1234,7 @@ impl LobbyPanel {
     /// `showPlayStage`: the room is gone.
     fn show_play_stage(&mut self) {
         self.room = None;
+        self.quick_play_lobby_id = None;
         self.room_chat = None;
         self.seat_request = None;
         self.room_invite = None;
@@ -1215,19 +1244,33 @@ impl LobbyPanel {
         self.server_gametypes.iter().any(|g| g.id == id)
     }
 
-    /// `refreshQuickPlayKey`: the lobby, its private rooms and FFA, and no room open.
+    /// The open room is the one Quick play opened.
+    fn in_quick_play(&self) -> bool {
+        self.room
+            .as_ref()
+            .is_some_and(|r| self.quick_play_lobby_id.as_deref() == Some(r.lobby_id.as_str()))
+    }
+
+    /// `refreshQuickPlayKey`: the lobby, its private rooms and FFA, and no
+    /// other room open. In the room it opened, it leads back there.
     #[must_use]
     pub fn quick_play_enabled(&self) -> bool {
         self.connected
-            && self.private_lobby_supported
-            && !self.queue_pending
-            && self.room.is_none()
-            && self.mode_ready(QUICK_PLAY_MODE)
+            && (self.in_quick_play()
+                || (self.private_lobby_supported
+                    && !self.queue_pending
+                    && self.room.is_none()
+                    && self.mode_ready(QUICK_PLAY_MODE)))
     }
 
     /// `startQuickPlay`: a private FFA that adds its bots, votes a map and
     /// readies up by itself.
     pub fn start_quick_play(&mut self) {
+        // Already in the quick play room: back to it, bots and seat as they were.
+        if self.in_quick_play() {
+            self.tab = Tab::Play;
+            return;
+        }
         if self.room.is_some() {
             return;
         }
@@ -1288,17 +1331,6 @@ impl LobbyPanel {
         }
         self.client.chat_send(&text);
         self.chat_draft.clear();
-    }
-
-    /// `refreshPlayerCard`'s second line.
-    fn player_meta(&self) -> &'static str {
-        if !self.connected {
-            if self.lobby_full { "Servers full" } else { "Offline" }
-        } else if self.room.is_some() {
-            "In a room"
-        } else {
-            "In lobby"
-        }
     }
 
     fn mode(&self) -> &'static GameMode {

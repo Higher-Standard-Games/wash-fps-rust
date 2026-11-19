@@ -482,9 +482,9 @@ pub fn apply_choice(cvars: &mut Cvars, choice: &CvarChoice) {
 // ── Video presets ──
 
 /// `VIDEO_PRESETS`: what costs frames; brightness, outlines and the like are
-/// left alone. Balanced is the game's own defaults. With each preset's line
-/// and meter bars.
-pub const VIDEO_PRESETS: [(CvarChoice, &str, u8); 4] = [
+/// left alone. Balanced is the game's own defaults. With each preset's
+/// meter bars.
+pub const VIDEO_PRESETS: [(CvarChoice, u8); 4] = [
     (
         CvarChoice {
             id: "ultralow",
@@ -518,7 +518,6 @@ pub const VIDEO_PRESETS: [(CvarChoice, &str, u8); 4] = [
                 ("r_cel_weapon_outlines", 0.0),
             ],
         },
-        "Frames above all: half resolution, flat map colours, no antialiasing, lights, gibs, marks, fog or outlines.",
         0,
     ),
     (
@@ -552,7 +551,6 @@ pub const VIDEO_PRESETS: [(CvarChoice, &str, u8); 4] = [
                 ("r_cel_weapon_outlines", 1.0),
             ],
         },
-        "The most frames. Plain water, no light shafts, no bloom, hard-edged halos.",
         1,
     ),
     (
@@ -587,7 +585,6 @@ pub const VIDEO_PRESETS: [(CvarChoice, &str, u8); 4] = [
                 ("r_cel_weapon_outlines", 1.0),
             ],
         },
-        "The look the game ships with.",
         2,
     ),
     (
@@ -623,7 +620,6 @@ pub const VIDEO_PRESETS: [(CvarChoice, &str, u8); 4] = [
                 ("r_cel_weapon_outlines", 1.0),
             ],
         },
-        "Adds glow, reflections and see-through water. Wants a strong graphics card.",
         3,
     ),
 ];
@@ -677,16 +673,6 @@ pub enum FrameCost {
 }
 
 impl FrameCost {
-    /// `COST_WORD`.
-    #[must_use]
-    pub const fn word(self) -> &'static str {
-        match self {
-            Self::Low => "Light",
-            Self::Mid => "Medium",
-            Self::High => "Heavy",
-        }
-    }
-
     /// The pips lit of three.
     #[must_use]
     pub const fn pips(self) -> u8 {
@@ -922,7 +908,7 @@ pub fn reset_side_colors(cvars: &mut Cvars) {
     }
 }
 
-/// `OUTLINE_CHOICES`: Thin is the game's default size, Bold twice it.
+/// `OUTLINE_CHOICES`: Thin is the game's default size, Bold a third thicker.
 pub const OUTLINE_CHOICES: [CvarChoice; 3] = [
     CvarChoice {
         id: "off",
@@ -932,12 +918,12 @@ pub const OUTLINE_CHOICES: [CvarChoice; 3] = [
     CvarChoice {
         id: "thin",
         label: "Thin",
-        values: &[("cl_player_outline", 1.0), ("cl_player_outline_size", 25.0)],
+        values: &[("cl_player_outline", 1.0), ("cl_player_outline_size", 19.0)],
     },
     CvarChoice {
         id: "bold",
         label: "Bold",
-        values: &[("cl_player_outline", 1.0), ("cl_player_outline_size", 50.0)],
+        values: &[("cl_player_outline", 1.0), ("cl_player_outline_size", 25.0)],
     },
 ];
 
@@ -977,10 +963,10 @@ pub const BOOST_CHOICES: [CvarChoice; 4] = [
 
 /// `CROSSHAIR_COLORS`: the game's defaults (green, red on a hit) among them.
 pub const CROSSHAIR_COLORS: [(&str, &str); 6] = [
+    ("F4F7FF", "White"),
     ("00FF00", "Green"),
     ("00E7FF", "Cyan"),
     ("FFB400", "Amber"),
-    ("F4F7FF", "White"),
     ("FF4FD8", "Magenta"),
     ("FF3355", "Red"),
 ];

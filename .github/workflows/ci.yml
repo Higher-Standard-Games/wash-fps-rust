@@ -43,6 +43,7 @@ jobs:
           path: wash-fps-main
           sparse-checkout: |
             TERMS.md
+            PRIVACY.md
             CREDITS.md
           sparse-checkout-cone-mode: false
       - run: tools/sync_docs.sh --check wash-fps-main

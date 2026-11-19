@@ -2830,6 +2830,55 @@ Checked SHAG staging 75f740c (fps 08390cb) since the catch-up below:
   (Babylon and DOM costs), the snapshot replay check (browser renderer) and
   the `ProjectileSync.ts` move (no behaviour change).
 
+### Staging catch-up: beta.13 polish (November 18, 2026)
+
+Ported from wash-fps staging 3e3980a (from 08390cb) and SHAG fc10b67:
+
+- **The rail:** Campaign follows Quick play in its purple, then Play online.
+  In a room the Play online key reads Lobby with a small radar sweeping on
+  it, and Quick play leads back to the room it opened (also after a
+  reconnect). The player plate has no status line, and the chat's online
+  count is four pips against the lobby's `maxPlayers` (64 when it names
+  none). A banned account stops retrying and shows the ban notice.
+- **Play online:** the mode tiles lose their numbers, the subtitle is 19 px,
+  and the chosen mode stays pressed in. Private lobby has no hint.
+- **The match room** (shagger): ready pips and a ready count, You and Bot
+  corner tabs, six vote cards three by two with Your vote and Leading tabs,
+  the AI invite countdown under the clock, and keys that say what they do in
+  their label alone. The twin loading screens mark steps with a check, a
+  spinner or a cross, and show one line beside the status chip.
+- **Leaderboard:** an All tab first, each player at their best mode's rating
+  with a mode badge on the row; a gold plate with the ranked count; the
+  plinth's rating large (faded while provisional) over a win, draw and loss
+  bar.
+- **Campaign leaderboard** (`campaign_board_pane.rs`, from
+  `CampaignBoardPane.ts`): a Leaderboard key at the head's right asks the
+  lobby for `campaign:board` and shows Top scorers, First to finish and each
+  operation's top three. Offline, or on a lobby with no campaign, it says so.
+  `menu --seed` takes a `campaignBoard` for screenshots.
+- **Profile:** a card per mode (rank, rating, record, stats) and gold and dark
+  totals plates; the "not rated" counts are gone.
+- **Welcome:** the terms of November 18 and the new privacy notice
+  (`assets/docs/PRIVACY.md`, synced by `tools/sync_docs.sh`), and one-line
+  check rows. The identity screens lose their kickers, the kanji and the key
+  hints.
+- **Demos:** the mode, map and Featured flags sit on the shot, the length at
+  the right; no rail list, lens keys, sizes or counts; plainer empty states.
+- **Settings:** no help lines, notes, "DEFAULT" values, preset lines or
+  "Saved as you go"; card titles 18 px, field names in the display face;
+  bigger key caps, chips and mouse labels; the actions grid fits 230 px
+  columns; stick feel puts sliders and switches side by side.
+- **In the match:** no hints on the Esc menu's keys, no mode name over the
+  loadout heading, and Enter or T with Shift opens team chat as Y does. The
+  crosshair's default is `F4F7FF` and `cl_player_outline_size` is 19.
+- **Not needed here:** the Highlights key's split arrow (native has no video
+  export), the featured demos' fallback (the lobby's), the reduced-motion
+  rules (native has none), the downloads dialog's "Common assets" line
+  (native has no such dialog), and the server, bot and deploy changes
+  (spectator delay, event perception, fair-play ledger, ticketless watchers).
+- **CI:** the docs-sync job compares `assets/docs` with wash-fps **main**, so
+  it stays red until staging's terms and privacy notice reach main.
+
 ### Staging catch-up: the campaign's story and finale (November 17, 2026)
 
 Ported from SHAG staging 6fa6c61 (fps 8c9f6fe):

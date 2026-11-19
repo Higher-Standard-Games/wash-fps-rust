@@ -60,10 +60,8 @@ pub enum Loaded {
     Quit,
 }
 
-/// The match being joined, for the handoff: the game server, and whether
-/// the player only watches.
+/// The match being joined, for the handoff: whether the player only watches.
 pub struct Handoff {
-    pub server_url: String,
     pub spectator: bool,
 }
 
@@ -205,7 +203,7 @@ impl LoadingApp {
                 };
                 let handoff = match &mut self.screen {
                     Screen::Handoff(h) if self.networked => {
-                        let spectating = h.rail.context == "Live channel";
+                        let spectating = h.spectating();
                         h.set_status(if spectating { "SPECTATING" } else { "CONNECTED" });
                         Some(h.clone())
                     }
@@ -429,7 +427,7 @@ pub fn run(o: Arc<ViewOptions>, handoff: Option<Handoff>, lobby_url: Option<&str
     });
     let screen = match &handoff {
         Some(h) => {
-            let mut overlay = ConnectingOverlay::new(&h.server_url, h.spectator);
+            let mut overlay = ConnectingOverlay::new(h.spectator);
             // The page's handoff got this far before it asked for the match.
             overlay.set_status("CONNECTING");
             Screen::Handoff(overlay)
@@ -528,7 +526,7 @@ pub fn screenshot(
     let gpu = Gpu::headless().map_err(|e| e.to_string())?;
     let mut layer = EguiLayer::offscreen(&gpu, OFFSCREEN_FORMAT);
     install_style(&layer.ctx);
-    let mut handoff = ConnectingOverlay::new("wss://eu.washoi.net/game/1", false);
+    let mut handoff = ConnectingOverlay::new(false);
     handoff.set_status("CONNECTING");
     handoff.set_status("CONNECTED");
     let mut view = TransferLoadingView::mount(

@@ -344,7 +344,7 @@ impl WelcomeOverlay {
         let g = gap(short);
         match self.screen {
             Screen::Name => {
-                y = screen_head(&painter, left, y, width, short, "Welcome", "Who are you?", &[]) + g;
+                y = screen_head(&painter, left, y, width, short, "Who are you?", &[]) + g;
                 let look = SlotLook {
                     placeholder: "Your name",
                     max_chars: Some(16),
@@ -368,9 +368,9 @@ impl WelcomeOverlay {
                 y = r.bottom + g;
                 let typed = self.name_slot.value.trim().to_owned();
                 let disabled = (!typed.is_empty() && !judge_name(&typed).0) || self.renaming.is_some();
-                let (go, bottom) = go_key(ui, "welcome-play", left, y, short, "Play", "That's it", true, disabled);
+                let (go, bottom) = go_key(ui, "welcome-play", left, y, short, "Play", true, disabled);
                 // `welcome__go`'s gap of 30 to the note.
-                let key_w = go_key_width(&painter, "Play", "That's it", true);
+                let key_w = go_key_width(&painter, "Play", true);
                 note(
                     &painter,
                     left + key_w + 10.2 * 0.75 + 4.0 + 30.0,
@@ -394,7 +394,6 @@ impl WelcomeOverlay {
                     y,
                     width,
                     short,
-                    "Welcome back",
                     "Paste your key",
                     &[("Your name comes back with it.", false)],
                 ) + g;
@@ -410,17 +409,7 @@ impl WelcomeOverlay {
                 y = r.bottom + g;
                 let whole = normalize_key(&self.key_slot.value).is_some();
                 let disabled = !whole || self.switching || !account.connected;
-                let (go, bottom) = go_key(
-                    ui,
-                    "welcome-restore",
-                    left,
-                    y,
-                    short,
-                    "Restore",
-                    "Back to it",
-                    true,
-                    disabled,
-                );
+                let (go, bottom) = go_key(ui, "welcome-restore", left, y, short, "Restore", true, disabled);
                 if (go || r.submitted) && !disabled {
                     *action = self.use_key();
                 }
