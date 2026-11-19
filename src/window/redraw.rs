@@ -701,15 +701,8 @@ impl App {
                         .filter(|_| !self.captured)
                         .map(|(x, y)| (x as f32 / scale, y as f32 / scale)),
                 );
-                let pointing = hud.scoreboard.key_hovered();
-                if pointing != self.pointing {
-                    self.pointing = pointing;
-                    s.window.set_cursor(if pointing {
-                        winit::window::CursorIcon::Pointer
-                    } else {
-                        winit::window::CursorIcon::Default
-                    });
-                }
+                // The hand over them is egui's to show, with the game's cursors.
+                self.pointing = hud.scoreboard.key_hovered();
                 hud.set_markers(
                     s.renderer.bomb_site_poses(),
                     &self.camera,
@@ -948,7 +941,12 @@ impl App {
         let loadout = &mut self.loadout_picker;
         let mut loadout_outcome = None;
         let demo_hud = self.demo_hud.as_ref().filter(|_| cards);
+        let pointing = self.pointing;
         let ui = s.egui.run(&s.window, |ui| {
+            if pointing {
+                ui.ctx()
+                    .set_cursor_icon(shagger::ui::egui_layer::egui::CursorIcon::PointingHand);
+            }
             if let (Some(reel), Some(Feed::Demo(demo)), true) = (reel, feed, cards) {
                 overlay.ui(ui.ctx(), reel, demo);
             }

@@ -651,6 +651,8 @@ struct Exiting<'a, A> {
 
 impl<A: ApplicationHandler> ApplicationHandler for Exiting<'_, A> {
     fn new_events(&mut self, event_loop: &ActiveEventLoop, cause: winit::event::StartCause) {
+        // The gold cursors (`Cursors.css`), made once the loop first runs.
+        washoi::client::cursors::install(event_loop);
         self.app.new_events(event_loop, cause);
         if std::mem::take(&mut self.resume) {
             self.app.resumed(event_loop);

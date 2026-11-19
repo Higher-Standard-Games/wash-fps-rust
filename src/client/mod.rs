@@ -14,6 +14,7 @@ pub mod cinematic_demo_player;
 pub mod controller_input;
 pub mod credits;
 pub mod crosshair;
+pub mod cursors;
 pub mod damage_numbers;
 pub mod death_camera;
 pub mod demo_download;

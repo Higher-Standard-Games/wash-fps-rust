@@ -2927,6 +2927,13 @@ Ported from wash-fps staging 3e3980a (from 08390cb) and SHAG fc10b67:
   keep the caret after the same key character as dashes come and go. From
   shagger 16a801d: egui-winit's clipboard is on (arboard, smithay-clipboard
   on Wayland), so keys paste with Ctrl+V and Copy key works; links stay off.
+  From shagger f11449c: the skill menu's names turn cream on hover, and
+  `ui::cursor_theme` gives every egui window the game's cursors. Washoi
+  installs the gold arrow, hand, disabled and text cursors of wash-fps
+  staging's `Cursors.css` (`client::cursors`): the 46 px SVGs drawn at seven
+  display scales by `tools/render_cursors.mjs` (macOS takes the 1x art,
+  since it sizes cursors in points). The post-game keys' hand goes through
+  egui, so it is the gold one too.
 - **Later staging fix** (fps 3a06479): failed lobby requests read in words
   (`new_ui_api::request_failure`) on the leaderboard, the Profile record,
   the featured picks and the campaign boards: too many requests, no answer
