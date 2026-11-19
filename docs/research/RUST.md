@@ -2731,6 +2731,13 @@ whole areas rather than single items. 0.2.0 closes them in two steps.
 
 ## 24. Progress log
 
+### 1.0.0-rc.1: the first release candidate (November 19, 2026)
+
+The version is `1.0.0-rc.1`, after the RC1 review (`papercuts/v1.0.0-rc1-review.md`
+in the project files). It is the first release whose packages carry update
+signatures. Games from 0.6.1 take it unsigned, as they predate the check;
+from here on every update must be signed with a key in `UPDATE_KEYS`.
+
 ### RC1 review: the update path for release candidates (November 19, 2026)
 
 A review of the native client and the engine before the first release
