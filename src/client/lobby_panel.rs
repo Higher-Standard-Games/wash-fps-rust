@@ -675,7 +675,7 @@ impl LobbyPanel {
             with_cvars(|c| sync.tick(&mut self.client, c, Instant::now()));
         }
         if let Some(room) = &mut self.room {
-            room.tick();
+            room.tick(&self.client);
         }
         self.profile.tick();
         self.welcome.tick();
@@ -1099,6 +1099,10 @@ impl LobbyPanel {
                 if field("requestId").as_deref() != Some(request.as_str()) {
                     self.seat_request = Some((request, match_id));
                     return;
+                }
+                // Back from the match, Rejoin reads as itself again.
+                if let Some(room) = &mut self.room {
+                    room.seat_reissued();
                 }
                 let team = self
                     .room

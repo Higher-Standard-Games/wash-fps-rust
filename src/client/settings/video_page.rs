@@ -540,7 +540,8 @@ fn cvar_slider_cost(ui: &mut egui::Ui, name: &str, cvar: &str, range: Range) {
     cvar_slider(ui, name, cvar, range, true);
     if with_cvars(|c| c.exists(cvar)) {
         let painter = ui.painter().clone();
-        let w = line(&painter, &name.to_uppercase(), 15.0, body(), cream(), 0.14).size();
+        // Measured as `settings_fields::head` draws the name.
+        let w = line(&painter, &name.to_uppercase(), 15.0, display_family(), cream(), 0.12).size();
         cost_pips(
             &painter,
             pos2(at.x + w.x + 9.0, at.y + w.y / 2.0 - 4.0),

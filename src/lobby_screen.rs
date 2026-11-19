@@ -271,9 +271,11 @@ pub struct Shot<'a> {
     pub quick_play: bool,
     pub room: Option<&'a Path>,
     pub page: Option<&'a str>,
-    /// What the lobby would say, for the Leaderboard and Demos pages:
-    /// `{"boards": {"duel:month": leaderboard:page, ...}, "demos": [...],
-    /// "featured": [...], "stats": [{"id", "name", "data": StatsSummary}]}`.
+    /// What the lobby would say, for the Leaderboard, Demos, Profile and
+    /// Campaign pages: `{"boards": {"all:month": leaderboard:page, ...},
+    /// "demos": [...], "featured": [...], "stats": [{"id", "name", "data":
+    /// StatsSummary}], "campaignBoard": campaign:board}`. The leaderboard
+    /// opens on the first mode seeded.
     pub seed: Option<&'a Path>,
 }
 

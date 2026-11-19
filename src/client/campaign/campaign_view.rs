@@ -343,6 +343,9 @@ pub struct CampaignView {
     /// The campaign's leaderboard, in place of the operations while it is
     /// open.
     board_open: bool,
+    /// Something is over the board (a profile, the welcome, a comic card,
+    /// the guide): its Escape is that one's, not the board's.
+    board_covered: bool,
     board: Option<CampaignBoardState>,
     /// The request the board waits for, and when it went: a late answer for
     /// an earlier opening is dropped.
@@ -406,6 +409,12 @@ impl CampaignView {
     #[must_use]
     pub fn board_open(&self) -> bool {
         self.board_open
+    }
+
+    /// Whether something is over the page this frame, so Escape is not
+    /// the board's (`stopPropagation` on the board's own keydown).
+    pub fn set_covered(&mut self, covered: bool) {
+        self.board_covered = covered;
     }
 
     /// The lobby's `campaign:board` or `campaign:board:error`.
@@ -689,7 +698,8 @@ impl CampaignView {
                 ui.ctx().request_repaint_after(std::time::Duration::from_millis(250));
             }
         }
-        if ui.input(|i| i.key_pressed(egui::Key::Escape)) {
+        // Taken, so nothing beneath closes on the same press.
+        if !self.board_covered && ui.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Escape)) {
             self.close_board();
             return;
         }

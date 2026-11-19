@@ -599,6 +599,12 @@ impl LobbyPanel {
                     l.screen.max.y - links_h - 8.0,
                 ),
             );
+            let covered = self.profile.is_open()
+                || self.welcome.is_open()
+                || self.cutscene.is_some()
+                || self.guide.is_open()
+                || self.credits.is_some();
+            self.campaign.set_covered(covered);
             match self.campaign.ui(ui, page, content) {
                 Some(CampaignAction::Start(mission)) => self.start_campaign_mission(mission, false),
                 // `readCard`: the card panel by panel, starting nothing.

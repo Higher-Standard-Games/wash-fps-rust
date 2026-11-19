@@ -333,6 +333,10 @@ impl App {
     /// opens it while playing, Shift or Y to the team; while open, every key types, Enter sends and Escape
     /// cancels. True when the key was the chat's.
     pub(super) fn chat_key(&mut self, code: KeyCode, event: &winit::event::KeyEvent) -> bool {
+        // `FPSHud`'s handler stands aside while the match menu, its
+        // settings or the loadout picker are up, and outside play.
+        let menus_up = self.pause_menu.open || self.settings_open || self.loadout_picker.is_open();
+        let in_play = self.in_play();
         let Some(Feed::Play(play, _)) = &self.feed else {
             return false;
         };
@@ -341,29 +345,13 @@ impl App {
         };
         let chat = &mut hud.chat;
         if !chat.is_input_active() {
-            let held = |k| self.held.contains(&k);
-            let shift = held(KeyCode::ShiftLeft) || held(KeyCode::ShiftRight);
-            let other = [
-                KeyCode::AltLeft,
-                KeyCode::AltRight,
-                KeyCode::ControlLeft,
-                KeyCode::ControlRight,
-                KeyCode::SuperLeft,
-                KeyCode::SuperRight,
-            ]
-            .into_iter()
-            .any(held);
-            // T (Q3 messagemode habit) or Enter (modern habit) both open
-            // talk mode; Y, or either with Shift held, opens it to the team.
-            if event.state == ElementState::Pressed
-                && !event.repeat
-                && !other
-                && matches!(
-                    code,
-                    KeyCode::KeyT | KeyCode::KeyY | KeyCode::Enter | KeyCode::NumpadEnter
-                )
-            {
-                chat.open_input(code == KeyCode::KeyY || shift);
+            if menus_up || !in_play {
+                return false;
+            }
+            let pressed = event.state == ElementState::Pressed && !event.repeat;
+            // From the event's own modifiers, as `e.shiftKey` and the rest.
+            if let Some(team) = pressed.then(|| talk_key(code, super::modifiers())).flatten() {
+                chat.open_input(team);
                 // Nothing stays held while typing.
                 self.held.clear();
                 self.firing = false;
@@ -657,5 +645,39 @@ impl App {
         if self.console.ctx.quit {
             self.leave = true;
         }
+    }
+}
+
+/// `FPSHud`'s chat key: T (Q3 messagemode habit) or Enter (modern habit)
+/// opens talk mode, Y or either with Shift held opens it to the team
+/// (`Some(true)`); with Alt, Ctrl or the system key held it is not chat's.
+fn talk_key(code: KeyCode, mods: winit::keyboard::ModifiersState) -> Option<bool> {
+    if mods.alt_key() || mods.control_key() || mods.super_key() {
+        return None;
+    }
+    match code {
+        KeyCode::KeyY => Some(true),
+        KeyCode::KeyT | KeyCode::Enter | KeyCode::NumpadEnter => Some(mods.shift_key()),
+        _ => None,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::talk_key;
+    use winit::keyboard::{KeyCode, ModifiersState};
+
+    #[test]
+    fn talk_mode_opens_to_everyone_or_with_shift_or_y_to_the_team() {
+        let none = ModifiersState::empty();
+        assert_eq!(talk_key(KeyCode::KeyT, none), Some(false));
+        assert_eq!(talk_key(KeyCode::Enter, none), Some(false));
+        assert_eq!(talk_key(KeyCode::NumpadEnter, none), Some(false));
+        assert_eq!(talk_key(KeyCode::KeyY, none), Some(true));
+        assert_eq!(talk_key(KeyCode::KeyT, ModifiersState::SHIFT), Some(true));
+        assert_eq!(talk_key(KeyCode::Enter, ModifiersState::SHIFT), Some(true));
+        assert_eq!(talk_key(KeyCode::KeyT, ModifiersState::CONTROL), None);
+        assert_eq!(talk_key(KeyCode::Enter, ModifiersState::ALT), None);
+        assert_eq!(talk_key(KeyCode::KeyR, none), None);
     }
 }

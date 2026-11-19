@@ -2878,6 +2878,15 @@ Ported from wash-fps staging 3e3980a (from 08390cb) and SHAG fc10b67:
   (spectator delay, event perception, fair-play ledger, ticketless watchers).
 - **CI:** the docs-sync job compares `assets/docs` with wash-fps **main**, so
   it stays red until staging's terms and privacy notice reach main.
+- **QA round (November 19):** talk mode no longer opens behind the match
+  menu, its settings or the loadout picker, and reads Shift, Alt, Ctrl and
+  the system key from winit's modifiers. Escape on the campaign board is the
+  board's alone, and only when nothing is over it. Board dates are the
+  player's own day (local time zone), as `toLocaleDateString` gives. A
+  `--seed` leaderboard opens on the first mode seeded. From shagger 33ff544:
+  a Ready held while quick play adds bots, Rejoin cleared when the seat
+  comes back, clipped map cards, a tally that gives way to the keys, a
+  lenient `maxPlayers`, and `js_group_thousands` for the profile's totals.
 
 ### Staging catch-up: the campaign's story and finale (November 17, 2026)
 
