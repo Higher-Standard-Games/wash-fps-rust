@@ -605,7 +605,10 @@ impl LeaderboardView {
         if e.bot {
             lines.push(Line::tag(painter, "Bot", hsl(186.0, 90.0, 46.0), ink()));
         }
-        let name_size = if tight { 17.0 } else { clamp_css(20.0, vw * 0.017, 30.0) };
+        // The name shrinks to fit its column by its length, down to 14 px,
+        // before it is cut short (`lb-plinth__name-text`'s `--name-length`).
+        let full_size = if tight { 17.0 } else { clamp_css(20.0, vw * 0.017, 30.0) };
+        let name_size = name_fit_size(full_size, text_w, e.name.chars().count());
         let name = elide(painter, &e.name, name_size, display_family(), text_w);
         lines.push(Line::text(line(
             painter,
@@ -1144,6 +1147,12 @@ enum LineKind {
     },
 }
 
+/// A podium name's size: `max(14px, min(full, column / (max(6, length) * 0.86)))`.
+fn name_fit_size(full: f32, column: f32, length: usize) -> f32 {
+    let fit = column / (length.max(6) as f32 * 0.86);
+    full.min(fit).max(14.0)
+}
+
 /// One line of a plinth's face, measured.
 struct Line {
     height: f32,
@@ -1258,6 +1267,14 @@ fn count_plate(painter: &Painter, left: f32, top: f32, total: u32, words: &str) 
 
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn a_long_podium_name_shrinks_before_it_is_cut() {
+        assert_eq!(name_fit_size(30.0, 300.0, 4), 30.0);
+        assert!((name_fit_size(30.0, 300.0, 16) - 300.0 / (16.0 * 0.86)).abs() < 1e-4);
+        assert_eq!(name_fit_size(30.0, 100.0, 16), 14.0);
+    }
+
     use super::*;
     use serde_json::json;
 

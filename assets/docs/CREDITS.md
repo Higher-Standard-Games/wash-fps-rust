@@ -38,10 +38,12 @@ Washoi grows out of **Warsow**. Thanks to the **Warsow Dev Team**.
 
 - [Babylon.js](https://www.babylonjs.com/): rendering and scenes. Apache License 2.0.
 - [Havok Physics](https://github.com/BabylonJS/havok): physics. MIT License.
-- [TensorFlow.js](https://www.tensorflow.org/js): bot brains. Apache License 2.0.
 - [ts-trueskill](https://github.com/scttcper/ts-trueskill): ratings. MIT License.
 - [JSZip](https://stuk.github.io/jszip/): map and asset packages. MIT License.
 - [@2toad/profanity](https://github.com/2Toad/Profanity): chat filter. MIT License.
+- [Mediabunny](https://github.com/Vanilagy/mediabunny): highlight video export. Mozilla Public License 2.0,
+  used unmodified; its licence and source are listed in `/licenses/` beside the game.
+- [Capacitor](https://capacitorjs.com/): the Android app. MIT License.
 
 ## Fonts
 
@@ -61,10 +63,19 @@ All fonts are used under the [SIL Open Font License 1.1](https://openfontlicense
   [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/).
   Renamed, and rotated, scaled and positioned to fit the game.
 
-## Players
+## Players and items
 
-- **Player models**: [Higher Standard Games](https://www.higherstandardgames.com/) with Meshy.
+- **Player models**: © [Higher Standard Games](https://www.higherstandardgames.com/), made with Meshy.
+- **Item models** (armor, health, ammo, powerups) and the **Search & Destroy bomb**:
+  © Higher Standard Games, made with Meshy.
 - **Animations**: [Mixamo](https://www.mixamo.com/) by Adobe.
+
+## Art and interface
+
+- **Washiki Washoi logo**, app icons, campaign art and comic cards, and the hit
+  sprites: © Higher Standard Games.
+- **HUD ammo icons and weapon pickup icons**: the Warsow team,
+  [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/). Converted to the game's formats.
 
 ## Sound
 
