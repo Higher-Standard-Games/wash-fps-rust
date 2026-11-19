@@ -2738,6 +2738,12 @@ in the project files). It is the first release whose packages carry update
 signatures. Games from 0.6.1 take it unsigned, as they predate the check;
 from here on every update must be signed with a key in `UPDATE_KEYS`.
 
+Before its release, the staging catch-up of November 19: CREDITS.md
+(in-house models and art, the HUD icons, shipped libraries), and podium
+names on the leaderboard shrink to fit their column by their length, down
+to 14 px, before they are cut short (wash-fps `bf3b86f`). The rest of that
+round is phone layouts and touch labels, which the native client has none of.
+
 ### RC1 review: the update path for release candidates (November 19, 2026)
 
 A review of the native client and the engine before the first release
