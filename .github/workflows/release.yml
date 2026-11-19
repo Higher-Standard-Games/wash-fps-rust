@@ -207,7 +207,9 @@ jobs:
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
-          sparse-checkout: Cargo.toml
+          sparse-checkout: |
+            Cargo.toml
+            src/update_check.rs
           sparse-checkout-cone-mode: false
       - name: The release's tag
         id: tag
@@ -237,6 +239,15 @@ jobs:
           fi
           umask 077
           printf '%s\n' "$UPDATE_SIGNING_KEY" > "$RUNNER_TEMP/update.pem"
+          # The installed games trust only the public keys built into
+          # src/update_check.rs (each written there in base64): a secret that
+          # is not one of them would sign a release no game takes.
+          public=$(openssl pkey -in "$RUNNER_TEMP/update.pem" -pubout -outform DER | tail -c 32 | base64)
+          if ! grep -qF "\`$public\`" src/update_check.rs; then
+            rm -f "$RUNNER_TEMP/update.pem"
+            echo "::error::UPDATE_SIGNING_KEY's public key ($public) is not in src/update_check.rs UPDATE_KEYS"
+            exit 1
+          fi
           for file in dist/washoi-*; do
             name=$(basename "$file")
             size=$(stat -c %s "$file")

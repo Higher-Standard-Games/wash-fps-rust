@@ -468,13 +468,21 @@ fn replace_bundle(bundle: &Path, zip: &Path) -> Result<(), String> {
         .map_err(|e| format!("update: could not open the new app: {e}"))
 }
 
-/// `1.2.3` or `1.2.3-rc.1`: the numbers, and whether it is a pre-release.
-fn parse_version(v: &str) -> Option<([u64; 3], bool)> {
+/// `1.2.3` or `1.2.3-rc.1`: the numbers, and the pre-release identifiers
+/// (`["rc", "1"]`; none for a release). Build metadata (`+...`) is ignored.
+fn parse_version(v: &str) -> Option<([u64; 3], Vec<&str>)> {
     let v = v.strip_prefix('v').unwrap_or(v);
-    let (core, pre) = match v.find(['-', '+']) {
-        Some(at) => (&v[..at], v[at..].starts_with('-')),
-        None => (v, false),
+    let v = v.split_once('+').map_or(v, |(v, _)| v);
+    let (core, pre) = match v.split_once('-') {
+        Some((core, pre)) => (core, pre.split('.').collect::<Vec<_>>()),
+        None => (v, Vec::new()),
     };
+    if pre
+        .iter()
+        .any(|id| id.is_empty() || !id.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-'))
+    {
+        return None;
+    }
     let mut parts = core.split('.');
     let mut out = [0; 3];
     for n in &mut out {
@@ -487,14 +495,47 @@ fn parse_version(v: &str) -> Option<([u64; 3], bool)> {
     parts.next().is_none().then_some((out, pre))
 }
 
-/// Whether `latest` is a later version than `current`; a pre-release comes
-/// before its release, and an unreadable version is never newer.
+/// Semantic Versioning's order of two pre-releases of one version: by
+/// identifier, numbers by value and below words, and more identifiers later
+/// (`rc.1` < `rc.2` < `rc.10`, `beta.2` < `rc.1`).
+fn pre_release_order(a: &[&str], b: &[&str]) -> std::cmp::Ordering {
+    use std::cmp::Ordering;
+    let number = |id: &str| {
+        id.bytes()
+            .all(|b| b.is_ascii_digit())
+            .then(|| id.parse::<u64>().ok())
+            .flatten()
+    };
+    for (x, y) in a.iter().zip(b) {
+        let order = match (number(x), number(y)) {
+            (Some(x), Some(y)) => x.cmp(&y),
+            (Some(_), None) => Ordering::Less,
+            (None, Some(_)) => Ordering::Greater,
+            (None, None) => x.cmp(y),
+        };
+        if order != Ordering::Equal {
+            return order;
+        }
+    }
+    a.len().cmp(&b.len())
+}
+
+/// Whether `latest` is a later version than `current` (Semantic
+/// Versioning's order): a pre-release comes before its release, `rc.2`
+/// after `rc.1`, and an unreadable version is never newer.
 #[must_use]
 pub fn newer(latest: &str, current: &str) -> bool {
     let (Some((l, l_pre)), Some((c, c_pre))) = (parse_version(latest), parse_version(current)) else {
         return false;
     };
-    l > c || (l == c && c_pre && !l_pre)
+    if l != c {
+        return l > c;
+    }
+    match (l_pre.is_empty(), c_pre.is_empty()) {
+        (true, true) | (false, true) => false,
+        (true, false) => true,
+        (false, false) => pre_release_order(&l_pre, &c_pre).is_gt(),
+    }
 }
 
 /// Only the site's own packages, and nothing a shell or the browser could
@@ -572,6 +613,24 @@ mod tests {
         assert!(!newer("1.0.0.0", "0.1.0"));
         assert!(!newer("x", "0.1.0"));
         assert!(!newer("2.0.0", "garbage"));
+    }
+
+    #[test]
+    fn release_candidates_follow_each_other() {
+        assert!(newer("1.0.0-rc.2", "1.0.0-rc.1"));
+        assert!(newer("1.0.0-rc.10", "1.0.0-rc.2"));
+        assert!(newer("1.0.0-rc.1", "1.0.0-beta.13"));
+        assert!(newer("1.0.0-rc.1", "0.6.1"));
+        assert!(newer("1.0.0-rc.1.1", "1.0.0-rc.1"));
+        assert!(newer("1.0.0-rc", "1.0.0-1"));
+        assert!(newer("1.0.0", "1.0.0-rc.2"));
+        assert!(newer("1.0.0+build.5", "1.0.0-rc.2"));
+        assert!(!newer("1.0.0-rc.1", "1.0.0-rc.1"));
+        assert!(!newer("1.0.0-rc.1", "1.0.0-rc.2"));
+        assert!(!newer("1.0.0-rc.2", "1.0.0"));
+        assert!(!newer("1.0.0+build.6", "1.0.0+build.5"));
+        assert!(!newer("1.0.0-rc..1", "0.1.0"));
+        assert!(!newer("1.0.0-", "0.1.0"));
     }
 
     #[test]

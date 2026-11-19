@@ -2731,6 +2731,28 @@ whole areas rather than single items. 0.2.0 closes them in two steps.
 
 ## 24. Progress log
 
+### RC1 review: the update path for release candidates (November 19, 2026)
+
+A review of the native client and the engine before the first release
+candidate; the results matrix is `papercuts/v1.0.0-rc1-review.md` in the
+project files.
+
+- **Release candidates update to each other.** `update_check::newer` knew
+  only "a pre-release comes before its release", so a game on `1.0.0-rc.1`
+  was never offered `1.0.0-rc.2`. Versions now compare in Semantic
+  Versioning's order (`rc.1` < `rc.2` < `rc.10`, `beta.13` < `rc.1`, a
+  release after its candidates, build metadata ignored).
+- **The signing secret is checked against the game's key.** The release job
+  verified each signature with the secret itself, so a wrong
+  `UPDATE_SIGNING_KEY` would have published packages no installed game
+  takes. It now derives the secret's public key and stops unless
+  `src/update_check.rs` names it (each key in `UPDATE_KEYS` is written there
+  in base64 between backticks).
+- **macOS bundle versions are numbers.** `Info.plist`'s `CFBundleVersion`
+  and `CFBundleShortVersionString` take the version without its
+  pre-release label (`1.0.0` for `1.0.0-rc.1`), as macOS expects; the file
+  names keep the label.
+
 ### Release QA: campaign, screens, platform (November 18, 2026)
 
 A final pass before the stable release, with the native client driven
