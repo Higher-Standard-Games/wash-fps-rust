@@ -140,6 +140,9 @@ TXT
       [ $double -le 512 ] && sips -z $double $double assets/icon/washoi-512.png --out "$iconset/icon_${size}x${size}@2x.png" >/dev/null
     done
     iconutil -c icns "$iconset" -o "$app/Contents/Resources/washoi.icns"
+    # macOS reads both bundle versions as numbers only (1.0.0): a
+    # pre-release such as 1.0.0-rc.1 keeps its label in the file names.
+    bundle_version=${version%%[-+]*}
     cat > "$app/Contents/Info.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -148,8 +151,8 @@ TXT
   <key>CFBundleName</key><string>Washoi</string>
   <key>CFBundleDisplayName</key><string>Washoi</string>
   <key>CFBundleIdentifier</key><string>com.higherstandardgames.washoi</string>
-  <key>CFBundleVersion</key><string>$version</string>
-  <key>CFBundleShortVersionString</key><string>$version</string>
+  <key>CFBundleVersion</key><string>$bundle_version</string>
+  <key>CFBundleShortVersionString</key><string>$bundle_version</string>
   <key>CFBundleExecutable</key><string>washoi</string>
   <key>CFBundleIconFile</key><string>washoi</string>
   <key>CFBundlePackageType</key><string>APPL</string>
