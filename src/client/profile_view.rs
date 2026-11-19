@@ -19,7 +19,7 @@ use serde_json::Value;
 use shagger::lobby::lobby_client::LobbyClient;
 use shagger::lobby::player_identity::{DELETED_ACCOUNT_NAME, KEY_LENGTH, format_key, normalize_key};
 use shagger::lobby::types::{GametypeInfo, RatingPool};
-use shagger::shared::js::js_round;
+use shagger::shared::js::{js_group_thousands, js_round};
 use shagger::ui::components::lobby_twin::{
     RAIL_SKEW, TwinStyle, clamp_css, cream, gradient_polygon, hsl, hsla, paint_brand, text, violet,
 };
@@ -197,15 +197,6 @@ pub fn read_stats(message: &Value, gametype: &str) -> Result<Summary, String> {
     })
 }
 
-/// A whole number as JavaScript prints it.
-fn js_number(v: f64) -> String {
-    if v.fract() == 0.0 && v.abs() < 1e21 {
-        format!("{}", v as i64)
-    } else {
-        format!("{v}")
-    }
-}
-
 fn plural(n: u64, one: &str, many: &str) -> String {
     format!("{n} {}", if n == 1 { one } else { many })
 }
@@ -222,23 +213,6 @@ pub fn play_time(ms: f64) -> String {
     }
 }
 
-/// `toLocaleString("en-US")` of a whole number: thousands with commas.
-fn grouped(v: f64) -> String {
-    let whole = js_number(v);
-    if v.fract() != 0.0 || v.abs() < 1000.0 {
-        return whole;
-    }
-    let (sign, digits) = whole.strip_prefix('-').map_or(("", whole.as_str()), |d| ("-", d));
-    let mut out = String::new();
-    for (i, c) in digits.chars().enumerate() {
-        if i > 0 && (digits.len() - i) % 3 == 0 {
-            out.push(',');
-        }
-        out.push(c);
-    }
-    format!("{sign}{out}")
-}
-
 /// A mode's gameplay totals as big numbers with their words, and the note
 /// under them: why there are none, or how many matches they cover.
 #[must_use]
@@ -252,14 +226,14 @@ pub fn stats_cells(summary: &Summary, snd: bool) -> (Vec<(String, String)>, Stri
         return (Vec::new(), note.into());
     };
     let mut stats = vec![
-        (grouped(t.frags), "frags".to_owned()),
-        (grouped(t.deaths), "deaths".to_owned()),
-        (grouped(js_round(t.damage_given)), "damage".to_owned()),
+        (js_group_thousands(t.frags), "frags".to_owned()),
+        (js_group_thousands(t.deaths), "deaths".to_owned()),
+        (js_group_thousands(js_round(t.damage_given)), "damage".to_owned()),
         (play_time(t.active_time_ms), "played".to_owned()),
     ];
     if snd {
-        stats.push((grouped(t.plants), "plants".to_owned()));
-        stats.push((grouped(t.defuses), "defuses".to_owned()));
+        stats.push((js_group_thousands(t.plants), "plants".to_owned()));
+        stats.push((js_group_thousands(t.defuses), "defuses".to_owned()));
     }
     let note = if summary.stats_matches < summary.matches {
         format!("Totals from {} of {} matches.", summary.stats_matches, summary.matches)
@@ -1922,8 +1896,8 @@ mod tests {
     fn a_cards_totals_read_as_the_browser_writes_them() {
         assert_eq!(play_time(54.0 * 60000.0), "54m");
         assert_eq!(play_time(134.4 * 60000.0), "2h 14m");
-        assert_eq!(grouped(1234567.0), "1,234,567");
-        assert_eq!(grouped(999.0), "999");
+        assert_eq!(js_group_thousands(1234567.0), "1,234,567");
+        assert_eq!(js_group_thousands(999.0), "999");
         let summary = read_stats(&summary(whole()), "snd").expect("a summary");
         let (stats, note) = stats_cells(&summary, true);
         let words: Vec<String> = stats.iter().map(|(v, w)| format!("{v} {w}")).collect();

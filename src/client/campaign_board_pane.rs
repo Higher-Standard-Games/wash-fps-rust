@@ -92,25 +92,22 @@ pub fn read_board(message: &Value) -> Option<CampaignBoard> {
     })
 }
 
-const MONTHS: [&str; 12] = [
-    "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
-];
-
-/// `day`: a date as a day, "14 Nov 2026" (UTC).
+/// `day`: a date as a day in the player's own time zone, "14 Nov 2026"
+/// (`toLocaleDateString` with a numeric day, short month and year).
 #[must_use]
 pub fn day(at: Option<f64>) -> String {
-    let Some(at) = at else { return String::new() };
-    // Days since 1970-01-01 to a civil date (Howard Hinnant's algorithm).
-    let z = (at / 86_400_000.0).floor() as i64 + 719_468;
-    let era = z.div_euclid(146_097);
-    let doe = z - era * 146_097;
-    let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365;
-    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
-    let mp = (5 * doy + 2) / 153;
-    let d = doy - (153 * mp + 2) / 5 + 1;
-    let m = if mp < 10 { mp + 3 } else { mp - 9 };
-    let y = yoe + era * 400 + i64::from(m <= 2);
-    format!("{d} {} {y}", MONTHS[(m - 1) as usize])
+    day_in(at, &jiff::tz::TimeZone::system())
+}
+
+/// [`day`] in the time zone `tz`.
+fn day_in(at: Option<f64>, tz: &jiff::tz::TimeZone) -> String {
+    let Some(at) = at.filter(|v| v.is_finite()) else {
+        return String::new();
+    };
+    jiff::Timestamp::from_millisecond(at.floor() as i64).map_or_else(
+        |_| String::new(),
+        |t| t.to_zoned(tz.clone()).strftime("%-d %b %Y").to_string(),
+    )
 }
 
 /// Each operation's card shows this many of its top fraggers.
@@ -548,11 +545,17 @@ mod tests {
 
     #[test]
     fn a_day_reads_as_the_browser_writes_it() {
+        let utc = jiff::tz::TimeZone::UTC;
         assert_eq!(day(None), "");
-        assert_eq!(day(Some(0.0)), "1 Jan 1970");
+        assert_eq!(day_in(Some(0.0), &utc), "1 Jan 1970");
         // 2026-11-14T12:00:00Z.
-        assert_eq!(day(Some(1_794_657_600_000.0)), "14 Nov 2026");
-        assert_eq!(day(Some(951_782_400_000.0)), "29 Feb 2000");
+        assert_eq!(day_in(Some(1_794_657_600_000.0), &utc), "14 Nov 2026");
+        assert_eq!(day_in(Some(951_782_400_000.0), &utc), "29 Feb 2000");
+        // The player's own day, not UTC's: 02:00 UTC on 15 Nov is still the
+        // 14th five hours west.
+        let west = jiff::tz::TimeZone::fixed(jiff::tz::offset(-5));
+        assert_eq!(day_in(Some(1_794_708_000_000.0), &west), "14 Nov 2026");
+        assert_eq!(day_in(Some(1_794_708_000_000.0), &utc), "15 Nov 2026");
     }
 
     #[test]

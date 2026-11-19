@@ -43,7 +43,7 @@ use winit::application::ApplicationHandler;
 use winit::dpi::{LogicalSize, PhysicalPosition, PhysicalSize};
 use winit::event::{DeviceEvent, DeviceId, ElementState, MouseButton, MouseScrollDelta, WindowEvent};
 use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop};
-use winit::keyboard::{KeyCode, PhysicalKey};
+use winit::keyboard::{KeyCode, ModifiersState, PhysicalKey};
 #[cfg(not(target_os = "macos"))]
 use winit::platform::run_on_demand::EventLoopExtRunOnDemand;
 use winit::window::{CursorGrabMode, Fullscreen, Window, WindowId};
@@ -577,8 +577,15 @@ pub fn end_screen(event_loop: &ActiveEventLoop) {
     let _ = event_loop;
 }
 
+/// The modifier keys held now (`KeyboardEvent`'s `shiftKey`, `altKey`, …).
+fn modifiers() -> ModifiersState {
+    MODIFIERS.with(Cell::get)
+}
+
 thread_local! {
-    static ALT_HELD: Cell<bool> = const { Cell::new(false) };
+    /// The modifier keys held now, as winit last reported them
+    /// (`ModifiersChanged`): Alt+Enter, and Shift for team chat.
+    static MODIFIERS: Cell<ModifiersState> = const { Cell::new(ModifiersState::empty()) };
     /// The window open now, for Alt+Enter.
     static CURRENT_WINDOW: std::cell::RefCell<std::sync::Weak<Window>> = const { std::cell::RefCell::new(std::sync::Weak::new()) };
 }
@@ -655,7 +662,7 @@ impl<A: ApplicationHandler> ApplicationHandler for Exiting<'_, A> {
     }
     fn window_event(&mut self, event_loop: &ActiveEventLoop, window_id: WindowId, event: WindowEvent) {
         if let WindowEvent::ModifiersChanged(m) = &event {
-            ALT_HELD.with(|a| a.set(m.state().alt_key()));
+            MODIFIERS.with(|a| a.set(m.state()));
         }
         // `InputSystem.onKeyDown`: Alt+Enter toggles fullscreen, on every
         // screen, and goes no further.
@@ -665,7 +672,7 @@ impl<A: ApplicationHandler> ApplicationHandler for Exiting<'_, A> {
                 key.physical_key,
                 PhysicalKey::Code(KeyCode::Enter | KeyCode::NumpadEnter)
             )
-            && ALT_HELD.with(Cell::get)
+            && modifiers().alt_key()
         {
             if !key.repeat {
                 toggle_fullscreen();

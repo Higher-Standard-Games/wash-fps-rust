@@ -383,6 +383,11 @@ impl LeaderboardView {
         self.connected = true;
         self.supported = true;
         self.account_id = page.local_player_entry.as_ref().map(|e| e.player_id.clone());
+        // Shows a seeded board: the first one seeded, unless the mode open
+        // already has one.
+        if !self.boards.contains_key(&(self.mode, period)) {
+            self.mode = m;
+        }
         self.boards.insert((m, period), Loaded::Ready(page));
     }
 
@@ -1251,6 +1256,23 @@ fn count_plate(painter: &Painter, left: f32, top: f32, total: u32, words: &str) 
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn a_seeded_board_is_the_one_shown() {
+        let page = || Page {
+            entries: Vec::new(),
+            total: 0,
+            local_player_entry: None,
+            excluded: 0,
+        };
+        // Opens on All; a Duel seed alone shows Duel, not a loading All.
+        let mut view = LeaderboardView::new();
+        view.seed("duel", "month", page());
+        assert_eq!(MODES[view.mode].id, "duel");
+        // A second seed keeps the mode the first one opened.
+        view.seed("ffa", "month", page());
+        assert_eq!(MODES[view.mode].id, "duel");
+    }
 
     fn entry(rank: u32, score: f64) -> Entry {
         Entry {
