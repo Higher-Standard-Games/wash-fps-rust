@@ -2887,6 +2887,11 @@ Ported from wash-fps staging 3e3980a (from 08390cb) and SHAG fc10b67:
   a Ready held while quick play adds bots, Rejoin cleared when the seat
   comes back, clipped map cards, a tally that gives way to the keys, a
   lenient `maxPlayers`, and `js_group_thousands` for the profile's totals.
+- **Later staging fix** (fps 3a06479): failed lobby requests read in words
+  (`new_ui_api::request_failure`) on the leaderboard, the Profile record,
+  the featured picks and the campaign boards: too many requests, no answer
+  in time, or the lobby offline. The Demos page already closed its
+  Highlights menu on leaving (`DemosView::deactivate`).
 
 ### Staging catch-up: the campaign's story and finale (November 17, 2026)
 

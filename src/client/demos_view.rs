@@ -25,6 +25,7 @@ use crate::client::demo_download::{DemoDownload, DemoDownloadState};
 use crate::client::levelshots::Levelshots;
 use crate::client::lobby_page_parts::{ModeChip, board_keys, mode_keys, page_head};
 use crate::client::lobby_panel::{GAME_MODES, GameMode};
+use crate::client::new_ui_api::request_failure;
 use crate::client::settings::settings_fields::{body, gold_text, line, wrapped};
 use crate::client::washoi_style::display_family;
 
@@ -461,7 +462,7 @@ impl DemosView {
                     )
                 } else {
                     let reason = message.get("reason").and_then(Value::as_str).unwrap_or("error");
-                    Featured::Failed(format!("Featured demos: {reason}"))
+                    Featured::Failed(request_failure(&format!("Featured demos: {reason}"), "featured picks"))
                 };
             }
             _ => {}
@@ -562,7 +563,7 @@ impl DemosView {
             self.archive_failed = true;
         }
         if matches!(&self.featured, Featured::Loading { sent, .. } if sent.elapsed() > ARCHIVE_TIMEOUT) {
-            self.featured = Featured::Failed("Featured demos request timed out".into());
+            self.featured = Featured::Failed(request_failure("Featured demos request timed out", "featured picks"));
         }
     }
 

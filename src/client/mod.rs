@@ -59,6 +59,7 @@ pub mod lobby_welcome_guide;
 pub mod local_powerup_state;
 pub mod match_state_manager;
 pub mod move_stick;
+pub mod new_ui_api;
 pub mod player_appearance;
 pub mod player_model_selection;
 pub mod player_model_visual_settings;

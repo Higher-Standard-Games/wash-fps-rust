@@ -24,6 +24,7 @@ use egui::{Color32, FontId, Painter, Rect, Shape, Stroke, pos2, vec2};
 
 use crate::client::lobby_page_parts::{ModeChip, board_keys, flat_key, mode_keys, page_head, status};
 use crate::client::lobby_panel::{GAME_MODES, GameMode};
+use crate::client::new_ui_api::request_failure;
 use crate::client::settings::settings_fields::{body, cut_panel, gold_text, line};
 use crate::client::washoi_style::display_family;
 
@@ -351,9 +352,12 @@ impl LeaderboardView {
         };
         let answer = match kind {
             "leaderboard:page" => read_page(message).map_or_else(Loaded::Failed, Loaded::Ready),
-            "leaderboard:error" => Loaded::Failed(format!(
-                "Leaderboard: {}",
-                message.get("reason").and_then(Value::as_str).unwrap_or("error")
+            "leaderboard:error" => Loaded::Failed(request_failure(
+                &format!(
+                    "Leaderboard: {}",
+                    message.get("reason").and_then(Value::as_str).unwrap_or("error")
+                ),
+                "the rankings",
             )),
             _ => return,
         };
@@ -394,7 +398,7 @@ impl LeaderboardView {
     fn time_out(&mut self) {
         for loaded in self.boards.values_mut() {
             if matches!(loaded, Loaded::Loading { sent, .. } if sent.elapsed() > TIMEOUT) {
-                *loaded = Loaded::Failed("Leaderboard request timed out".into());
+                *loaded = Loaded::Failed(request_failure("Leaderboard request timed out", "the rankings"));
             }
         }
     }
@@ -1354,7 +1358,9 @@ mod tests {
         view.on_message("leaderboard:error", &json!({"requestId":"b","reason":"rate_limited"}));
         assert!(matches!(view.boards[&(0, Period::Month)], Loaded::Loading { .. }));
         view.on_message("leaderboard:error", &json!({"requestId":"a","reason":"rate_limited"}));
-        assert!(matches!(&view.boards[&(0, Period::Month)], Loaded::Failed(why) if why == "Leaderboard: rate_limited"));
+        assert!(
+            matches!(&view.boards[&(0, Period::Month)], Loaded::Failed(why) if why == "Too many requests for the rankings. Try again in a minute.")
+        );
     }
 
     #[test]

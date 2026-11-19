@@ -29,7 +29,11 @@ use super::campaign_story::{CampaignCard, FINALE_CARD, campaign_story};
 use crate::client::campaign_board_pane::{
     CampaignBoard, CampaignBoardPane, CampaignBoardState, board_panel, read_board,
 };
+use crate::client::new_ui_api::request_failure;
 use crate::client::washoi_style::display_family;
+
+/// What the campaign board asks the lobby for, as a failure names it.
+const BOARDS: &str = "the campaign boards";
 
 /// `GAMETYPE_NAMES`: the game modes by their full names.
 #[must_use]
@@ -428,13 +432,15 @@ impl CampaignView {
         self.board_request = None;
         self.board = Some(match (kind, read_board(message)) {
             ("campaign:board", Some(board)) => CampaignBoardState::Ready(board),
-            ("campaign:board", None) => CampaignBoardState::Failed("Campaign board: unreadable answer".into()),
+            ("campaign:board", None) => {
+                CampaignBoardState::Failed(request_failure("Campaign board: unreadable answer", BOARDS))
+            }
             _ => {
                 let reason = message
                     .get("reason")
                     .and_then(serde_json::Value::as_str)
                     .unwrap_or("unavailable");
-                CampaignBoardState::Failed(format!("Campaign board: {reason}"))
+                CampaignBoardState::Failed(request_failure(&format!("Campaign board: {reason}"), BOARDS))
             }
         });
     }
@@ -442,7 +448,10 @@ impl CampaignView {
     /// The lobby went away while the board waited.
     pub fn board_disconnected(&mut self) {
         if self.board_request.take().is_some() {
-            self.board = Some(CampaignBoardState::Failed("Lobby disconnected".into()));
+            self.board = Some(CampaignBoardState::Failed(request_failure(
+                "Lobby disconnected",
+                BOARDS,
+            )));
         }
     }
 
@@ -693,7 +702,10 @@ impl CampaignView {
         if let Some((_, sent)) = &self.board_request {
             if sent.elapsed() > std::time::Duration::from_secs(10) {
                 self.board_request = None;
-                self.board = Some(CampaignBoardState::Failed("Campaign board request timed out".into()));
+                self.board = Some(CampaignBoardState::Failed(request_failure(
+                    "Campaign board request timed out",
+                    BOARDS,
+                )));
             } else {
                 ui.ctx().request_repaint_after(std::time::Duration::from_millis(250));
             }
