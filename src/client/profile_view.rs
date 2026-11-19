@@ -30,6 +30,7 @@ use egui::{Color32, Painter, Rect, Shape, Stroke, pos2, vec2};
 use crate::client::identity_fields::{Slot, SlotLook, Tone, judge_name, paint_say, show_slot, tidy_key_slot};
 use crate::client::identity_frame::{IdentityFrame, action_keys, agree_box, alt_row, gap, go_key, screen_head, warn};
 use crate::client::leaderboard_view::{Page, read_page};
+use crate::client::new_ui_api::request_failure;
 use crate::client::settings::settings_fields::{body, gold_text};
 use crate::client::washoi_style::display_family;
 
@@ -809,9 +810,12 @@ impl ProfileView {
                     "stats:summary" => Answer::Stats(read_stats(message, &asking.modes[at].0)),
                     "stats:error" => Answer::Stats(Err("Could not read your player stats.".into())),
                     "leaderboard:page" => Answer::Board(read_page(message)),
-                    _ => Answer::Board(Err(format!(
-                        "Leaderboard: {}",
-                        message.get("reason").and_then(Value::as_str).unwrap_or("error")
+                    _ => Answer::Board(Err(request_failure(
+                        &format!(
+                            "Leaderboard: {}",
+                            message.get("reason").and_then(Value::as_str).unwrap_or("error")
+                        ),
+                        "the rankings",
                     ))),
                 });
                 self.finish_record();
@@ -930,7 +934,7 @@ impl ProfileView {
                 *answer = Some(if stats {
                     Answer::Stats(Err("Could not read your player stats.".into()))
                 } else {
-                    Answer::Board(Err("Leaderboard request timed out".into()))
+                    Answer::Board(Err(request_failure("Leaderboard request timed out", "the rankings")))
                 });
             }
             self.finish_record();
