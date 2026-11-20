@@ -3967,7 +3967,7 @@ dependencies = [
 
 [[package]]
 name = "washoi"
-version = "1.0.0-rc.1"
+version = "1.0.0"
 dependencies = [
  "base64",
  "flate2",

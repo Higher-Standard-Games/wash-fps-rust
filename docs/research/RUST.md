@@ -2731,6 +2731,16 @@ whole areas rather than single items. 0.2.0 closes them in two steps.
 
 ## 24. Progress log
 
+### 1.0.0: the stable release (November 20, 2026)
+
+The version is `1.0.0`, built from RC1 and the papercuts fixed after it:
+the post-match keys' hover, paste and a caret that stays put in the profile's
+key slots, the skill menu's cream lettering on hover, and the gold Washoi
+cursors (wash-fps `553e986`, the only native-facing change on staging since
+RC1; the engine is pinned to shagger `f11449c`). Like RC1, the macOS app is
+ad-hoc signed and not notarized and the Windows exe is unsigned; the packages
+carry update signatures, so games on `1.0.0-rc.1` are offered it.
+
 ### 1.0.0-rc.1: the first release candidate (November 19, 2026)
 
 The version is `1.0.0-rc.1`, after the RC1 review (`papercuts/v1.0.0-rc1-review.md`
