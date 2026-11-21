@@ -942,6 +942,7 @@ impl App {
         let mut loadout_outcome = None;
         let demo_hud = self.demo_hud.as_ref().filter(|_| cards);
         let pointing = self.pointing;
+        let captured = self.captured;
         let ui = s.egui.run(&s.window, |ui| {
             if pointing {
                 ui.ctx()
@@ -968,6 +969,15 @@ impl App {
             }
             loadout_outcome = loadout.ui(ui.ctx());
             console.ui(ui.ctx());
+            // While the mouse is captured egui must not show its cursor:
+            // `egui_winit` calls `set_cursor_visible(true)` whenever its icon
+            // changes (the Resume button's hand turning back into the arrow)
+            // or the pointer comes back after alt-tab, which left the arrow
+            // drawn over play. An icon of `None` keeps it hidden.
+            if captured {
+                ui.ctx()
+                    .set_cursor_icon(shagger::ui::egui_layer::egui::CursorIcon::None);
+            }
         });
         s.egui
             .paint(&s.gpu, &mut encoder, &target, [s.config.width, s.config.height], ui);
