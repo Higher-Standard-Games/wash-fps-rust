@@ -116,6 +116,12 @@ impl LobbyPanel {
             self.credits = Some(CreditsDialog::default());
             return;
         }
+        // `join/us:3fa9c2d1`: Join lobby via invite, a code in its field.
+        if tab == "join" {
+            self.tab = Tab::Play;
+            self.open_join_dialog(Some(sub.to_owned()).filter(|s| !s.is_empty()));
+            return;
+        }
         if tab == "guide" {
             // `guide/2`: the step, once the terms are agreed.
             self.guide.set_authenticated(true);
@@ -142,6 +148,7 @@ impl LobbyPanel {
             "campaign" => Tab::Campaign,
             "demos" => Tab::Demos,
             "settings" => Tab::Settings,
+            "home" => Tab::Home,
             _ => Tab::Play,
         };
         if self.tab == Tab::Settings {
@@ -228,16 +235,32 @@ impl LobbyPanel {
         } else {
             None
         };
+        // The logo leads Home, the three ways into the game; Home has no key
+        // of its own. Under the pointer it lifts a little.
+        let lifted = self.brand_rect.is_some_and(|r| ui.rect_contains_pointer(r));
+        let lift = if lifted { 2.0 } else { 0.0 };
         let mut y = paint_brand(
             &painter,
             l.screen.min.x,
             l.rail_w,
-            top + pad_top,
+            top + pad_top - lift,
             logo_max,
             l.w,
             style,
             1.0,
+        ) + lift;
+        let brand = Rect::from_min_max(
+            pos2(l.screen.min.x + 22.0, top + pad_top),
+            pos2(l.screen.min.x + l.rail_w - RAIL_SKEW - 16.0, y - 16.0),
         );
+        self.brand_rect = Some(brand);
+        let response = ui.interact(brand, egui::Id::NULL.with("rail-home"), egui::Sense::click());
+        if response.hovered() {
+            ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
+        }
+        if response.clicked() {
+            self.tab = Tab::Home;
+        }
 
         // `lobby__rail-nav`: Quick play, then the pages.
         let key_h = if l.shorter {
@@ -567,7 +590,7 @@ impl LobbyPanel {
             Tab::Settings => Some(self.settings_view().ghost().to_owned()),
             Tab::Leaderboard => Some("TOP".to_owned()),
             Tab::Demos => Some("REPLAY".to_owned()),
-            Tab::Campaign => None,
+            Tab::Campaign | Tab::Home => None,
         };
         if let Some(word) = ghost {
             let size = clamp_css(200.0, l.w * 0.25, 440.0);
@@ -631,6 +654,16 @@ impl LobbyPanel {
         }
         match self.tab {
             Tab::Campaign => {}
+            Tab::Home => {
+                // The Quick play card is the rail's key, in the same state.
+                self.home.set_quick_play_enabled(self.quick_play_enabled());
+                match self.home.ui(ui, content, l.screen) {
+                    Some(HomeAction::QuickPlay) => self.start_quick_play(),
+                    Some(HomeAction::Campaign) => self.tab = Tab::Campaign,
+                    Some(HomeAction::PlayOnline) => self.tab = Tab::Play,
+                    None => {}
+                }
+            }
             Tab::Play => self.play_page(ui, l, content, &mode),
             Tab::Settings => {
                 // `« Back to welcome`, above the page, while the guide waits.
@@ -678,9 +711,9 @@ impl LobbyPanel {
         if key(ui, &mut right, "QUIT") {
             action = Some(PanelAction::Quit);
         }
-        // On the Play page only: a room keeps the foot clear.
-        if self.tab == Tab::Play && self.room.is_none() {
-            // `.lobby-guide-help`: the welcome guide again.
+        // `.lobby-guide-help`: the welcome guide again, on Home and the Play
+        // page; a room keeps the foot clear.
+        if matches!(self.tab, Tab::Home | Tab::Play) && self.room.is_none() {
             let can_open = self.guide_can_open();
             if self.guide.help_shown(can_open) {
                 let r = Rect::from_min_max(pos2(right - 44.0, bottom - 44.0), pos2(right, bottom));
@@ -688,6 +721,37 @@ impl LobbyPanel {
                 if dark_key(ui, "help", r, "?", 17.0) {
                     self.guide.help(can_open);
                 }
+            }
+        }
+        // The rest on the Play page only.
+        if self.tab == Tab::Play && self.room.is_none() {
+            // `.lobby__join-invite`: a friend's room, from their invite code
+            // or link, alone at the left, on the line of the rail's Profile,
+            // Settings and Console keys (`raised-key--sm raised-key--util`).
+            let label = "Join lobby via invite";
+            let (size, em) = if l.narrow { (10.0, 0.06) } else { (11.0, 0.12) };
+            let g = line(
+                &painter,
+                &label.to_uppercase(),
+                size,
+                display_family(),
+                Color32::WHITE,
+                em,
+            );
+            let util_top = l.screen.max.y - 18.0 - 6.0 - 3.6 - 40.0;
+            let left = l.screen.min.x + l.rail_w + 28.0;
+            let r = Rect::from_min_size(pos2(left, util_top), vec2(g.size().x + 36.0, 40.0));
+            let face = RaisedKey::new("join-invite", r, KeyLook::gold().sm().flat())
+                .disabled(!self.connected)
+                .show(ui);
+            KeyText::new(label, "", display_family(), body())
+                .size(size, 13.0)
+                .spacing(em)
+                .pad(18.0, 18.0)
+                .layout(KeyTextLayout::Centered)
+                .paint(&painter, &face);
+            if face.clicked && self.connected && self.join_dialog.is_none() {
+                self.open_join_dialog(None);
             }
             // `.lobby-music-key`: the menus' music off and on.
             let r = Rect::from_min_max(pos2(right - 44.0, bottom - 44.0), pos2(right, bottom));
@@ -784,7 +848,10 @@ impl LobbyPanel {
 
     /// A room: the whole page is `MatchLobbyView`'s.
     pub(super) fn room_page(&mut self, ui: &mut egui::Ui, l: &Layout, content: Rect, accent: &Accent) {
+        // The room as a code, for another client's Join lobby (Copy code).
+        let code = self.open_room_code();
         let Some(room) = &mut self.room else { return };
+        room.room_code = code;
         let shots = &self.levelshots;
         let map_shot = |map: &str| shots.texture(map);
         let style = RoomStyle {
@@ -974,6 +1041,7 @@ impl LobbyPanel {
 
     /// `lobby-chat`: the lobby's chat beside the mode.
     pub(super) fn chat_panel(&mut self, ui: &mut egui::Ui, r: Rect) {
+        let mut join = None;
         let send = chat_box(
             ui,
             r,
@@ -1000,10 +1068,16 @@ impl LobbyPanel {
                 },
                 mine: &self.name,
                 rail: false,
+                regions: &self.regions,
+                here: self.region.as_ref(),
+                join: &mut join,
             },
         );
         if send {
             self.send_chat();
+        }
+        if let Some(room) = join {
+            self.join_named_room(room);
         }
     }
 
@@ -1021,6 +1095,7 @@ impl LobbyPanel {
         let count = chat.here().to_uppercase();
         let placeholder = chat.placeholder(self.connected);
         let empty = chat.empty_text();
+        let mut join = None;
         let send = chat_box(
             ui,
             r,
@@ -1036,10 +1111,16 @@ impl LobbyPanel {
                 empty,
                 mine: &self.name,
                 rail: true,
+                regions: &self.regions,
+                here: self.region.as_ref(),
+                join: &mut join,
             },
         );
         if send {
             chat.send(&self.client, self.connected);
+        }
+        if let Some(room) = join {
+            self.join_named_room(room);
         }
     }
 }
@@ -1060,6 +1141,11 @@ pub(super) struct ChatBox<'a> {
     pub(super) mine: &'a str,
     /// In the rail: a solid slab, tighter, its cut corner smaller.
     pub(super) rail: bool,
+    /// The regions a room code in a line may name, and this lobby's.
+    pub(super) regions: &'a [Region],
+    pub(super) here: Option<&'a Region>,
+    /// A line's Join key was pressed: the room it names.
+    pub(super) join: &'a mut Option<RoomRef>,
 }
 
 /// `lobby-chat`: head, log and form. True when the player sends a line.
@@ -1181,8 +1267,21 @@ pub(super) fn chat_box(ui: &mut egui::Ui, r: Rect, c: ChatBox<'_>) -> bool {
             .auto_shrink([false, false])
             .stick_to_bottom(true)
             .show(ui, |ui| {
-                for chat in c.lines {
-                    chat_row(ui, chat, c.mine, log.width() - 12.0, time_w, size);
+                for (i, chat) in c.lines.iter().enumerate() {
+                    let named = (!chat.system && !chat.from.is_empty())
+                        .then(|| room_in_text(&chat.text, c.regions))
+                        .flatten();
+                    let key = named.as_ref().map(|room| JoinKey {
+                        id: (c.id, i),
+                        label: if in_this_region(room, c.here) {
+                            "Join".to_owned()
+                        } else {
+                            format!("Join · {}", room.region.as_ref().map_or("", |r| r.code.as_str()))
+                        },
+                    });
+                    if chat_row(ui, chat, c.mine, log.width() - 12.0, time_w, size, key.as_ref()) {
+                        *c.join = named;
+                    }
                 }
             });
     });
@@ -1344,9 +1443,38 @@ pub(super) fn room_row(ui: &mut egui::Ui, rect: Rect, m: &LiveMatchInfo) -> KeyF
     face
 }
 
-/// One chat line: time, who, what (`lobby-chat__msg`).
-pub(super) fn chat_row(ui: &mut egui::Ui, chat: &ChatLine, mine: &str, width: f32, time_w: f32, size: f32) {
+/// `roomJoinKey`: the small key a chat line gets when it names a room.
+pub(super) struct JoinKey {
+    pub(super) id: (&'static str, usize),
+    pub(super) label: String,
+}
+
+/// One chat line: time, who, what, and a Join key when it names a room.
+/// True when that key is pressed.
+pub(super) fn chat_row(
+    ui: &mut egui::Ui,
+    chat: &ChatLine,
+    mine: &str,
+    width: f32,
+    time_w: f32,
+    size: f32,
+    join: Option<&JoinKey>,
+) -> bool {
     let painter = ui.painter().clone();
+    // The key sits at the line's right; the text wraps short of it.
+    let key_w = join.map_or(0.0, |k| {
+        line(
+            &painter,
+            &k.label.to_uppercase(),
+            11.0,
+            display_family(),
+            Color32::WHITE,
+            0.07,
+        )
+        .size()
+        .x + 22.0
+    });
+    let width_for_text = if key_w > 0.0 { width - key_w - 10.0 } else { width };
     let time = line(
         &painter,
         &clock_time(chat.ts),
@@ -1370,7 +1498,7 @@ pub(super) fn chat_row(ui: &mut egui::Ui, chat: &ChatLine, mine: &str, width: f3
                 ..Default::default()
             },
         );
-        job.wrap.max_width = (width - text_x).max(10.0);
+        job.wrap.max_width = (width_for_text - text_x).max(10.0);
         (None, painter.layout_job(job), cream())
     } else {
         let me = chat.from == mine;
@@ -1386,7 +1514,7 @@ pub(super) fn chat_row(ui: &mut egui::Ui, chat: &ChatLine, mine: &str, width: f3
             &chat.text,
             FontId::proportional(size),
             hsla(45.0, 100.0, 95.0, 0.9),
-            width - left,
+            width_for_text - left,
         );
         (Some((who, me)), said, cream())
     };
@@ -1424,6 +1552,19 @@ pub(super) fn chat_row(ui: &mut egui::Ui, chat: &ChatLine, mine: &str, width: f3
         ));
     }
     painter.galley(pos2(x, y), body_text, color);
+    // `.lobby-chat__join`: `raised-key--sm raised-key--cream`.
+    let Some(key) = join else {
+        return false;
+    };
+    let kr = Rect::from_min_size(pos2(rect.right() - key_w, rect.top() + 3.0), vec2(key_w, 26.0));
+    let face = RaisedKey::new(("chat-join", key.id), kr, KeyLook::cream().sm()).show(ui);
+    KeyText::new(&key.label, "", display_family(), body())
+        .size(11.0, 10.0)
+        .spacing(0.07)
+        .pad(10.0, 10.0)
+        .layout(KeyTextLayout::Centered)
+        .paint(&painter, &face);
+    face.clicked
 }
 
 /// Pips in the chat's online meter (`ONLINE_PIPS`).

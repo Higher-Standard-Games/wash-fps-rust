@@ -121,7 +121,7 @@ fn usage() -> ! {
          \x20      washoi watch <ws://game-server> [--name NAME] [--ticket TICKET] [--data DIR] [--screenshot FILE.png] [--time T] [--at X,Y,Z,YAW] [--follow N] [--seconds N]\n\
          \x20      washoi play <ws://game-server> [--name NAME] [--ticket TICKET] [--data DIR] [--screenshot FILE.png] [--time T] [--say TEXT] [--seconds N]\n\
          \x20      washoi connect <ws://game-server> [--name NAME] [--ticket TICKET] [--seconds N] [--play]\n\
-         \x20      washoi menu <ws://lobby> --screenshot FILE.png [--key-file FILE] [--size WxH] [--seconds N] [--play | --room FILE.json] [--page settings/audio]\n\
+         \x20      washoi menu <ws://lobby> --screenshot FILE.png [--key-file FILE] [--size WxH] [--seconds N] [--play | --room FILE.json] [--page settings/audio] [--pointer X,Y]\n\
          \x20      washoi lobby <ws://lobby> [--key-file FILE] list\n\
          \x20      washoi lobby <ws://lobby> [--key-file FILE] spectate [--window] [--seconds N]\n\
          \x20      washoi lobby <ws://lobby> [--key-file FILE] queue <gametype> [--seconds N] [--play | --window]\n\
@@ -149,6 +149,8 @@ struct Options {
     screenshot: Option<PathBuf>,
     spawn: usize,
     size: Option<(u32, u32)>,
+    /// `menu --pointer X,Y`: the mouse held there, for a hover in a screenshot.
+    pointer: Option<(f32, f32)>,
     time: f64,
     at: Option<[f32; 4]>,
     pitch: f32,
@@ -435,6 +437,14 @@ fn parse_options(args: impl Iterator<Item = String>) -> Options {
             "--pitch" => o.pitch = value().trim().parse().unwrap_or_else(|_| usage()),
             "--time" => o.time = value().parse().unwrap_or_else(|_| usage()),
             "--spawn" => o.spawn = value().parse().unwrap_or_else(|_| usage()),
+            "--pointer" => {
+                let v = value();
+                let (x, y) = v.split_once(',').unwrap_or_else(|| usage());
+                o.pointer = Some((
+                    x.trim().parse().unwrap_or_else(|_| usage()),
+                    y.trim().parse().unwrap_or_else(|_| usage()),
+                ));
+            }
             "--size" => {
                 let v = value();
                 let (w, h) = v.split_once('x').unwrap_or_else(|| usage());
@@ -534,6 +544,7 @@ fn main() {
                     room: o.room.as_deref(),
                     page: o.page.as_deref(),
                     seed: o.seed.as_deref(),
+                    pointer: o.pointer,
                 },
             ) {
                 Ok(None) if o.play => {
@@ -645,13 +656,18 @@ fn named_region(o: &Options) -> Option<String> {
 /// The region's lobby and data URLs: the one named, else the one launched
 /// last time, else the first of [`washoi::REGIONS`].
 fn region(o: &Options) -> (String, String) {
-    let region = named_region(o)
-        .or_else(|| washoi::regions::saved_choice(config_dir().as_deref()))
-        .unwrap_or_else(|| washoi::REGIONS[0].to_owned());
+    let region = region_id(o);
     washoi::region_urls(&region).unwrap_or_else(|| {
         eprintln!("unknown region {region}: `washoi regions` lists them");
         std::process::exit(2);
     })
+}
+
+/// Which region [`region`] names.
+fn region_id(o: &Options) -> String {
+    named_region(o)
+        .or_else(|| washoi::regions::saved_choice(config_dir().as_deref()))
+        .unwrap_or_else(|| washoi::REGIONS[0].to_owned())
 }
 
 /// `washoi regions`: the list from the site and each region's ping, or the
@@ -694,50 +710,83 @@ fn game_data_dir(o: &Options) -> PathBuf {
 fn game(mut o: Options) -> i32 {
     // One window for the session: the lobby and every match.
     window::keep_window_between_screens();
-    // The region picker first, unless the command line names one.
-    let (lobby, data) = if named_region(&o).is_some() {
-        region(&o)
+    if let Some(dir) = config_dir() {
+        washoi::regions::claim_shared_key(&dir);
+    }
+    loop {
+        match game_in_region(&mut o) {
+            LobbyEnd::Exit(code) => return code,
+            // Join lobby via invite named a room in another region: that
+            // region's data and lobby, joining the room once logged in.
+            LobbyEnd::SwitchRegion { region, link } => {
+                println!("lobby: switching to region {region} for {link}");
+                washoi::regions::save_choice(config_dir().as_deref(), &region);
+                o.region = Some(region);
+                o.join = Some(link);
+            }
+        }
+    }
+}
+
+/// How the lobby ended: the game is over, or it goes on in another region.
+enum LobbyEnd {
+    Exit(i32),
+    SwitchRegion { region: String, link: String },
+}
+
+/// One region's data and lobby: the region picker first, unless the
+/// command line (or a region switch) names one.
+fn game_in_region(o: &mut Options) -> LobbyEnd {
+    let (id, lobby, data) = if named_region(o).is_some() {
+        let (lobby, data) = region(o);
+        (region_id(o), lobby, data)
     } else {
         match region_screen::run(config_dir().as_deref(), o.offline) {
             Ok(Some(r)) => match (r.lobby_url, r.data_url) {
-                (Some(lobby), Some(data)) => (lobby, data),
-                _ => return 1,
+                (Some(lobby), Some(data)) => (r.id, lobby, data),
+                _ => return LobbyEnd::Exit(1),
             },
-            Ok(None) => return 0,
-            Err(why) => return fatal(&why),
+            Ok(None) => return LobbyEnd::Exit(0),
+            Err(why) => return LobbyEnd::Exit(fatal(&why)),
         }
     };
-    let dir = game_data_dir(&o);
+    let dir = game_data_dir(o);
     // `--offline` never touches the network: whatever is on disk is played.
     if o.offline && !shagger::loader::pk3::package_store::has_packages(&dir) {
-        return fatal(&format!(
+        return LobbyEnd::Exit(fatal(&format!(
             "--offline: no game data in {}; start once without it",
             dir.display()
-        ));
+        )));
     }
     if !o.offline {
         match data_sync_screen::run(&data, &dir) {
             Ok(data_sync_screen::SyncOutcome::Ready) => {}
-            Ok(data_sync_screen::SyncOutcome::Quit | data_sync_screen::SyncOutcome::Updating) => return 0,
-            Err(why) => return fatal(&why),
+            Ok(data_sync_screen::SyncOutcome::Quit | data_sync_screen::SyncOutcome::Updating) => {
+                return LobbyEnd::Exit(0);
+            }
+            Err(why) => return LobbyEnd::Exit(fatal(&why)),
         }
     }
     o.data = Some(dir);
-    lobby_mode(&lobby, &o)
+    lobby_mode(&lobby, &id, o)
 }
 
 /// The region's lobby until the player quits, each match it starts played
 /// in the same window (NATIVE_LOBBY.md).
-fn lobby_mode(lobby: &str, o: &Options) -> i32 {
+fn lobby_mode(lobby: &str, region: &str, o: &Options) -> LobbyEnd {
     if !o.offline {
         washoi::update_check::start();
     }
     // The account key lives in the config dir.
     let Some(dir) = config_dir() else {
-        return fatal("no config directory for the lobby's settings");
+        return LobbyEnd::Exit(fatal("no config directory for the lobby's settings"));
     };
     let _ = std::fs::create_dir_all(&dir);
-    let key_file = o.key_file.clone().or_else(default_key_file);
+    // One key per region: each region's lobby has its own players.
+    let key_file = o
+        .key_file
+        .clone()
+        .or_else(|| Some(washoi::regions::key_file(&dir, region)));
     washoi::client::preview_packages::set_data_dir(data_dir(o));
     // The lobby's connection lasts the session, through every match.
     println!("lobby: at {lobby}");
@@ -747,7 +796,10 @@ fn lobby_mode(lobby: &str, o: &Options) -> i32 {
     }
     loop {
         match lobby_screen::run(&mut panel, match_loading_screen::twin_style(), &data_dir(o)) {
-            Ok(lobby_screen::LobbyOutcome::Quit) => return 0,
+            Ok(lobby_screen::LobbyOutcome::Quit) => return LobbyEnd::Exit(0),
+            Ok(lobby_screen::LobbyOutcome::SwitchRegion { region, link }) => {
+                return LobbyEnd::SwitchRegion { region, link };
+            }
             Ok(lobby_screen::LobbyOutcome::Match(c)) => {
                 let (v, handoff) = if let Some(demo) = &c.demo {
                     println!("lobby: demo {}", demo.display());
@@ -765,7 +817,7 @@ fn lobby_mode(lobby: &str, o: &Options) -> i32 {
                 };
                 let Some(started) = load_and_start(v, handoff, Some(lobby)) else {
                     panel.leave();
-                    return 0;
+                    return LobbyEnd::Exit(0);
                 };
                 let error = started.err();
                 if let Some(why) = &error {
@@ -773,7 +825,7 @@ fn lobby_mode(lobby: &str, o: &Options) -> i32 {
                 }
                 panel.after_match(error, window::take_match_completed());
             }
-            Err(e) => return fatal(&format!("lobby: {e}")),
+            Err(e) => return LobbyEnd::Exit(fatal(&format!("lobby: {e}"))),
         }
     }
 }
@@ -808,12 +860,6 @@ fn windowed(v: view::ViewOptions, play: bool, lobby: &str) -> i32 {
             1
         }
     }
-}
-
-fn default_key_file() -> Option<PathBuf> {
-    let dir = config_dir()?;
-    std::fs::create_dir_all(&dir).ok()?;
-    Some(dir.join("lobby-key"))
 }
 
 use washoi::config_dir;

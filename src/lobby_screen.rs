@@ -42,6 +42,11 @@ pub enum LobbyOutcome {
     Quit,
     /// A match, or a recording (`demo` set) from the Demos page.
     Match(LobbyChoice),
+    /// A room in another region: that region's lobby, joining it by `link`.
+    SwitchRegion {
+        region: String,
+        link: String,
+    },
 }
 
 struct Open {
@@ -148,6 +153,10 @@ impl LobbyApp<'_> {
                 end_screen(event_loop);
             }
             Some(PanelAction::OpenUrl(url)) => open_url(&url),
+            Some(PanelAction::SwitchRegion { region, link }) => {
+                self.outcome = Some(LobbyOutcome::SwitchRegion { region, link });
+                end_screen(event_loop);
+            }
             None => {}
         }
     }
@@ -259,7 +268,7 @@ pub fn run(panel: &mut LobbyPanel, style: TwinStyle, data: &Path) -> Result<Lobb
         return Err(why);
     }
     let outcome = outcome.unwrap_or(LobbyOutcome::Quit);
-    if matches!(outcome, LobbyOutcome::Quit) {
+    if matches!(outcome, LobbyOutcome::Quit | LobbyOutcome::SwitchRegion { .. }) {
         panel.leave();
     }
     Ok(outcome)
@@ -271,6 +280,8 @@ pub struct Shot<'a> {
     pub quick_play: bool,
     pub room: Option<&'a Path>,
     pub page: Option<&'a str>,
+    /// The mouse held at this point, for a hover.
+    pub pointer: Option<(f32, f32)>,
     /// What the lobby would say, for the Leaderboard, Demos, Profile and
     /// Campaign pages: `{"boards": {"all:month": leaderboard:page, ...},
     /// "demos": [...], "featured": [...], "stats": [{"id", "name", "data":
@@ -301,6 +312,7 @@ pub fn screenshot(
         room,
         page,
         seed,
+        pointer,
     } = shot;
     let seed = match seed {
         Some(file) => {
@@ -364,6 +376,10 @@ pub fn screenshot(
             egui::Pos2::ZERO,
             egui::vec2(width as f32, height as f32),
         )),
+        events: pointer
+            .map(|(x, y)| egui::Event::PointerMoved(egui::pos2(x, y)))
+            .into_iter()
+            .collect(),
         ..Default::default()
     };
     let started = Instant::now();

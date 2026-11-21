@@ -1,6 +1,9 @@
 //! wash-fps `client/LobbyPanel.ts` and `styles/LobbyPanel.css`: the lobby,
 //! a gold rail beside one stage (docs/research/NATIVE_LOBBY.md).
 //!
+//! The lobby opens on Home (`client/home_view.rs`), three cards into the
+//! game; the rail's logo leads back to it.
+//!
 //! The rail holds the brand, Quick play and the pages, the rooms being
 //! played or formed, the player card and the Profile, Settings and Console
 //! keys. The Play stage holds the four modes, the picked mode's hook with
@@ -54,8 +57,11 @@ use crate::client::campaign::campaign_story::campaign_story;
 use crate::client::campaign::campaign_view::{CampaignAction, CampaignView};
 use crate::client::credits::credits_dialog::{CreditsAnswer, CreditsDialog};
 use crate::client::demos_view::DemosView;
+use crate::client::home_view::{HomeAction, HomeView};
+use crate::client::join_lobby_dialog::{JoinAnswer, JoinLobbyDialog};
 use crate::client::leaderboard_view::LeaderboardView;
 use crate::client::levelshots::{Levelshots, site_base};
+use crate::client::lobby_code::{RoomRef, in_this_region, region_room_link, room_code, room_in_text};
 use crate::client::lobby_full_notice::{NoticeKind, lobby_full_notice, offline_retry_delay_sec, retry_delay_sec};
 use crate::client::lobby_music_key::{lobby_music_key, lobby_music_muted, set_lobby_music_muted};
 use crate::client::lobby_rooms::{PlayKeysInput, RoomAction, describe_room, play_keys, sort_rooms};
@@ -68,6 +74,7 @@ use crate::client::settings::settings_model::SETTINGS_PAGES;
 use crate::client::settings::settings_model::SettingsPageId;
 use crate::client::washoi_style::{DISPLAY_FONT, display_family};
 use crate::client::welcome_overlay::WelcomeOverlay;
+use crate::regions::Region;
 
 /// `GameMode`: a mode's tile on the Play stage.
 #[derive(Debug, Clone, Copy)]
@@ -191,6 +198,9 @@ pub enum PanelAction {
     Quit,
     /// A page for the system's browser, such as the devlog.
     OpenUrl(String),
+    /// A room in another region (Join lobby via invite): the game starts
+    /// that region's lobby with the room's link, as `--region` and `--join`.
+    SwitchRegion { region: String, link: String },
 }
 
 /// The team's devlog, opened from the Play page's links bar (`DEVLOG_URL`).
@@ -199,6 +209,8 @@ pub const DEVLOG_URL: &str = "https://washoi.net/devlog";
 /// The rail's pages (`switchTab`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Tab {
+    /// `home`: the three ways into the game, where the lobby opens.
+    Home,
     Play,
     Campaign,
     Leaderboard,
@@ -465,6 +477,18 @@ pub struct LobbyPanel {
     started: Instant,
     /// The Campaign page.
     pub campaign: CampaignView,
+    /// The Home page.
+    pub home: HomeView,
+    /// The rail's logo, Home's key, where it was drawn last frame.
+    brand_rect: Option<Rect>,
+    /// The regions a room code may name (`knownRegions`), and the one this
+    /// lobby is (`activeRegion`); `None` for a lobby that is no region's.
+    regions: Vec<Region>,
+    region: Option<Region>,
+    /// Join lobby via invite's dialog, while open.
+    join_dialog: Option<JoinLobbyDialog>,
+    /// A room in another region to start that region's lobby with.
+    switch_region: Option<RoomRef>,
     /// A mission to play again at once (`campaignRetry`): started once the
     /// lobby has sent the campaign and is on screen.
     campaign_retry: Option<String>,
@@ -497,6 +521,8 @@ impl LobbyPanel {
             }
             _ => (None, false),
         };
+        // The regions as the region picker read them last.
+        let regions = crate::regions::cached(crate::config_dir().as_deref()).unwrap_or_else(crate::regions::builtin);
         Self {
             client: LobbyClient::connect(url),
             url: url.to_owned(),
@@ -552,11 +578,18 @@ impl LobbyPanel {
             last_map: None,
             notice: String::new(),
             choice: None,
-            tab: Tab::Play,
+            // The lobby opens on Home: three ways into the game, before the mode list.
+            tab: Tab::Home,
             selected_mode: 0,
             settings_sync: None,
             started: Instant::now(),
             campaign: CampaignView::default(),
+            home: HomeView::new(),
+            brand_rect: None,
+            region: regions.iter().find(|r| r.lobby_url.as_deref() == Some(url)).cloned(),
+            regions,
+            join_dialog: None,
+            switch_region: None,
             campaign_retry: None,
             campaign_missions: None,
             campaign_supported: false,
@@ -587,6 +620,8 @@ impl LobbyPanel {
             }
             self.show_play_stage();
             self.room_to_rejoin = None;
+            // The browser reloads its lobby, which opens on Home.
+            self.tab = Tab::Home;
         }
         // Back from a campaign match: the campaign is where the player was,
         // and a lost mission asked to be played again starts at once.
@@ -1398,6 +1433,15 @@ impl LobbyPanel {
         }
         self.overlays_ui(ui, screen, time, accent.face, style);
         self.dialogs_ui(ui, screen);
+        self.join_dialog_ui(ui, screen);
+        if let Some(room) = self.switch_region.take()
+            && let Some(region) = &room.region
+        {
+            action = Some(PanelAction::SwitchRegion {
+                region: region.id.clone(),
+                link: region_room_link(&room),
+            });
+        }
         self.run_deep_link_join();
         self.update_notice(ui, screen);
         if let Some(url) = self.open_url.take() {
@@ -1493,8 +1537,59 @@ impl LobbyPanel {
         }
     }
 
+    /// `openJoinDialog`: the Join lobby dialog, empty or with a pasted code
+    /// or link in it.
+    fn open_join_dialog(&mut self, text: Option<String>) {
+        self.join_dialog = Some(JoinLobbyDialog::new(text));
+    }
+
+    /// `joinNamedRoom`: a room named in chat. Joined here, or the dialog asks
+    /// before switching region.
+    fn join_named_room(&mut self, room: RoomRef) {
+        if in_this_region(&room, self.region.as_ref()) {
+            self.client.join_lobby(&room.lobby_id, room.invite.as_deref());
+        } else {
+            let code = room_code(&room.lobby_id, room.invite.as_deref(), room.region.as_ref());
+            self.open_join_dialog(Some(code));
+        }
+    }
+
+    /// The open room as a code (`roomCode`), for Copy code.
+    fn open_room_code(&self) -> Option<String> {
+        let room = self.room.as_ref()?;
+        Some(room_code(
+            &room.lobby_id,
+            self.room_invite.as_deref(),
+            self.region.as_ref(),
+        ))
+    }
+
+    /// The Join lobby dialog, over everything while open.
+    fn join_dialog_ui(&mut self, ui: &mut egui::Ui, screen: Rect) {
+        let Some(dialog) = &mut self.join_dialog else { return };
+        match dialog.ui(ui, screen, &self.regions, self.region.as_ref()) {
+            Some(JoinAnswer::Close) => self.join_dialog = None,
+            Some(JoinAnswer::Join(room)) => {
+                self.client.join_lobby(&room.lobby_id, room.invite.as_deref());
+                self.join_dialog = None;
+            }
+            Some(JoinAnswer::Switch(room)) => {
+                self.join_dialog = None;
+                self.switch_region = Some(room);
+            }
+            None => {}
+        }
+    }
+
     /// The welcome guide and the credits, over everything.
     fn dialogs_ui(&mut self, ui: &mut egui::Ui, screen: Rect) {
+        // `keyToSaveNow`: the key this account logs in with, for the guide's
+        // Your account step.
+        self.guide.key = self
+            .key
+            .clone()
+            .filter(|_| self.account_id.is_some())
+            .map(|key| (self.name.clone(), key));
         let can_open = self.guide_can_open();
         self.guide.refresh(can_open);
         if self.guide.is_open() {
@@ -1635,7 +1730,7 @@ mod tests {
         assert!(panel.in_room());
         panel.after_match(None, true);
         assert!(!panel.in_room());
-        assert_eq!(panel.tab, Tab::Play);
+        assert_eq!(panel.tab, Tab::Home);
     }
 
     #[test]

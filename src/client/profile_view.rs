@@ -1792,7 +1792,7 @@ fn key_file_name(name: &str) -> String {
 }
 
 /// `saveKeyFile`: `washoi-key-<name>.txt` in the Downloads folder.
-fn save_key_file(name: &str, key: &str) -> std::io::Result<PathBuf> {
+pub(crate) fn save_key_file(name: &str, key: &str) -> std::io::Result<PathBuf> {
     let dir = downloads_dir().ok_or_else(|| std::io::Error::other("no folder to save in"))?;
     std::fs::create_dir_all(&dir)?;
     let path = dir.join(key_file_name(name));
