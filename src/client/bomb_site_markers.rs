@@ -44,6 +44,9 @@ pub const BLAST_SHAKE_RANGE: f64 = 2600.0;
 pub const BLAST_SOUND_MIN_GAP: f64 = 0.09;
 /// The torus's tessellation.
 const RING_SEGMENTS: usize = 28;
+/// The game camera's near plane (`EngineScene`'s `minZ`): the browser
+/// clips a beacon nearer than this, as a player walking through it.
+const CAMERA_MIN_Z: f32 = 1.0;
 
 /// One site from the bomb objective.
 #[derive(Debug, Clone, PartialEq)]
@@ -267,7 +270,8 @@ pub fn draw_markers(
     let gold = hex(MARKER_GOLD_CSS, 1.0);
     let ring_color = hex(MARKER_GOLD_CSS, RING_ALPHA);
     for pose in poses {
-        let Some((center, depth)) = project(view_proj, size, pose.center) else {
+        let Some((center, depth)) = project(view_proj, size, pose.center).filter(|&(_, depth)| depth >= CAMERA_MIN_Z)
+        else {
             continue;
         };
         let px = |length: f64| length as f32 * pixels_per_unit / depth;
@@ -387,6 +391,37 @@ mod tests {
         markers.schedule_explosion(1, None);
         markers.schedule_explosion(1, Some(&e));
         assert_eq!(markers.fire_pending().len(), 2);
+    }
+
+    #[test]
+    fn a_beacon_at_the_camera_is_not_drawn() {
+        let mut hud = Hud2d::new();
+        let fonts = Fonts::load(&mut hud).unwrap();
+        hud.begin(1280.0, 720.0, 1.0);
+        // Looking down +Z from the origin; the view depth is clip `w`.
+        let f = 1.0 / 0.6f32.tan();
+        #[rustfmt::skip]
+        let view_proj = Mat4::from_cols_array(&[
+            f * 720.0 / 1280.0, 0.0, 0.0, 0.0,
+            0.0, f, 0.0, 0.0,
+            0.0, 0.0, 1.0, 1.0,
+            0.0, 0.0, -1.0, 0.0,
+        ]);
+        let ppu = 360.0 / 0.6f32.tan();
+        let pose = |z: f64| MarkerPose {
+            label: "A".to_owned(),
+            center: DVec3::new(0.0, 0.0, z),
+            spin: 0.0,
+        };
+        // Half a unit away, as a player walks through it: once a frame
+        // rasterizing a letter some 25,000 pixels tall, a freeze.
+        let started = std::time::Instant::now();
+        draw_markers(&mut hud, &fonts, &[pose(0.5)], view_proj, [1280.0, 720.0], ppu);
+        assert!(hud.indices.is_empty());
+        assert!(started.elapsed() < std::time::Duration::from_secs(1));
+        // Across the room it is.
+        draw_markers(&mut hud, &fonts, &[pose(400.0)], view_proj, [1280.0, 720.0], ppu);
+        assert!(!hud.indices.is_empty());
     }
 
     #[test]
