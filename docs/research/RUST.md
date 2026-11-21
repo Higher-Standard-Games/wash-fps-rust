@@ -2731,6 +2731,17 @@ whole areas rather than single items. 0.2.0 closes them in two steps.
 
 ## 24. Progress log
 
+### 1.0.2: the EMP bomb and three fixes (November 21, 2026)
+
+The version is `1.0.2`, built from main after 1.0.1: the EMP bomb and the
+loadout stand's barrels (below), the cursor kept hidden while the mouse is
+captured (after alt-tab and Resume, egui showed the arrow again), and the
+snd1 bomb site beacon no longer freezing the game when the camera reaches
+it (campaign mission 3). The engine is pinned to shagger `e5f51db`.
+washoi_dm5 was republished, so `tests/golden/movement_maps.json` was
+regenerated for it (same SHAG commit, the other twelve maps' vectors
+unchanged). Signing is as for 1.0.1; games on `1.0.1` are offered it.
+
 ### The EMP bomb and the loadout stand's barrels (November 21, 2026)
 
 - **The EMP bomb** (`client/bomb_renderer.rs` from `BombRenderer.ts`, and
