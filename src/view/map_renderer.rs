@@ -1582,7 +1582,12 @@ impl MapRenderer {
         let mut lights = std::mem::take(&mut self.frame_lights);
         lights.clear();
         if dynamic {
-            lights.extend(self.lights.lights().chain(self.charge_glows.iter().copied()));
+            lights.extend(
+                self.lights
+                    .lights()
+                    .chain(self.charge_glows.iter().copied())
+                    .chain(self.bomb.carry_light()),
+            );
         }
         self.models.set_dynamic_lights(&lights);
         self.world.set_dynamic_lights(&lights);

@@ -299,7 +299,10 @@ pub fn build_renderer(gpu: &Gpu, map: &mut LoadedMap, output_format: wgpu::Textu
     }
     let gib_renderer = GibRenderer::new(gpu, &mut models);
     let spatter_renderer = HitSpatterRenderer::new(gpu, &mut models);
-    let bomb = BombRenderer::new(gpu, &mut models);
+    let bomb = {
+        let pk3 = &mut map.pk3;
+        BombRenderer::new(gpu, &mut models, |path| pk3.get_file(path))
+    };
     let slide_dust_renderer = SlideDustRenderer::new(gpu, &mut models);
     // The `func_explosive` brush models (`BrushModelState`), and in a demo
     // or a match the debris models they throw (`BombSiteDebris.preload`).
@@ -749,6 +752,21 @@ pub fn build_renderer(gpu: &Gpu, map: &mut LoadedMap, output_format: wgpu::Textu
     if let Some(age) = map.spatters.iter().map(|g| g.age).reduce(f64::min) {
         for _ in 0..(age * 60.0).round() as usize {
             renderer.spatter.update(1.0 / 60.0);
+        }
+    }
+    // The held bomb (`--bomb`): its objective, run on to its age; carried,
+    // the point is the carrier's spine, facing +Z.
+    if let Some(held) = &map.bomb {
+        let at = babylon(held.origin);
+        let objective = shagger::shared::json::parse(&format!(
+            r#"{{"kind":"bomb","phase":"{}","x":{},"y":{},"z":{},"carrier":"held","beepInterval":1}}"#,
+            held.phase, at.x, at.y, at.z
+        ))
+        .ok();
+        for _ in 0..(held.age * 60.0).round().max(1.0) as usize {
+            renderer
+                .bomb
+                .update(1.0 / 60.0, objective.as_ref(), |_| Some((at, 0.0)));
         }
     }
     // Held ragdolls (`--ragdoll`): an idle body launched, then fallen on to

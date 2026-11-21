@@ -147,6 +147,7 @@ pub fn start_prepared(o: &ViewOptions, prepared: Prepared) -> Result<i32, String
     map.teleports.clone_from(&o.teleports);
     map.gibs.clone_from(&o.gibs);
     map.spatters.clone_from(&o.spatters);
+    map.bomb.clone_from(&o.bomb);
     map.rings.clone_from(&o.rings);
     map.ragdolls.clone_from(&o.ragdolls);
     map.weapon.clone_from(&o.weapon);
