@@ -2756,7 +2756,7 @@ The staging catch-up to wash-fps `fc9b43d` (SHAG v1.0.3). Native-facing:
 
 Not ported: the region picker, the close plate, tokens and the Profile's
 key panel are hosted (itch.io and browser) only. The engine is pinned to
-shagger `a6ac057` (Copy code in the room header, filled and slanted outline
+shagger `7fc0413` (Copy code in the room header, filled and slanted outline
 text).
 
 ### 1.0.0: the stable release (November 20, 2026)
