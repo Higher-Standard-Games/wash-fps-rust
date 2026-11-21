@@ -2731,6 +2731,33 @@ whole areas rather than single items. 0.2.0 closes them in two steps.
 
 ## 24. Progress log
 
+### The EMP bomb and the loadout stand's barrels (November 21, 2026)
+
+- **The EMP bomb** (`client/bomb_renderer.rs` from `BombRenderer.ts`, and
+  `client/bomb/` from wash-fps `client/bomb/`): the S&D bomb is the EMP
+  charge from `washoi_models.pk3` (`models/bomb_emp.glb`), in place of the
+  bundle of dynamite built from cylinders that stood in while the model was
+  missing from the published packs (it has been on both regions since
+  1.0.0). Its purple parts glow (`purple_glow_layer`, the base texture's
+  purple texels drawn as added light, as `BlueGlow` is), and the lightning
+  disc on each pole ripples (shagger's `PoleRipple` on the lit draw, a port
+  of `EmpCorePlugin`'s fragment code). On a carrier's back it rides like a
+  pack, turned with them, glows brightest and a purple light follows it
+  (`r_dynamiclight`); armed, the whole bomb flashes on each fuse beep. The
+  ring on the floor is now `BombFloorDecal`: a turning spiral glow the size
+  of the arm/defuse radius, purple loose, amber planted, red and pulsing
+  armed. Babylon's `zOffset -2` on the decal has no counterpart on a model
+  draw; its 1.5 lift keeps it off the floor. `view --bomb X,Y,Z,PHASE[,AGE]`
+  holds one for screenshots.
+- **Loadout stand barrels** (`client/hud/widgets/weapon_preview.rs`): the
+  grenade launcher's drum and the plasma gun's and machine gun's barrels
+  hang on the weapon's barrel mount, as on a weapon pickup. The browser's
+  `WeaponPreview` loads only the weapon's own model and still leaves them
+  off.
+
+The engine is pinned to shagger `d657401`, which adds `PoleRipple` (the model shader's
+per-draw pole ripple and the model-space position it needs).
+
 ### 1.0.1: the Home page (November 21, 2026)
 
 The version is `1.0.1`, the staging catch-up to wash-fps `fc9b43d` (SHAG
@@ -3095,8 +3122,8 @@ Ported from SHAG staging (a34d658, fps 0184fc1):
   through a player's eyes, their gun wears the quad outline while they
   carry it. The body glow already held between recorded ticks, since demo
   frames go through the `SnapshotBuffer`, which keeps the newer mask.
-- **Not yet:** the S&D EMP bomb model (`bomb_emp.glb` is not in the
-  published packs yet). The
+- **Not yet:** the S&D EMP bomb model (`bomb_emp.glb` was not in the
+  published packs yet; ported once it was, see "The EMP bomb" below). The
   campaign playlists and `washoi_campaign_soundtrack.pk3` are fetched as
   optional extras and play once eu.washoi.net has them.
 
