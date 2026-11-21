@@ -2731,6 +2731,14 @@ whole areas rather than single items. 0.2.0 closes them in two steps.
 
 ## 24. Progress log
 
+### 1.0.1: the Home page (November 21, 2026)
+
+The version is `1.0.1`, the staging catch-up to wash-fps `fc9b43d` (SHAG
+v1.0.3) below: the Home page, Join lobby via invite with room codes, the
+welcome guide's Your account step, and one account key per region. The
+engine is pinned to shagger `7fc0413`. Signing is as for 1.0.0; the
+packages carry update signatures, so games on `1.0.0` are offered it.
+
 ### The Home page, joining by code, and Your account (November 21, 2026)
 
 The staging catch-up to wash-fps `fc9b43d` (SHAG v1.0.3). Native-facing:
