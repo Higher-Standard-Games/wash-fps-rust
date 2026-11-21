@@ -7,7 +7,7 @@
 //! a copy of the site's list is built in for the first start without the
 //! network.
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::AtomicBool;
 use std::time::{Duration, Instant};
 
@@ -161,6 +161,42 @@ pub fn save_choice(config_dir: Option<&Path>, id: &str) {
     }
 }
 
+/// The key file before keys were kept per region.
+const SHARED_KEY_FILE: &str = "lobby-key";
+
+/// The account key for `region`'s lobby. Each region's lobby knows only its
+/// own players, as each region's site keeps its own key in the browser, so
+/// a switch of region must not log in with another region's key (the lobby
+/// would set it aside and make a new player, and a second switch would set
+/// that one aside over the first).
+#[must_use]
+pub fn key_file(config_dir: &Path, region: &str) -> PathBuf {
+    let id = if is_region_id(region) { region } else { "other" };
+    config_dir.join(format!("{SHARED_KEY_FILE}-{id}"))
+}
+
+/// Gives the key from before keys were kept per region to the region
+/// launched last, whose player it is. Called once, before the region picker
+/// can save another choice.
+pub fn claim_shared_key(config_dir: &Path) {
+    let shared = config_dir.join(SHARED_KEY_FILE);
+    if !shared.exists() {
+        return;
+    }
+    let owner = saved_choice(Some(config_dir)).unwrap_or_else(|| crate::REGIONS[0].to_owned());
+    let file = key_file(config_dir, &owner);
+    if file.exists() {
+        return;
+    }
+    if let Err(why) = std::fs::rename(&shared, &file) {
+        eprintln!(
+            "lobby: could not move {} to {}: {why}",
+            shared.display(),
+            file.display()
+        );
+    }
+}
+
 fn write_whole(path: &Path, text: &str) -> std::io::Result<()> {
     shagger::core::atomic_file::write_atomic(path, text.as_bytes())
 }
@@ -295,6 +331,27 @@ mod tests {
         assert_eq!(saved_choice(Some(&dir)).as_deref(), Some("us"));
         std::fs::write(dir.join(CACHE_FILE), SITE).unwrap();
         assert_eq!(cached(Some(&dir)).unwrap().len(), 3);
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn each_region_keeps_its_own_key_and_the_old_one_goes_to_the_last_region() {
+        let dir = std::env::temp_dir().join(format!("washoi-region-keys-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        assert_ne!(key_file(&dir, "eu"), key_file(&dir, "us"));
+        assert_eq!(key_file(&dir, "../x"), dir.join("lobby-key-other"));
+        // The shared key was the player of the region launched last.
+        save_choice(Some(&dir), "us");
+        std::fs::write(dir.join(SHARED_KEY_FILE), "US-KEY").unwrap();
+        claim_shared_key(&dir);
+        assert_eq!(std::fs::read_to_string(key_file(&dir, "us")).unwrap(), "US-KEY");
+        assert!(!dir.join(SHARED_KEY_FILE).exists());
+        assert!(!key_file(&dir, "eu").exists());
+        // A region that has its own key already keeps it.
+        std::fs::write(dir.join(SHARED_KEY_FILE), "OLD").unwrap();
+        claim_shared_key(&dir);
+        assert_eq!(std::fs::read_to_string(key_file(&dir, "us")).unwrap(), "US-KEY");
         std::fs::remove_dir_all(&dir).unwrap();
     }
 

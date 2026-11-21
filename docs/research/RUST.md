@@ -2754,6 +2754,16 @@ The staging catch-up to wash-fps `fc9b43d` (SHAG v1.0.3). Native-facing:
   guide's fourth step, shown while the client has the player's key, to
   copy it or save it as a file.
 
+- **One key per region**: each region's lobby has its own players, as each
+  region's site keeps its own key in the browser, so the account key is now
+  `lobby-key-<region>` in the config folder. The shared `lobby-key` of
+  earlier versions goes to the region launched last
+  (`regions::claim_shared_key`). With one shared key, joining a room in
+  another region logged in there with the wrong region's key: that lobby
+  set it aside as unknown and made a new player, and switching back set the
+  new key aside over the first, losing the player (the region picker could
+  do the same before).
+
 Not ported: the region picker, the close plate, tokens and the Profile's
 key panel are hosted (itch.io and browser) only. The engine is pinned to
 shagger `7fc0413` (Copy code in the room header, filled and slanted outline
