@@ -197,6 +197,7 @@ pub struct ViewOptions {
     pub spatters: Vec<SpatterView>,
     pub rings: Vec<RingView>,
     pub ragdolls: Vec<RagdollView>,
+    pub bomb: Option<BombView>,
     /// The first-person weapon to hold (`--weapon`), and whether it is
     /// aimed down its sights (`--aim`).
     pub weapon: Option<String>,
@@ -756,6 +757,17 @@ pub struct RingView {
     pub alpha: f64,
 }
 
+/// The S&D bomb, held in a phase at an age (`--bomb`).
+#[derive(Debug, Clone, PartialEq)]
+pub struct BombView {
+    /// Where it sits (or, carried, the carrier's spine), as a Quake origin.
+    pub origin: [f64; 3],
+    /// `dropped`, `carried`, `planted` or `armed`.
+    pub phase: String,
+    /// Seconds into its life, for its bob, turn and flashes.
+    pub age: f64,
+}
+
 /// A hit's spatter, held at an age (`--spatter`).
 #[derive(Debug, Clone, PartialEq)]
 pub struct SpatterView {
@@ -948,6 +960,8 @@ pub struct LoadedMap {
     pub rings: Vec<RingView>,
     /// Ragdolls to hold on the map.
     pub ragdolls: Vec<RagdollView>,
+    /// The bomb to hold on the map (`--bomb`).
+    pub bomb: Option<BombView>,
     /// The first-person weapon, if any.
     pub weapon: Option<String>,
     /// Load the player model for players that move (a demo or a match).
@@ -1021,6 +1035,7 @@ pub fn load_map(data: &Path, map: &str, report: &mut dyn FnMut(PrepareStep)) -> 
         spatters: Vec::new(),
         rings: Vec::new(),
         ragdolls: Vec::new(),
+        bomb: None,
         effects: Vec::new(),
         weapon: None,
         remote_players: false,
