@@ -33,6 +33,9 @@ pub struct LobbyWelcomeGuide {
     secondary_tip: usize,
     /// Set aside for the keyboard setup.
     pub suspended: bool,
+    /// The account's name and key (`keyToSaveNow`): a guide opened while the
+    /// lobby has them ends on Your account.
+    pub key: Option<(String, String)>,
 }
 
 impl Default for LobbyWelcomeGuide {
@@ -43,6 +46,7 @@ impl Default for LobbyWelcomeGuide {
             .map_or(0, |d| d.subsec_nanos());
         Self {
             dialog: None,
+            key: None,
             authenticated: false,
             manual: false,
             tab: 0,
@@ -102,8 +106,11 @@ impl LobbyWelcomeGuide {
             COMPLETED.store(true, Ordering::Relaxed);
             return;
         }
-        if self.dialog.is_none() {
-            self.dialog = Some(LobbyWelcomeDialog::new(self.tab, self.secondary_tip));
+        match &mut self.dialog {
+            Some(dialog) => dialog.set_key(self.key.clone()),
+            None => {
+                self.dialog = Some(LobbyWelcomeDialog::new(self.tab, self.secondary_tip).with_key(self.key.clone()));
+            }
         }
     }
 

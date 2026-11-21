@@ -1,7 +1,8 @@
 //! wash-fps `client/LobbyWelcomeDialog.ts` and `styles/LobbyWelcomeDialog.css`:
-//! the welcome guide, three steps on a gold card. The terms of service to
-//! agree to, the keys as they are bound, and a tip of the day. Until the
-//! terms are agreed the guide stays on its first step and cannot be closed.
+//! the welcome guide, steps on a gold card. The terms of service to agree
+//! to, the keys as they are bound, a tip of the day and, when the lobby has
+//! the player's key, Your account: the key to copy or save. Until the terms
+//! are agreed the guide stays on its first step and cannot be closed.
 //!
 //! The card itself (the dimmed lobby behind it, the header, the footer and
 //! its ink keys, a scrolling body) is here too: the credits dialog takes it
@@ -9,6 +10,7 @@
 
 use std::sync::Arc;
 
+use shagger::lobby::player_identity::format_key;
 use shagger::ui::components::lobby_twin::{clamp_css, cream, gradient_polygon, gradient_polygon_in, hsl, hsla, text};
 use shagger::ui::components::raised_key::{KeyLook, KeyText, RaisedKey};
 use shagger::ui::egui_layer::egui;
@@ -382,8 +384,8 @@ pub enum GuideAnswer {
     Link,
 }
 
-/// The step names.
-const STEPS: [&str; 3] = ["Terms of service", "Your keys", "Tip of the day"];
+/// The step names; Your account only with a key to save.
+const STEPS: [&str; 4] = ["Terms of service", "Your keys", "Tip of the day", "Your account"];
 
 /// `LobbyWelcomeDialog`.
 #[derive(Debug)]
@@ -399,6 +401,14 @@ pub struct LobbyWelcomeDialog {
     scroll_reset: bool,
     /// The link a click in the terms asked for.
     pub link: Option<String>,
+    /// `keyToSave`: the account's name and key, for Your account.
+    key: Option<(String, String)>,
+    /// Your account's key plate is shown, not blurred.
+    revealed: bool,
+    /// What Copy key or Save as file last said, and when.
+    said: Option<(usize, &'static str, std::time::Instant)>,
+    /// Where Save as file wrote the key, or why it could not.
+    saved_to: Option<String>,
 }
 
 impl LobbyWelcomeDialog {
@@ -406,7 +416,7 @@ impl LobbyWelcomeDialog {
     pub fn new(tab: usize, secondary_tip: usize) -> Self {
         let agreed = terms_agreed();
         Self {
-            tab: if agreed { tab.min(2) } else { 0 },
+            tab: if agreed { tab.min(3) } else { 0 },
             agreed,
             hide: welcome_is_hidden(),
             save_status: String::new(),
@@ -418,7 +428,36 @@ impl LobbyWelcomeDialog {
             },
             scroll_reset: true,
             link: None,
+            key: None,
+            revealed: false,
+            said: None,
+            saved_to: None,
         }
+    }
+
+    /// With Your account as the last step, when there is a key to save.
+    #[must_use]
+    pub fn with_key(mut self, key: Option<(String, String)>) -> Self {
+        self.set_key(key);
+        self
+    }
+
+    /// The key, once login brings it: a guide opened a frame before the
+    /// account arrived gains its Your account step.
+    pub fn set_key(&mut self, key: Option<(String, String)>) {
+        if self.key.is_none() {
+            self.key = key.filter(|(_, k)| !k.is_empty());
+        }
+    }
+
+    /// The steps there are.
+    fn steps(&self) -> usize {
+        if self.key.is_some() { 4 } else { 3 }
+    }
+
+    /// The last step: Close instead of Next.
+    fn last(&self) -> usize {
+        self.steps() - 1
     }
 
     /// Whether the guide may close (Escape, Close).
@@ -463,7 +502,7 @@ impl LobbyWelcomeDialog {
         if !self.agreed {
             return None;
         }
-        if self.tab == 2 {
+        if self.tab == self.last() {
             return Some(GuideAnswer::Close);
         }
         let tab = self.tab + 1;
@@ -471,17 +510,18 @@ impl LobbyWelcomeDialog {
         None
     }
 
-    /// Opens `tab` (0 to 2), once the terms are agreed.
+    /// Opens `tab` (from 0), once the terms are agreed.
     pub fn show_step(&mut self, tab: usize) {
         if self.agreed {
-            self.select(tab.min(2));
+            let last = self.last();
+            self.select(tab.min(last));
         }
     }
 
     /// Arrow keys between the steps, once the terms are agreed.
     pub fn step(&mut self, by: isize) {
         if self.agreed {
-            let tab = (self.tab as isize + by).rem_euclid(3) as usize;
+            let tab = (self.tab as isize + by).rem_euclid(self.steps() as isize) as usize;
             self.select(tab);
         }
     }
@@ -518,16 +558,31 @@ impl LobbyWelcomeDialog {
                     keys_page(ui, top, width, w)
                 });
             }
-            _ => {
+            2 => {
                 let tip = self.secondary_tip;
                 scroll_body(ui, content, "tips", reset, |ui, top, width| {
                     tips_page(ui, top, width, w, tip)
                 });
             }
+            _ => {
+                let mut pressed = None;
+                let page = KeyPage {
+                    key: self.key.as_ref().map_or("", |(_, k)| k.as_str()),
+                    revealed: self.revealed,
+                    said: self.said.map(|(i, word, _)| (i, word)),
+                    saved_to: self.saved_to.as_deref(),
+                };
+                scroll_body(ui, content, "account", reset, |ui, top, width| {
+                    let (p, bottom) = key_page(ui, top, width, w, &page);
+                    pressed = p;
+                    bottom
+                });
+                self.key_pressed(ui, pressed);
+            }
         }
 
         // The footer: Go to keyboard setup | I agree | Don't show this again, and Next.
-        let label = if self.tab == 2 { "Close" } else { "Next »" };
+        let label = if self.tab == self.last() { "Close" } else { "Next »" };
         let next_w = ink_key_width(&painter, label, 125.0);
         // `margin: 0 calc(--key-dx + 2px) --key-d 0`: room for the side.
         let next_left = inner.right() - next_w - (6.0 * 0.75 + 2.0);
@@ -555,6 +610,7 @@ impl LobbyWelcomeDialog {
                     answer = Some(GuideAnswer::Setup);
                 }
             }
+            2 if self.tab != self.last() => {}
             _ => {
                 let hide = self.hide;
                 if check_row(
@@ -575,21 +631,57 @@ impl LobbyWelcomeDialog {
         answer
     }
 
+    /// Your account's keys: Show / Hide, Copy key and Save as file.
+    fn key_pressed(&mut self, ui: &egui::Ui, pressed: Option<KeyPress>) {
+        if self
+            .said
+            .is_some_and(|(_, _, at)| at.elapsed() > std::time::Duration::from_secs(2))
+        {
+            self.said = None;
+        }
+        let Some((name, key)) = self.key.clone() else { return };
+        match pressed {
+            Some(KeyPress::Reveal) => self.revealed = !self.revealed,
+            Some(KeyPress::Copy) => {
+                ui.ctx().copy_text(format_key(&key));
+                self.said = Some((0, "Copied", std::time::Instant::now()));
+            }
+            Some(KeyPress::Save) => {
+                let word = match crate::client::profile_view::save_key_file(&name, &key) {
+                    Ok(path) => {
+                        self.saved_to = Some(format!("Saved to {}", path.display()));
+                        "Saved"
+                    }
+                    Err(why) => {
+                        self.saved_to = Some(format!("Could not save the key: {why}"));
+                        "Not saved"
+                    }
+                };
+                self.said = Some((1, word, std::time::Instant::now()));
+            }
+            None => {}
+        }
+    }
+
     /// `.lobby-guide__tabs`: one chevron strip, each step pointing into the
     /// next; the step clicked, if it may be chosen.
     fn tabs(&self, ui: &mut egui::Ui, inner: Rect, top: f32, narrow: bool) -> Option<usize> {
         let painter = ui.painter().clone();
         let (c, h) = if narrow { (14.0, 50.0) } else { (24.0, 62.0) };
-        let tw = (inner.width() + c) / 3.0;
+        let steps = self.steps();
+        let tw = (inner.width() + c) / steps as f32;
         let w = ui.ctx().content_rect().width();
+        // Four steps' names fit a little smaller.
         let size = if narrow {
             12.0
+        } else if steps == 4 {
+            clamp_css(13.0, w * 0.0105, 17.0)
         } else {
             clamp_css(15.0, w * 0.0125, 20.0)
         };
         let (dot, dot_size) = if narrow { (26.0, 14.0) } else { (34.0, 17.0) };
         let mut chosen = None;
-        for (i, name) in STEPS.iter().enumerate() {
+        for (i, name) in STEPS.iter().take(steps).enumerate() {
             let left = inner.left() + i as f32 * (tw - c / 2.0);
             let r = Rect::from_min_size(pos2(left, top), vec2(tw, h));
             // The convex parts: the body to the point, and the notch's two wedges.
@@ -663,8 +755,20 @@ impl LobbyWelcomeDialog {
                 (ink(1.0), ink(1.0), gold_text())
             };
             let fade = |c: Color32| if disabled { c.gamma_multiply(0.45) } else { c };
-            let pad = c + if narrow { 6.0 } else { 14.0 };
-            let gap = if narrow { 8.0 } else { 14.0 };
+            let pad = c + if narrow {
+                6.0
+            } else if steps == 4 {
+                8.0
+            } else {
+                14.0
+            };
+            let gap = if narrow {
+                8.0
+            } else if steps == 4 {
+                10.0
+            } else {
+                14.0
+            };
             let room = (tw - c / 2.0 - pad * 2.0 - dot - gap).max(10.0);
             let label = shagger::ui::components::lobby_twin::elide(
                 &painter,
@@ -734,6 +838,167 @@ impl LobbyWelcomeDialog {
             self.link = link;
         }
     }
+}
+
+/// A key pressed on Your account.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum KeyPress {
+    Reveal,
+    Copy,
+    Save,
+}
+
+/// What Your account shows.
+struct KeyPage<'a> {
+    key: &'a str,
+    revealed: bool,
+    /// Which of Copy key (0) and Save as file (1) says what, for a moment.
+    said: Option<(usize, &'static str)>,
+    saved_to: Option<&'a str>,
+}
+
+/// `buildKeyPage`: the player's key, to copy or save. Blurred until asked,
+/// as Profile's is, so a stream or a screenshot doesn't give it away; the
+/// native renderer has no blur, so stand-ins are blurred in its place.
+fn key_page(ui: &mut egui::Ui, top: Pos2, width: f32, screen_w: f32, page: &KeyPage<'_>) -> (Option<KeyPress>, f32) {
+    let painter = ui.painter().clone();
+    let left = top.x + 5.0;
+    let width = width - 10.0;
+    let mut pressed = None;
+    let y = panel_head(
+        &painter,
+        left,
+        top.y + 6.0,
+        width,
+        screen_w,
+        "Copy your key to safety.",
+        "This key is your player. To play as this player in another browser, on another computer or in the Washoi app, paste the key under Use my key. Keep a copy somewhere safe: nobody can get it back for you.",
+    );
+    // `.lobby-guide__key`: ink, gold, the display face; Show / Hide at its right.
+    let size = clamp_css(16.0, screen_w * 0.022, 24.0);
+    let formatted = format_key(page.key);
+    let reveal_label = if page.revealed { "HIDE" } else { "SHOW" };
+    let rg = text(&painter, reveal_label, 14.0, display_family(), gold_text(), 14.0 * 0.08);
+    let reveal_w = rg.size().x + 24.0 + 2.0;
+    let text_w = (width - 36.0 - 16.0 - reveal_w).max(40.0);
+    let mut job = egui::text::LayoutJob::default();
+    job.wrap.max_width = text_w;
+    job.wrap.break_anywhere = true;
+    job.append(
+        &formatted,
+        0.0,
+        egui::TextFormat {
+            font_id: FontId::new(size, display_family()),
+            color: gold_text(),
+            extra_letter_spacing: size * 0.06,
+            line_height: Some(size * 1.3),
+            ..Default::default()
+        },
+    );
+    let shown = painter.layout_job(job);
+    let plate_top = y + 18.0 - 14.0;
+    let plate = Rect::from_min_size(pos2(left, plate_top), vec2(width, shown.size().y + 28.0));
+    painter.rect_filled(plate, 4.0, ink(1.0));
+    let at = pos2(plate.left() + 18.0, plate.top() + 14.0);
+    if page.revealed {
+        painter.galley(at, shown, Color32::WHITE);
+    } else {
+        // `filter: blur(9px)` over stand-ins of the key's shape.
+        const STAND_INS: [&str; 6] = ["8M3K", "W7QH", "4RZP", "J2XD", "6TBN", "C9VF"];
+        let mut fake = String::from("WASHOI");
+        for i in 0..formatted.split('-').count().saturating_sub(1) {
+            fake.push('-');
+            fake.push_str(STAND_INS[i % STAND_INS.len()]);
+        }
+        let mut job = egui::text::LayoutJob::default();
+        job.wrap.max_width = text_w;
+        job.wrap.break_anywhere = true;
+        job.append(
+            &fake,
+            0.0,
+            egui::TextFormat {
+                font_id: FontId::new(size, display_family()),
+                color: gold_text(),
+                extra_letter_spacing: size * 0.06,
+                line_height: Some(size * 1.3),
+                ..Default::default()
+            },
+        );
+        let stand_in = painter.layout_job(job);
+        let clip = painter.with_clip_rect(plate);
+        for ring in [(3.0, 10, 0.08), (6.0, 16, 0.05), (9.0, 20, 0.03)] {
+            for s in 0..ring.1 {
+                let a = s as f32 / ring.1 as f32 * std::f32::consts::TAU;
+                clip.galley_with_override_text_color(
+                    at + vec2(a.cos(), a.sin()) * ring.0,
+                    stand_in.clone(),
+                    gold_text().gamma_multiply(ring.2),
+                );
+            }
+        }
+    }
+    // `.lobby-guide__key-reveal`: outlined in gold, filled under the pointer.
+    let rr = Rect::from_min_size(
+        pos2(
+            plate.right() - 18.0 - reveal_w,
+            plate.center().y - (rg.size().y + 14.0) / 2.0,
+        ),
+        vec2(reveal_w, rg.size().y + 14.0),
+    );
+    let response = ui.interact(rr, egui::Id::NULL.with("guide-key-reveal"), Sense::click());
+    let hot = response.hovered();
+    if hot {
+        ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
+        painter.rect_filled(rr, 3.0, gold_text());
+    }
+    painter.rect_stroke(rr, 3.0, Stroke::new(1.0, gold_text()), egui::StrokeKind::Inside);
+    painter.galley_with_override_text_color(
+        rr.center() - rg.size() / 2.0,
+        rg,
+        if hot { ink(1.0) } else { gold_text() },
+    );
+    if response.clicked() {
+        pressed = Some(KeyPress::Reveal);
+    }
+    // `.lobby-guide__key-actions`: Copy key and Save as file, cream.
+    let mut x = left;
+    let keys_top = plate.bottom() + 14.0;
+    for (i, (label, press)) in [("Copy key", KeyPress::Copy), ("Save as file", KeyPress::Save)]
+        .into_iter()
+        .enumerate()
+    {
+        let label = match page.said {
+            Some((at, word)) if at == i => word,
+            _ => label,
+        };
+        let g = text(
+            &painter,
+            &label.to_uppercase(),
+            20.0,
+            display_family(),
+            Color32::WHITE,
+            20.0 * 0.07,
+        );
+        let r = Rect::from_min_size(pos2(x, keys_top), vec2(g.size().x + 48.0, KEY_H));
+        x = r.right() + 12.0;
+        let face = RaisedKey::new(("guide-key-action", i), r, KeyLook::cream()).show(ui);
+        KeyText::new(label, "", display_family(), body())
+            .size(20.0, 13.0)
+            .spacing(0.07)
+            .pad(24.0, 24.0)
+            .paint(&painter, &face);
+        if face.clicked {
+            pressed = Some(press);
+        }
+    }
+    let mut bottom = keys_top + KEY_H + 6.0 + 10.0;
+    if let Some(note) = page.saved_to {
+        let g = wrapped_ink(&painter, note, FontId::new(17.0, body()), ink(0.78), width, 17.0 * 1.4);
+        let h = g.size().y;
+        painter.galley(pos2(left, bottom), g, Color32::WHITE);
+        bottom += h + 8.0;
+    }
+    (pressed, bottom)
 }
 
 /// `.lobby-guide__preference`: a 24px box and its words (and a small line
@@ -1114,6 +1379,10 @@ mod tests {
             terms: Vec::new(),
             scroll_reset: false,
             link: None,
+            key: None,
+            revealed: false,
+            said: None,
+            saved_to: None,
         };
         assert_eq!(d.next_step(), None);
         assert_eq!(d.tab, 0);
@@ -1126,5 +1395,23 @@ mod tests {
         assert_eq!(d.next_step(), Some(GuideAnswer::Close));
         d.step(1);
         assert_eq!(d.tab, 0);
+    }
+
+    #[test]
+    fn a_key_to_save_adds_your_account_as_the_last_step() {
+        let mut d = LobbyWelcomeDialog::new(0, 0).with_key(Some(("Pilot".into(), "k".repeat(24))));
+        d.agreed = true;
+        d.show_step(2);
+        assert_eq!(d.next_step(), None);
+        assert_eq!(d.tab, 3);
+        assert_eq!(d.next_step(), Some(GuideAnswer::Close));
+        d.step(1);
+        assert_eq!(d.tab, 0);
+        // Without a key the tip of the day is the last step.
+        let mut plain = LobbyWelcomeDialog::new(0, 0).with_key(None);
+        plain.agreed = true;
+        plain.show_step(5);
+        assert_eq!(plain.tab, 2);
+        assert_eq!(plain.next_step(), Some(GuideAnswer::Close));
     }
 }

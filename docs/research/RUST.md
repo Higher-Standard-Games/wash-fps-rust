@@ -2731,6 +2731,34 @@ whole areas rather than single items. 0.2.0 closes them in two steps.
 
 ## 24. Progress log
 
+### The Home page, joining by code, and Your account (November 21, 2026)
+
+The staging catch-up to wash-fps `fc9b43d` (SHAG v1.0.3). Native-facing:
+
+- **Home** (`client/home_view.rs`, from `HomeView.ts`, wash-fps `5e19d2a`):
+  three cards, Quick Play, Campaign and Play Online, open the lobby as its
+  first tab and after a finished match. The Washoi logo in the rail goes
+  back to it. Quick Play's card plays a reel of the ten
+  `assets/home/quick-*.webp` shots (SHAG `3b543b0`); the outlined, slanted
+  mode words use shagger's `paint_outline_text_styled`.
+- **Join lobby via invite** (`client/join_lobby_dialog.rs` and
+  `client/lobby_code.rs`, wash-fps `981c983` and `f291f73`): a key at the
+  foot of the Play page opens a field that takes a room link or a room code
+  (`eu:3fa9c2d1`). A room in another region switches region: the browser
+  goes to that region's site; the native client saves the region and
+  starts that region's lobby again with the room as its join link
+  (`LobbyEnd::SwitchRegion` in `main.rs`). Rooms show their code with a
+  Copy code key (shagger's match lobby view), and chat lines that name a
+  room get a Join key.
+- **Your account** (wash-fps `0ee902c`, `9ca3b1f`, `838306a`): the welcome
+  guide's fourth step, shown while the client has the player's key, to
+  copy it or save it as a file.
+
+Not ported: the region picker, the close plate, tokens and the Profile's
+key panel are hosted (itch.io and browser) only. The engine is pinned to
+shagger `a6ac057` (Copy code in the room header, filled and slanted outline
+text).
+
 ### 1.0.0: the stable release (November 20, 2026)
 
 The version is `1.0.0`, built from RC1 and the papercuts fixed after it:

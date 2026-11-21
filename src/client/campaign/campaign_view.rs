@@ -146,8 +146,8 @@ const CARDS: [&[u8]; 9] = [
     // The finale.
     include_bytes!("../../../assets/campaign/card9.webp"),
 ];
-const SQUAD: &[u8] = include_bytes!("../../../assets/campaign/squad.webp");
-const STREET: &[u8] = include_bytes!("../../../assets/campaign/street.webp");
+pub(crate) const SQUAD: &[u8] = include_bytes!("../../../assets/campaign/squad.webp");
+pub(crate) const STREET: &[u8] = include_bytes!("../../../assets/campaign/street.webp");
 
 /// One decoded picture, by its name: `card<n>`, `card<n>-locked`,
 /// `card<n>-blur`, `squad`, `street`, `street-blur`.
@@ -1785,7 +1785,7 @@ fn rotate(p: Pos2, about: Pos2, angle: f32) -> Pos2 {
 
 /// `campaign-handheld-far` and `-near`: where the street and the squad
 /// have wandered at `time` seconds, the squad a quarter as far.
-fn handheld(time: f32) -> (egui::Vec2, egui::Vec2) {
+pub(crate) fn handheld(time: f32) -> (egui::Vec2, egui::Vec2) {
     const KEYS: [(f32, f32, f32); 6] = [
         (0.0, 0.0, 0.0),
         (0.21, 16.0, -2.0),
