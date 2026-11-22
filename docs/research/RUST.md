@@ -370,6 +370,13 @@ its flags select, in this order:
 | `0x10` | movement state, see below | 1 or 5 | copy the four booleans from baseline; the view fields are not carried |
 | `0x20` | weapon meta `weaponId: str, settled: u8` | 3+ | copy from baseline |
 | `0x40` | powerup mask `u8` | 1 | **no powerups**; never carried, the server sends it every snapshot |
+| `0x80` | extension byte `u8`, then the fields its bits select | 1+ | no extension fields |
+
+Extension bit `0x01` (SHAG `d0ffa09`, demo v9): orientation, a thrown
+weapon's rotation as four `i16` words (quaternion x, y, z, w, each `/ 32767`).
+When the bit is clear the baseline's orientation carries forward; a recording
+made before demo v9 never sets `0x80`. A decoder that does not read the
+extension byte misreads every entity after the first one that has it.
 
 Movement state byte: bit 0 crouching, bit 1 sliding, bit 2 wall jump charging,
 bit 3 aiming, bit 7 "view follows". With bit 7 set, four more bytes follow:
@@ -2730,6 +2737,50 @@ whole areas rather than single items. 0.2.0 closes them in two steps.
 0.2.0 is released when both are done.
 
 ## 24. Progress log
+
+### 1.0.3: dropped weapons from the server (November 22, 2026)
+
+The version is `1.0.3`, built from main after 1.0.2 to go out with the web
+point release (wash-fps `c51d92c`, SHAG `7c979b3`): dropped weapons drawn
+at the pose the server sends, and demo v9 (below). Without it a 1.0.2 game
+cannot decode a snapshot that holds a Havok-thrown weapon. The engine is
+pinned to shagger `7b77f31`, which adds the orientation decoder. Signing is as for 1.0.2; games on
+`1.0.2` are offered it.
+
+### Dropped weapons lie as the server throws them (November 22, 2026)
+
+The staging catch-up to wash-fps `c51d92c` and SHAG `7c979b3` (networking
+guide, "9b. Dropped Weapons"). The game server now throws each dropped
+weapon as a Havok box and sends its pose; a client runs no physics for it.
+
+- **The wire** (shagger `7b77f31`): entity flag `0x80` is an extension byte
+  whose bit `0x01` carries the orientation (4.5). `Entity::orientation`,
+  carried forward from the baseline; demo v9 reads. Without this a v9
+  snapshot with a thrown weapon would not decode at all.
+- **Drawing** (`client/dropped_weapon_renderer.rs`, the new
+  `DroppedWeaponRenderer.ts`; `shared/items/weapon_boxes.rs` from
+  `WeaponBoxes.ts`): the snapshot's position is the centre of the gun's
+  box, so the model's origin is `position − rotate(q, centre)`, turned by
+  `q` and drawn as its raw GLB meshes times the weapon's scale
+  (`flattened_pickup_matrices`, as a map weapon pickup). The renderer
+  works in the game's (Babylon's) axes and a Babylon quaternion is a glam
+  `DQuat` with the same numbers (`babylon_local_matrix` already relied on
+  it), so the server's quaternion is used as sent, unconverted.
+- **Smoothing:** up to six samples per weapon at their snapshot ticks
+  (125 a second); a render tick that advances with the frame but never
+  passes the newest snapshot, lerp for position and slerp (glam's) for
+  rotation. A paused demo holds still; a seek back starts the samples
+  again. `SnapshotFeed` now hands the frame every snapshot's `item_`
+  entities with its tick, not only the newest.
+- **Before demo v9:** no orientation; drawn on their side (a quarter roll
+  about the barrel) at a heading hashed from the entity id, the box centre
+  lifted half the box's z size less 4, as the browser does.
+- **Gone:** the client-side replay of the `weapon_drop` throw and its
+  invented spin. The event is still decoded and otherwise unused.
+- **Not ported:** map weapons now land as Havok bodies in the browser and
+  on the server (`mapWeaponThrow`, `ItemPhysics.ts`); the native client
+  still lands them with the old point throw (`item_throw.rs`), so a map
+  weapon may lie at a different spot and angle than in the browser.
 
 ### 1.0.2: the EMP bomb and three fixes (November 21, 2026)
 

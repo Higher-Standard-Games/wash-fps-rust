@@ -1366,35 +1366,15 @@ impl MapRenderer {
         (map, floor)
     }
 
-    /// `GameEvents`' dropped weapons, after [`Self::play_effects`] this
-    /// frame: the throws `weapon_drop` starts, the snapshot's weapons on the
-    /// floor, and `dt` seconds of their motion through the map.
-    pub fn play_dropped_weapons(
-        &mut self,
-        events: &[SnapshotEvent],
-        items: &HashMap<String, DroppedWeaponInfo>,
-        dt: f64,
-    ) {
-        let now = self.effect_time * 1000.0;
-        for event in events {
-            if let SnapshotEvent::WeaponDrop { entity_id, at, vel, .. } = event {
-                let thrown = DropThrow {
-                    start: [at.x, at.y, at.z],
-                    velocity: [vel.x, vel.y, vel.z],
-                };
-                self.dropped_weapons.stash_throw(entity_id, thrown, now);
-            }
+    /// `GameEvents`' dropped weapons: the `item_` entities of each snapshot
+    /// since the last frame at its tick, then `dt` seconds on the server's
+    /// tick clock. The `weapon_drop` throw is not replayed: the entity's
+    /// poses already follow it.
+    pub fn play_dropped_weapons(&mut self, snapshots: &[(u32, HashMap<String, DroppedWeaponInfo>)], dt: f64) {
+        for (tick, items) in snapshots {
+            self.dropped_weapons.sync_server_entities(items, *tick);
         }
-        self.dropped_weapons.sync_server_entities(items, now);
-        // The shots' collision is the server's map: the throws step through it.
-        let Some(backend) = self.shot_world.take() else {
-            self.dropped_weapons
-                .update(dt, None::<&mut SharedCollisionWorld<SweepBackendAdapter>>);
-            return;
-        };
-        let mut world = SharedCollisionWorld::new(SweepBackendAdapter { backend });
-        self.dropped_weapons.update(dt, Some(&mut world));
-        self.shot_world = Some(world.backend.backend);
+        self.dropped_weapons.update(dt);
     }
 
     /// `camera` is the eye our own gun is drawn under.
@@ -1643,7 +1623,7 @@ impl MapRenderer {
         {
             self.hand_weapons.world_draws(
                 &weapon.weapon_id,
-                weapon.position,
+                weapon.model_origin(),
                 weapon.rotation,
                 &mut self.frame_draws,
             );
