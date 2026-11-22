@@ -68,13 +68,16 @@ jobs:
             echo "::error::tag $GITHUB_REF_NAME but Cargo.toml says $cargo_version"
             exit 1
           fi
-      # shagger is public: the sources come without a token.
-      - name: Fetch the sources
-        run: cargo fetch --locked
       # cpal's ALSA backend (RUST.md 22.7) links libasound.
       - if: runner.os == 'Linux'
         run: sudo apt-get update && sudo apt-get install -y libasound2-dev libudev-dev desktop-file-utils
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
+      # After the cache: a restored registry from an older Cargo.lock replaces
+      # ~/.cargo/registry, and a fetch before it is lost (the offline build
+      # then misses every crate the lock moved to).
+      # shagger is public: the sources come without a token.
+      - name: Fetch the sources
+        run: cargo fetch --locked
       # Which signing secrets exist. Each secret reaches only the step that
       # uses it, never the build (crate build scripts run there).
       - name: Which secrets
