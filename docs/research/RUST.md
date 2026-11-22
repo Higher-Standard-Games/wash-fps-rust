@@ -977,10 +977,14 @@ does not strictly need stays in, or is added to, SHAG and wash-fps:
 
 **How the two repositories connect.** SHAG includes wash-fps as a submodule;
 the Rust side turns that around, as Cargo expects. `wash-fps-rust` depends on
-`shagger` by git revision:
+`shagger` by git revision, pinned once in the root `Cargo.toml`'s
+`[workspace.dependencies]` so the client and `washoi_movement` always build on
+the same `shagger_shared`:
 
 ```toml
+[workspace.dependencies]
 shagger = { git = "https://github.com/Higher-Standard-Games/shagger", rev = "..." }
+shagger_shared = { git = "https://github.com/Higher-Standard-Games/shagger", rev = "..." }
 ```
 
 A developer working on both clones them side by side and adds a local

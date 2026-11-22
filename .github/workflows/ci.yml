@@ -27,8 +27,8 @@ jobs:
       # engine path instead of the pinned revision fails here, not at a tag.
       - run: cargo fetch --locked
       - run: cargo fmt --all --check
-      - run: cargo clippy --all-targets
-      - run: cargo test
+      - run: cargo clippy --workspace --all-targets
+      - run: cargo test --workspace
 
   # The lobby's documents (TERMS.md, CREDITS.md) are copies; wash-fps is the
   # master. Fails, naming the file, when a copy is outdated: run
