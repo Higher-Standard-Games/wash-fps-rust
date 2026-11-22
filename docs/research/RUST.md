@@ -1049,10 +1049,12 @@ it read from `shagger` moved to `shagger_shared` under the same paths:
 `network::systems::movement::movement_profile`,
 `network::components::input_component` (the button bits), and
 `physics::player_physics_constants`. `shagger` re-exports them where they were.
-The Q3 brush trace that implements `CollisionWorld`
-(`shagger::physics::sweep_collision_backend`) is still engine code. It uses
-Babylon's `Vector3` and the engine's BSP loader types, so a headless caller
-brings its own `CollisionWorld` for now.
+The Q3 brush trace that implements `CollisionWorld` followed
+(shagger PR #36): the BSP reader is `shagger_shared::bsp::bsp_loader`, and the
+sweep collision backend with its spatial index, facet bevels, patch tessellator,
+and content flags is `shagger_shared::physics`, on `shagger_shared`'s `Vec3`
+rather than Babylon's `Vector3`. `shagger` re-exports both. A headless caller
+can now trace the map the way the client and server do.
 
 Where the code lives is still open (section 16). A separate repository keeps the
 Rust toolchain and CI apart from the TypeScript gates, and pins the TypeScript

@@ -523,7 +523,7 @@ impl MapRenderer {
             let available = |path: &str| models.contains_key(path);
             let mut trace = self.shot_world.as_mut().map(|w| {
                 move |from: DVec3, to: DVec3| -> Option<(DVec3, Option<DVec3>)> {
-                    let v = |p: DVec3| shagger::babylon::maths::math_vector::Vector3::new(p.x, p.y, p.z);
+                    let v = |p: DVec3| shagger::shared::server::simulation::types::Vec3::new(p.x, p.y, p.z);
                     let hit = w.trace(
                         v(from),
                         v(to),
@@ -786,9 +786,10 @@ impl MapRenderer {
         let shot_world = self.shot_world.as_ref();
         let contents = |p: DVec3| {
             shot_world.map_or(0, |w| {
-                to_shared_contents(
-                    w.point_contents(shagger::babylon::maths::math_vector::Vector3::new(p.x, p.y, p.z), None),
-                )
+                to_shared_contents(w.point_contents(
+                    shagger::shared::server::simulation::types::Vec3::new(p.x, p.y, p.z),
+                    None,
+                ))
             })
         };
         let collision: Option<&dyn Fn(DVec3) -> u32> = shot_world.is_some().then_some(&contents);
@@ -881,9 +882,10 @@ impl MapRenderer {
         }
         if let Some(world) = self.shot_world.as_ref() {
             let contents = |p: DVec3| {
-                to_shared_contents(
-                    world.point_contents(shagger::babylon::maths::math_vector::Vector3::new(p.x, p.y, p.z), None),
-                )
+                to_shared_contents(world.point_contents(
+                    shagger::shared::server::simulation::types::Vec3::new(p.x, p.y, p.z),
+                    None,
+                ))
             };
             for p in projectiles {
                 self.liquid.notify_projectile(
@@ -960,13 +962,13 @@ impl MapRenderer {
     /// `getGroundSurfaceFlags`: the surface flags of the ground up to 48
     /// units under `at`, 0 when nothing is there.
     pub fn ground_surface_flags(&mut self, at: DVec3) -> i32 {
-        use shagger::babylon::maths::math_vector::Vector3;
         use shagger::physics::collision_backend::TraceOptions;
         use shagger::physics::content_flags::masks;
+        use shagger::shared::server::simulation::types::Vec3;
         let Some(world) = &mut self.shot_world else { return 0 };
         let trace = world.trace(
-            Vector3::new(at.x, at.y, at.z),
-            Vector3::new(at.x, at.y - 48.0, at.z),
+            Vec3::new(at.x, at.y, at.z),
+            Vec3::new(at.x, at.y - 48.0, at.z),
             TraceOptions {
                 radius: Some(1.0),
                 height: Some(0.0),
@@ -1069,7 +1071,7 @@ impl MapRenderer {
         use shagger::physics::content_flags::masks;
         let from = HitSpatter::hit_point(hit);
         let floor = self.shot_world.as_mut().and_then(|w| {
-            let v = |p: DVec3| shagger::babylon::maths::math_vector::Vector3::new(p.x, p.y, p.z);
+            let v = |p: DVec3| shagger::shared::server::simulation::types::Vec3::new(p.x, p.y, p.z);
             let trace = w.trace(
                 v(from),
                 v(from - DVec3::Y * washoi::client::hit_spatter::FLOOR_REACH),
@@ -1094,7 +1096,7 @@ impl MapRenderer {
             let shot_world = self.shot_world.as_mut();
             let mut trace = shot_world.map(|w| {
                 move |from: DVec3, to: DVec3| {
-                    let v = |p: DVec3| shagger::babylon::maths::math_vector::Vector3::new(p.x, p.y, p.z);
+                    let v = |p: DVec3| shagger::shared::server::simulation::types::Vec3::new(p.x, p.y, p.z);
                     let hit = w.trace(
                         v(from),
                         v(to),
@@ -1311,7 +1313,7 @@ impl MapRenderer {
         use shagger::physics::collision_backend::TraceOptions;
         use shagger::physics::content_flags::masks;
         let world = self.shot_world.as_mut()?;
-        let v = |p: DVec3| shagger::babylon::maths::math_vector::Vector3::new(p.x, p.y, p.z);
+        let v = |p: DVec3| shagger::shared::server::simulation::types::Vec3::new(p.x, p.y, p.z);
         let hit = world.trace(
             v(from),
             v(to),
@@ -1509,9 +1511,10 @@ impl MapRenderer {
         let shot_world = self.shot_world.as_ref();
         let contents = |p: DVec3| {
             shot_world.map_or(0, |w| {
-                to_shared_contents(
-                    w.point_contents(shagger::babylon::maths::math_vector::Vector3::new(p.x, p.y, p.z), None),
-                )
+                to_shared_contents(w.point_contents(
+                    shagger::shared::server::simulation::types::Vec3::new(p.x, p.y, p.z),
+                    None,
+                ))
             })
         };
         let comfort = shagger::core::cvar::with_cvars(|c| c.get_number("r_underwater_distortion"));
@@ -1731,9 +1734,10 @@ impl MapRenderer {
             let shot_world = self.shot_world.as_ref();
             let contents = |p: DVec3| {
                 shot_world.map_or(0, |w| {
-                    to_shared_contents(
-                        w.point_contents(shagger::babylon::maths::math_vector::Vector3::new(p.x, p.y, p.z), None),
-                    )
+                    to_shared_contents(w.point_contents(
+                        shagger::shared::server::simulation::types::Vec3::new(p.x, p.y, p.z),
+                        None,
+                    ))
                 })
             };
             self.liquid.update(
