@@ -1,7 +1,7 @@
 //! Movement tuning and the extended result (wash-fps `simulation/MovementConfig.ts`).
 
 use crate::liquid::liquid_types::{LiquidKind, WaterLevel};
-use shagger::shared::server::simulation::types::Vec3;
+use shagger_shared::server::simulation::types::Vec3;
 
 /// `MovementConfig`. Times are as the TypeScript has them: wall jump and
 /// ledge timings in seconds, slide timings in milliseconds.

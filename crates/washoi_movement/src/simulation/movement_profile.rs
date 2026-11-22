@@ -23,15 +23,17 @@ use super::vec3_helpers::{VEC3_ZERO, vec3_length, vec3_length_xz};
 use super::wall_jump::{SlideView, WallJump};
 use crate::liquid::liquid_types::{LiquidSample, WaterLevel, is_swimming};
 use crate::liquid::liquid_volume_sampler::{LiquidSampleBounds, sample_liquid};
-use shagger::network::components::input_component::input_buttons;
-use shagger::network::systems::movement::movement_profile::{
+use shagger_shared::bsp::trigger_table::{TriggerType, TriggerVolume};
+use shagger_shared::collision::collision_world::{Aabb, CollisionWorld, MASK_LIQUID, MASK_SOLID};
+use shagger_shared::js::{js_cos, js_sin};
+use shagger_shared::network::components::input_component::input_buttons;
+use shagger_shared::network::systems::movement::movement_profile::{
     MovementDefaults, MovementInput, MovementProfile as MovementProfileTrait,
 };
-use shagger::physics::player_physics_constants::{CROUCH_MINS_Z, CROUCH_VIEWHEIGHT, DEFAULT_VIEWHEIGHT, PLAYER_MINS_Z};
-use shagger::shared::bsp::trigger_table::{TriggerType, TriggerVolume};
-use shagger::shared::collision::collision_world::{Aabb, CollisionWorld, MASK_LIQUID, MASK_SOLID};
-use shagger::shared::js::{js_cos, js_sin};
-use shagger::shared::server::simulation::types::Vec3;
+use shagger_shared::physics::player_physics_constants::{
+    CROUCH_MINS_Z, CROUCH_VIEWHEIGHT, DEFAULT_VIEWHEIGHT, PLAYER_MINS_Z,
+};
+use shagger_shared::server::simulation::types::Vec3;
 
 /// `DEFAULT_FPS_MOVEMENT_CONFIG`: the one tuning the server and client use.
 pub const DEFAULT_FPS_MOVEMENT_CONFIG: MovementConfig = MovementConfig {
@@ -225,7 +227,7 @@ impl MovementProfile {
     #[must_use]
     pub fn determinism_fingerprint(&self) -> String {
         let c = &self.config;
-        let n = |v: f64| shagger::shared::js::js_number_to_string(v);
+        let n = |v: f64| shagger_shared::js::js_number_to_string(v);
         let b = |v: bool| v.to_string();
         let mut fields = [
             ("maxSpeed", n(c.max_speed)),

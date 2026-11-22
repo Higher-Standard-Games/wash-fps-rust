@@ -5,10 +5,10 @@
 
 use super::movement_config::MovementConfig;
 use super::vec3_helpers::vec3_length_xz;
-use shagger::network::components::input_component::input_buttons;
-use shagger::network::systems::movement::movement_profile::MovementInput;
-use shagger::shared::js::{js_max, js_min};
-use shagger::shared::server::simulation::types::Vec3;
+use shagger_shared::js::{js_max, js_min};
+use shagger_shared::network::components::input_component::input_buttons;
+use shagger_shared::network::systems::movement::movement_profile::MovementInput;
+use shagger_shared::server::simulation::types::Vec3;
 
 const SLIDE_FADE_MS: f64 = 400.0;
 const SLIDE_EXIT_FADE_MS: f64 = 250.0;

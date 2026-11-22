@@ -1,0 +1,19 @@
+[package]
+name = "washoi_movement"
+description = "Washoi's movement simulation, headless: what the server and the client predict, for bots and servers too."
+license = "MIT"
+version = "1.0.3"
+publish = false
+edition = "2024"
+rust-version = "1.95"
+repository = "https://github.com/Higher-Standard-Games/wash-fps-rust"
+
+[dependencies]
+# The same pinned engine revision as the client; only its headless half.
+shagger_shared = { git = "https://github.com/Higher-Standard-Games/shagger", rev = "7b77f3116ec3a032ae07865e62cbad049666443d" }
+
+[lints.rust]
+unsafe_code = "deny"
+
+[lints.clippy]
+all = { level = "warn", priority = -1 }

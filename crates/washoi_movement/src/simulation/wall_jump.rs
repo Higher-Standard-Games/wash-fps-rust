@@ -3,11 +3,11 @@
 use super::movement_config::{AdvancedMovementResult, LedgeGrabPhase, MovementConfig, WallJumpPhase};
 use super::slide::Slide;
 use super::vec3_helpers::{VEC3_ZERO, vec3_length_xz, vec3_mul_add};
-use shagger::network::components::input_component::input_buttons;
-use shagger::network::systems::movement::movement_profile::MovementInput;
-use shagger::shared::collision::collision_world::{Aabb, CollisionWorld};
-use shagger::shared::js::{js_cos, js_sin};
-use shagger::shared::server::simulation::types::Vec3;
+use shagger_shared::collision::collision_world::{Aabb, CollisionWorld};
+use shagger_shared::js::{js_cos, js_sin};
+use shagger_shared::network::components::input_component::input_buttons;
+use shagger_shared::network::systems::movement::movement_profile::MovementInput;
+use shagger_shared::server::simulation::types::Vec3;
 use std::f64::consts::{FRAC_1_SQRT_2, PI};
 
 const DETECTION_GRACE_MS: f64 = 100.0;

@@ -15,6 +15,8 @@ repository = "https://github.com/Higher-Standard-Games/wash-fps-rust"
 #   shagger = { path = "../shagger/crates/shagger" }
 #   shagger_shared = { path = "../shagger/crates/shagger_shared" }
 shagger = { git = "https://github.com/Higher-Standard-Games/shagger", rev = "7b77f3116ec3a032ae07865e62cbad049666443d" }
+# The headless movement simulation, also used by bots (SHAGADELIC).
+washoi_movement = { path = "crates/washoi_movement" }
 
 # The window and its events for `washoi view` (RUST.md 12): winit 0.30, the
 # release wgpu 30 and egui 0.37 work with. Without winit's drawn Wayland
@@ -35,6 +37,9 @@ base64 = "0.23"
 # The lobby chat's times on the player's clock (`clockTime`), from the
 # system's time zone, in safe Rust.
 jiff = "0.2"
+
+[workspace]
+members = ["crates/washoi_movement"]
 
 [lints.rust]
 unsafe_code = "deny"
