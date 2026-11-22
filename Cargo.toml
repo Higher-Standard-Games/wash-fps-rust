@@ -41,6 +41,9 @@ jiff = "0.2"
 
 [workspace]
 members = ["crates/washoi_movement"]
+# CI's engine-main job checks shagger out here, inside this repository; it
+# is its own workspace, not a member of this one.
+exclude = ["shagger-main"]
 
 # The pinned engine revision, one line for both crates: washoi and
 # washoi_movement must build on the same shagger_shared.
