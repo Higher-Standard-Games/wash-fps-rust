@@ -13,4 +13,4 @@
   only, with an Apache-2.0 header and a `NOTICE` entry. Everything else is MIT.
 - Engine code (anything not specific to Washoi) belongs in shagger, not here (RUST.md 14.1).
 - Before pushing: `cargo fmt --all --check`, `cargo clippy
-  --all-targets -- -D warnings`, `cargo test`.
+  --workspace --all-targets -- -D warnings`, `cargo test --workspace`.
