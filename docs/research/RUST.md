@@ -2744,7 +2744,7 @@ The version is `1.0.3`, built from main after 1.0.2 to go out with the web
 point release (wash-fps `c51d92c`, SHAG `7c979b3`): dropped weapons drawn
 at the pose the server sends, and demo v9 (below). Without it a 1.0.2 game
 cannot decode a snapshot that holds a Havok-thrown weapon. The engine is
-pinned to shagger's orientation decoder. Signing is as for 1.0.2; games on
+pinned to shagger `7b77f31`, which adds the orientation decoder. Signing is as for 1.0.2; games on
 `1.0.2` are offered it.
 
 ### Dropped weapons lie as the server throws them (November 22, 2026)
@@ -2753,7 +2753,7 @@ The staging catch-up to wash-fps `c51d92c` and SHAG `7c979b3` (networking
 guide, "9b. Dropped Weapons"). The game server now throws each dropped
 weapon as a Havok box and sends its pose; a client runs no physics for it.
 
-- **The wire** (shagger `fbdc826`): entity flag `0x80` is an extension byte
+- **The wire** (shagger `7b77f31`): entity flag `0x80` is an extension byte
   whose bit `0x01` carries the orientation (4.5). `Entity::orientation`,
   carried forward from the baseline; demo v9 reads. Without this a v9
   snapshot with a thrown weapon would not decode at all.
