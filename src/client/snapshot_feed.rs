@@ -54,10 +54,15 @@ pub struct DemoView {
     /// Which map pickups are there to take, by pickup id: the server's
     /// `pickupActiveMask` as the snapshots so far tell it.
     pub pickup_active: Arc<Vec<bool>>,
-    /// The weapons on the floor: the newest snapshot's `item_` entities
-    /// (`syncServerEntities`), by id.
-    pub dropped_weapons: Arc<HashMap<String, DroppedWeaponInfo>>,
+    /// The weapons on the floor: the `item_` entities of every snapshot
+    /// that arrived since the last frame (`syncServerEntities`), by id,
+    /// with the snapshot's tick, oldest first.
+    pub dropped_weapons: Vec<(u32, HashMap<String, DroppedWeaponInfo>)>,
 }
+
+/// Snapshots' weapons kept for the next frame at most: a stalled frame
+/// keeps only the newest.
+const MAX_DROPPED_WEAPON_SNAPSHOTS: usize = 8;
 
 /// `PROJECTILE_FORGET_TICKS`: 11 seconds at `DEFAULT_PHYSICS_TICK_RATE` (125).
 const PROJECTILE_FORGET_TICKS: u32 = 11 * 125;
@@ -96,8 +101,8 @@ pub struct SnapshotFeed {
     snapshots: Vec<HashMap<String, EntitySnapshot>>,
     /// `FPSPickup.reconcileActiveSet`'s pickups, by id.
     pickup_active: Arc<Vec<bool>>,
-    /// The newest snapshot's `item_` entities.
-    dropped_weapons: Arc<HashMap<String, DroppedWeaponInfo>>,
+    /// The `item_` entities of the snapshots since the last frame, by tick.
+    dropped_weapons: Vec<(u32, HashMap<String, DroppedWeaponInfo>)>,
 }
 
 /// `FPSPickup.reconcileActiveSet`: each pickup the mask names takes its
@@ -150,7 +155,10 @@ impl SnapshotFeed {
         // Every snapshot: the convergent source of truth for which pickups
         // are up, so a dropped snapshot heals on the next one.
         reconcile_active_set(Arc::make_mut(&mut self.pickup_active), &state.pickup_active_mask);
-        self.dropped_weapons = Arc::new(extract_dropped_weapons(state));
+        if self.dropped_weapons.len() >= MAX_DROPPED_WEAPON_SNAPSHOTS {
+            self.dropped_weapons.remove(0);
+        }
+        self.dropped_weapons.push((state.tick, extract_dropped_weapons(state)));
         self.roster = state.players.iter().map(|(k, p)| (k.to_owned(), p.clone())).collect();
         // The sounds hear every player, our own footsteps too
         // (`processFPSMovementAudio` reads the whole state); only the
@@ -247,7 +255,7 @@ impl SnapshotFeed {
             names: Arc::clone(&self.names),
             snapshots: std::mem::take(&mut self.snapshots),
             pickup_active: Arc::clone(&self.pickup_active),
-            dropped_weapons: Arc::clone(&self.dropped_weapons),
+            dropped_weapons: std::mem::take(&mut self.dropped_weapons),
         }
     }
 }
@@ -290,8 +298,8 @@ fn extract_projectiles(state: &GameState<SnapshotEvent>) -> HashMap<String, Enti
     out
 }
 
-/// `GameEvents`' dropped weapon sync: each `item_` entity's position and
-/// `weaponMeta`.
+/// `GameEvents`' dropped weapon sync: each `item_` entity's position (its
+/// box centre), `weaponMeta` and `orientation`.
 fn extract_dropped_weapons(state: &GameState<SnapshotEvent>) -> HashMap<String, DroppedWeaponInfo> {
     let mut out = HashMap::new();
     for (id, entity) in state.entities.iter() {
@@ -308,6 +316,7 @@ fn extract_dropped_weapons(state: &GameState<SnapshotEvent>) -> HashMap<String, 
                 position: [position.x, position.y, position.z],
                 weapon_id: meta.map(|m| m.weapon_id.clone()),
                 settled: meta.is_some_and(|m| m.settled),
+                rotation: entity.orientation,
             },
         );
     }

@@ -23,14 +23,13 @@ use shagger::animation::player_model_fit::{BladeStance, GunSupport};
 use shagger::animation::player_model_manager::{
     BLADE_STANCE, PlayerModel, PlayerModelInstance, PlayerModelVisualStyle, TAUNT_ANIMS,
 };
-use shagger::babylon::meshes::vertex_data::babylon_local_matrix;
 use shagger::core::cvar::{CvarOptions, CvarType, Cvars, with_cvars};
 use shagger::loader::model::glb::GlbError;
 use shagger::loader::model::gltf_model::GltfModel;
 use shagger::loader::model::tags_loader::parse_tags;
 use shagger::loader::pk3::pk3_loader::Pk3Loader;
 use shagger::network::client::snapshot_buffer::InterpolatedEntity;
-use shagger::rendering::glam::DVec3;
+use shagger::rendering::glam::{DMat4, DQuat, DVec3};
 use shagger::rendering::glam::{Mat4, Quat, Vec3};
 use shagger::rendering::gpu::Gpu;
 use shagger::rendering::model_renderer::{ModelDraw, ModelHandle, ModelMaterialMode, ModelRenderer, Outline};
@@ -850,22 +849,19 @@ impl HandWeapons {
         Some((tag, leader.w_axis.truncate()))
     }
 
-    /// The draws of `weapon` on the floor (`DroppedWeaponVisual.place`): the
-    /// leader at `position`, turned by Babylon Euler `rotation` and scaled
-    /// by the weapon's scale (1.5 when none), the other meshes flattened
-    /// under it as on a pickup, the barrels on their mount.
-    pub fn world_draws(&self, weapon: &str, position: [f64; 3], rotation: [f64; 3], draws: &mut Vec<ModelDraw>) {
+    /// The draws of `weapon` on the floor (`DroppedWeaponVisual.place`,
+    /// `applyPose`): the leader's origin at `position`, turned by the
+    /// quaternion `rotation` and scaled by the weapon's scale (1.5 when
+    /// none), the other meshes flattened under it as on a pickup (raw GLB
+    /// vertices, no glTF root transform), the barrels on their mount.
+    pub fn world_draws(&self, weapon: &str, position: [f64; 3], rotation: DQuat, draws: &mut Vec<ModelDraw>) {
         let Some(def) = weapon_model(weapon) else { return };
         let Some(w) = self.weapons.iter().find(|w| w.def.id == def.id) else {
             return;
         };
         let scale = f64::from(pickup_scale(Some(def.scale)));
-        let leader = babylon_local_matrix(
-            DVec3::from_array(position),
-            DVec3::from_array(rotation),
-            DVec3::splat(scale),
-        )
-        .as_mat4();
+        let leader = DMat4::from_scale_rotation_translation(DVec3::splat(scale), rotation, DVec3::from_array(position))
+            .as_mat4();
         for (primitive, world) in flattened_pickup_matrices(&w.model, leader).into_iter().enumerate() {
             draws.push(ModelDraw::new(w.handle, primitive, world));
         }

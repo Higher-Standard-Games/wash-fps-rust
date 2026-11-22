@@ -20,7 +20,7 @@ use washoi::client::bomb_site_debris::BombSiteDebris;
 use washoi::client::bomb_site_markers::{BLAST_SCALE, BLAST_SHAKE_RANGE, BombSiteMarkers, MarkerPose};
 use washoi::client::cartoon_hit_effect::{CartoonHitEffect, CartoonHitRenderer};
 use washoi::client::damage_numbers::{DamageNumberRenderer, DamageNumbers};
-use washoi::client::dropped_weapon_renderer::{DropThrow, DroppedWeaponInfo, DroppedWeaponRenderer};
+use washoi::client::dropped_weapon_renderer::{DroppedWeaponInfo, DroppedWeaponRenderer};
 use washoi::client::fps_liquid_audio::play_liquid_crossing;
 use washoi::client::fps_player_audio::{player_voice_for_entity, set_local_player_voice};
 use washoi::client::gib_system::{GibRenderer, GibSystem};

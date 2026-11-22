@@ -348,8 +348,7 @@ pub fn start_prepared(o: &ViewOptions, prepared: Prepared) -> Result<i32, String
             renderer.set_live_players(&players, &hidden, 1.0 / 60.0, effect_dt);
             renderer.set_live_projectiles(&projectiles, effect_dt, &camera);
             renderer.play_effects(&view.effects, &view.weapons, effect_dt, &camera);
-            renderer.dropped_weapons.use_server_transforms = matches!(feed, Feed::Demo(_));
-            renderer.play_dropped_weapons(&view.effects, &view.dropped_weapons, effect_dt);
+            renderer.play_dropped_weapons(&view.dropped_weapons, effect_dt);
             renderer.play_bomb_sites(feed.match_state(), effect_dt);
             renderer.play_pickups(&view.pickup_active, effect_dt);
             renderer.play_gibs(&view.effects, effect_dt);
