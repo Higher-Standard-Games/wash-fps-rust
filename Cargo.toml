@@ -48,8 +48,8 @@ exclude = ["shagger-main"]
 # The pinned engine revision, one line for both crates: washoi and
 # washoi_movement must build on the same shagger_shared.
 [workspace.dependencies]
-shagger = { git = "https://github.com/Higher-Standard-Games/shagger", rev = "309b857b6e44613105effd8fabc3a5527d48845c" }
-shagger_shared = { git = "https://github.com/Higher-Standard-Games/shagger", rev = "309b857b6e44613105effd8fabc3a5527d48845c" }
+shagger = { git = "https://github.com/Higher-Standard-Games/shagger", rev = "32ae616a2c2c32420f7a7cd03964d7ad80ec8ae8" }
+shagger_shared = { git = "https://github.com/Higher-Standard-Games/shagger", rev = "32ae616a2c2c32420f7a7cd03964d7ad80ec8ae8" }
 
 [lints.rust]
 unsafe_code = "deny"
