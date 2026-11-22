@@ -1,6 +1,6 @@
 //! Vector helpers for the movement code (wash-fps `simulation/Vec3Helpers.ts`).
 
-use shagger::shared::server::simulation::types::Vec3;
+use shagger_shared::server::simulation::types::Vec3;
 
 pub const VEC3_ZERO: Vec3 = Vec3::new(0.0, 0.0, 0.0);
 

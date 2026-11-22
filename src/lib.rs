@@ -12,7 +12,8 @@ pub mod liquid;
 pub mod regions;
 pub mod server;
 pub mod shared;
-pub mod simulation;
+/// The movement simulation, from the headless `washoi_movement` crate.
+pub use washoi_movement::simulation;
 pub mod update_check;
 pub mod world;
 

@@ -951,10 +951,13 @@ shagger/                         engine repository, its own Cargo workspace
 ├─ crates/*/tests/golden/        reference outputs made by the TypeScript tools, checked by cargo test
 └─ tools/golden/                 Node scripts that run SHAG's own code to make those outputs
 
-wash-fps-rust/                   game repository
+wash-fps-rust/                   game repository, a Cargo workspace
 ├─ Cargo.toml                    depends on shagger by git rev
+├─ crates/
+│  └─ washoi_movement/           ← wash-fps simulation and liquid sampling, headless
+│     └─ src/{simulation,liquid}/  (depends on shagger_shared only)
 ├─ src/                          ← wash-fps, client side
-│  └─ {simulation,liquid,shared,world,camera,console,client,weapons,
+│  └─ {liquid,shared,world,camera,console,client,weapons,
 │      game.rs,fps_player.rs,main.rs}
 └─ tests/                        parity tests against sim:dump output and demo dumps
 ```
@@ -1032,6 +1035,20 @@ checks each against it.
 
 `shagger_shared` stays free of GPU and async code so it can later serve a Rust
 game server or a WebAssembly build without changes.
+
+**Headless movement (decided 2026-11-22).** Washoi's movement simulation is its
+own crate, `crates/washoi_movement`, so the SHAGADELIC bots can predict Washoi
+movement without the engine's GPU, window, audio, or async crates. `washoi`
+re-exports it as `washoi::simulation` and `washoi::liquid::{liquid_types,
+liquid_volume_sampler}`, so client paths are unchanged. The three engine modules
+it read from `shagger` moved to `shagger_shared` under the same paths:
+`network::systems::movement::movement_profile`,
+`network::components::input_component` (the button bits), and
+`physics::player_physics_constants`. `shagger` re-exports them where they were.
+The Q3 brush trace that implements `CollisionWorld`
+(`shagger::physics::sweep_collision_backend`) is still engine code. It uses
+Babylon's `Vector3` and the engine's BSP loader types, so a headless caller
+brings its own `CollisionWorld` for now.
 
 Where the code lives is still open (section 16). A separate repository keeps the
 Rust toolchain and CI apart from the TypeScript gates, and pins the TypeScript

@@ -1,8 +1,8 @@
 //! Ladders (wash-fps `simulation/Ladder.ts`), on full 3D velocity.
 
 use super::swim::{Intent, local_axes};
-use shagger::shared::js::{js_max, js_min};
-use shagger::shared::server::simulation::types::Vec3;
+use shagger_shared::js::{js_max, js_min};
+use shagger_shared::server::simulation::types::Vec3;
 
 /// `LadderMovementProfile`.
 #[derive(Debug, Clone, Copy, PartialEq)]

@@ -1,8 +1,8 @@
 //! Three-point water sampling (wash-fps `liquid/LiquidVolumeSampler.ts`).
 
 use super::liquid_types::{DRY_SAMPLE, LiquidKind, LiquidSample, WaterLevel};
-use shagger::shared::collision::collision_world::{CollisionWorld, MASK_LIQUID, contents};
-use shagger::shared::server::simulation::types::Vec3;
+use shagger_shared::collision::collision_world::{CollisionWorld, MASK_LIQUID, contents};
+use shagger_shared::server::simulation::types::Vec3;
 
 /// `LiquidSampleBounds`.
 #[derive(Debug, Clone, Copy, PartialEq)]

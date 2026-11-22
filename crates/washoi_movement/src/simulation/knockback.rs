@@ -1,7 +1,7 @@
 //! Knockback air drag (wash-fps `simulation/Knockback.ts`), shared by the
 //! server tick and client prediction.
 
-use shagger::shared::server::simulation::types::Vec3;
+use shagger_shared::server::simulation::types::Vec3;
 
 /// Steps after an impulse before drag begins (about 0.4 s at 125 Hz).
 pub const KB_DRAG_DELAY_TICKS: f64 = 50.0;

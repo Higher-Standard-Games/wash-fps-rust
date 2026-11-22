@@ -1,8 +1,8 @@
 //! Swimming and wading (wash-fps `simulation/Swim.ts`), on full 3D velocity.
 
 use crate::liquid::liquid_types::WaterLevel;
-use shagger::shared::js::{js_cos, js_max, js_min, js_sin};
-use shagger::shared::server::simulation::types::Vec3;
+use shagger_shared::js::{js_cos, js_max, js_min, js_sin};
+use shagger_shared::server::simulation::types::Vec3;
 
 /// `LiquidMovementProfile`.
 #[derive(Debug, Clone, Copy, PartialEq)]

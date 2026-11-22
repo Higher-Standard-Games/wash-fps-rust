@@ -1,5 +1,5 @@
-//! Liquid state the simulation reads (wash-fps `liquid`).
+//! Liquid state the simulation reads (wash-fps `liquid`). Sampling lives in
+//! the headless `washoi_movement` crate; the client's rendering and audio here.
 
 pub mod client;
-pub mod liquid_types;
-pub mod liquid_volume_sampler;
+pub use washoi_movement::liquid::{liquid_types, liquid_volume_sampler};

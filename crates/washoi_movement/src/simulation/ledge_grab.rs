@@ -2,12 +2,12 @@
 
 use super::movement_config::{LedgeGrabPhase, MovementConfig};
 use super::vec3_helpers::{VEC3_ZERO, vec3_add, vec3_normalize, vec3_scale};
-use shagger::network::components::input_component::input_buttons;
-use shagger::network::systems::movement::movement_profile::MovementInput;
-use shagger::physics::player_physics_constants::{PLAYER_MAXS_Z, PLAYER_MINS_Z, PLAYER_RADIUS};
-use shagger::shared::collision::collision_world::{Aabb, CollisionWorld};
-use shagger::shared::js::{js_cos, js_hypot, js_max, js_min, js_sin};
-use shagger::shared::server::simulation::types::Vec3;
+use shagger_shared::collision::collision_world::{Aabb, CollisionWorld};
+use shagger_shared::js::{js_cos, js_hypot, js_max, js_min, js_sin};
+use shagger_shared::network::components::input_component::input_buttons;
+use shagger_shared::network::systems::movement::movement_profile::MovementInput;
+use shagger_shared::physics::player_physics_constants::{PLAYER_MAXS_Z, PLAYER_MINS_Z, PLAYER_RADIUS};
+use shagger_shared::server::simulation::types::Vec3;
 
 const PLAYER_BOUNDS: Aabb = Aabb {
     min: Vec3::new(-PLAYER_RADIUS, PLAYER_MINS_Z, -PLAYER_RADIUS),

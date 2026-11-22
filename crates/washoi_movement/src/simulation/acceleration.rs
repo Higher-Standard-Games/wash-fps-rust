@@ -3,8 +3,8 @@
 
 use super::movement_config::MovementConfig;
 use super::vec3_helpers::vec3_dot_xz;
-use shagger::shared::js::js_max;
-use shagger::shared::server::simulation::types::Vec3;
+use shagger_shared::js::js_max;
+use shagger_shared::server::simulation::types::Vec3;
 
 /// `applyFriction`.
 pub fn apply_friction(vel: &mut Vec3, friction: f64, stop_speed: f64, delta_time: f64) {
@@ -80,7 +80,7 @@ pub fn air_accelerate_forward(
 
     let target_wishspeed = if wish_speed > curspeed * 1.01 {
         let accelspeed = curspeed + airforwardaccel * max_player_speed * delta_time * accel_falloff;
-        shagger::shared::js::js_min(wish_speed, accelspeed)
+        shagger_shared::js::js_min(wish_speed, accelspeed)
     } else {
         let f = js_max(0.0, (topspeed - curspeed) / (topspeed - max_player_speed));
         js_max(curspeed, max_player_speed) + bunnyaccel * f * accel_falloff * max_player_speed * delta_time
@@ -128,7 +128,7 @@ pub fn strafe_bunny_accelerate(
     config: &MovementConfig,
     delta_time: f64,
 ) {
-    let strafe_wishspeed = shagger::shared::js::js_min(wish_speed, config.max_air_speed);
+    let strafe_wishspeed = shagger_shared::js::js_min(wish_speed, config.max_air_speed);
     let cur_speed = (vel.x * vel.x + vel.z * vel.z).sqrt();
     let accel_falloff = calc_accel_falloff(cur_speed, config.run_speed, 600.0, config.top_speed);
     let strafe_bunny_accel = STRAFE_BUNNY_ACCEL * accel_falloff;
